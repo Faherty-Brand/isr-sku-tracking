@@ -1005,7 +1005,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: pinned-sku (p7c)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: store-matrix (p7d)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1149,6 +1149,7 @@ setTimeout(function(){
         <button class="tab-btn active" id="tabSkuBtn" onclick="switchTab('sku')">📋 SKU Tracking</button>
         <button class="tab-btn" id="tabLateBtn" onclick="switchTab('late')">⚠ Late List</button>
         <button class="tab-btn" id="tabIaBtn" onclick="switchTab('ia')">📦 IA Volume</button>
+        <button class="tab-btn" id="tabSmBtn" onclick="switchTab('sm')">🏬 Store Matrix</button>
         <button class="tab-btn" id="tabNfBtn" onclick="switchTab('nf')">🎯 NF Review</button>
       </div>
       <button class="ctrl-btn" onclick="document.getElementById('fileInput').click()">↻ Refresh Data</button>
@@ -1423,6 +1424,48 @@ setTimeout(function(){
       <tbody id="nfBody"></tbody>
     </table>
     <div class="nf-empty" id="nfEmpty" style="display:none"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     STORE MATRIX  ·  Read-only explorer over the seasonal matrix
+     Two lenses over the same parsed data (window._tierToStores):
+       · Groups ▸ Stores   — which stores sit in a store group
+       · Stores ▸ Groups   — which groups a store belongs to
+     Deliberately not a big grid: a master/detail explorer plus set
+     analysis (subset/superset/overlap, identical-profile peers).
+     ══════════════════════════════════════════════════════════ -->
+<div id="smPanel">
+  <div class="sm-header">
+    <div>
+      <div class="sm-title">🏬 Store Matrix</div>
+      <div class="sm-subtitle" id="smSubtitle">Current-season store groups · read-only</div>
+    </div>
+    <div class="sm-header-actions">
+      <div class="sm-seg" id="smViewSeg">
+        <button class="sm-seg-btn active" id="smSegGroups" onclick="smSetView('groups')">Groups ▸ Stores</button>
+        <button class="sm-seg-btn" id="smSegStores" onclick="smSetView('stores')">Stores ▸ Groups</button>
+      </div>
+      <button class="sm-action-btn" onclick="smCopyMembers()">⎘ Copy members</button>
+      <button class="sm-action-btn" onclick="smRefresh()">↻ Refresh</button>
+    </div>
+  </div>
+
+  <div class="sm-stats" id="smStats"></div>
+  <div class="sm-warn" id="smWarn" style="display:none"></div>
+
+  <div class="sm-explorer">
+    <div class="sm-rail">
+      <div class="sm-rail-head">
+        <input class="sm-search" id="smSearch" type="text" placeholder="Search…" oninput="smSetQuery(this.value)">
+        <div class="sm-sortseg">
+          <button class="sm-sort-btn active" id="smSortSize" onclick="smSetSort('size')">Size</button>
+          <button class="sm-sort-btn" id="smSortAz" onclick="smSetSort('az')">A–Z</button>
+        </div>
+      </div>
+      <div class="sm-rail-list" id="smRailList"></div>
+    </div>
+    <div class="sm-detail" id="smDetail"></div>
   </div>
 </div>
 
@@ -9012,9 +9055,11 @@ function switchTab(tab) {
   document.getElementById('tabLateBtn').classList.remove('active');
   document.getElementById('tabIaBtn').classList.remove('active');
   { const b = document.getElementById('tabNfBtn'); if (b) b.classList.remove('active'); }
+  { const b = document.getElementById('tabSmBtn'); if (b) b.classList.remove('active'); }
   document.getElementById('lateListPanel').style.display = 'none';
   document.getElementById('iaPanel').style.display = 'none';
   { const p = document.getElementById('nfPanel'); if (p) p.style.display = 'none'; }
+  { const p = document.getElementById('smPanel'); if (p) p.style.display = 'none'; }
 
   if (tab === 'sku') {
     document.getElementById('tabSkuBtn').classList.add('active');
@@ -9058,6 +9103,17 @@ function switchTab(tab) {
     document.getElementById('exportBtn').style.display = 'none';
     document.getElementById('colPanelBtn').style.display = 'none';
     if (typeof nfRefresh === 'function') nfRefresh();
+  } else if (tab === 'sm') {
+    const b = document.getElementById('tabSmBtn'); if (b) b.classList.add('active');
+    skuEls.forEach(id => { const el=document.getElementById(id); if(el) el.style.display='none'; });
+    const p = document.getElementById('smPanel'); if (p) p.style.display = 'flex';
+    document.getElementById('lookupBtn').style.display = 'none';
+    document.getElementById('clearLookupBtn').style.display = 'none';
+    document.getElementById('copySkuBtn').style.display = 'none';
+    document.getElementById('bulkNotesBtn').style.display = 'none';
+    document.getElementById('exportBtn').style.display = 'none';
+    document.getElementById('colPanelBtn').style.display = 'none';
+    if (typeof smRefresh === 'function') smRefresh();
   }
 }
 
@@ -11219,6 +11275,78 @@ ${'</' + 'script>'}
      ══════════════════════════════════════════════════════════ -->
 <style>
 #nfPanel{display:none;flex-direction:column;flex:1;overflow:hidden;background:var(--bg)}
+/* ══════════ STORE MATRIX ══════════ */
+#smPanel{display:none;flex-direction:column;flex:1;overflow:hidden;background:var(--bg)}
+.sm-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:18px 24px 12px;flex-wrap:wrap}
+.sm-title{font-family:var(--head);font-size:17px;font-weight:700;color:var(--text)}
+.sm-subtitle{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.45}
+.sm-header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sm-seg{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--surface)}
+.sm-seg-btn{border:none;background:transparent;font-family:var(--mono);font-size:11px;padding:6px 12px;cursor:pointer;color:var(--muted)}
+.sm-seg-btn.active{background:var(--accent);color:#fff;font-weight:600}
+.sm-action-btn{border:1px solid var(--border);background:var(--surface);border-radius:8px;font-family:var(--mono);font-size:11px;padding:6px 11px;cursor:pointer;color:var(--text)}
+.sm-action-btn:hover{border-color:var(--accent);color:var(--accent)}
+.sm-stats{display:flex;gap:10px;padding:0 24px 12px;flex-wrap:wrap}
+.sm-stat{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 14px;min-width:120px}
+.sm-stat-lbl{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.sm-stat-val{font-family:var(--head);font-size:20px;font-weight:700;color:var(--text);line-height:1.15;margin-top:2px}
+.sm-stat-sub{font-family:var(--mono);font-size:9.5px;color:var(--dim);margin-top:1px}
+.sm-warn{margin:0 24px 12px;padding:9px 13px;border-radius:9px;font-size:11.5px;line-height:1.45;background:var(--yellow-bg);border:1px solid rgba(160,107,0,.28);color:#7a5200}
+.sm-explorer{flex:1;display:grid;grid-template-columns:288px 1fr;gap:14px;padding:0 24px 20px;overflow:hidden;min-height:0}
+/* Left rail */
+.sm-rail{display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:11px;overflow:hidden;min-height:0}
+.sm-rail-head{padding:9px 10px;border-bottom:1px solid var(--border);background:var(--surface2);display:flex;flex-direction:column;gap:7px}
+.sm-search{width:100%;box-sizing:border-box;font-family:var(--mono);font-size:11.5px;padding:6px 9px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text)}
+.sm-search:focus{outline:none;border-color:var(--accent)}
+.sm-sortseg{display:flex;gap:5px}
+.sm-sort-btn{flex:1;border:1px solid var(--border);background:var(--surface);border-radius:6px;font-family:var(--mono);font-size:9.5px;padding:3px 0;cursor:pointer;color:var(--muted);text-transform:uppercase;letter-spacing:.07em}
+.sm-sort-btn.active{background:var(--accent-bg);border-color:var(--accent);color:var(--accent);font-weight:700}
+.sm-rail-list{flex:1;overflow-y:auto;min-height:0}
+.sm-rail-item{display:grid;grid-template-columns:1fr 38px;gap:8px;align-items:center;padding:7px 11px;border-bottom:1px solid var(--border2,#f0eeea);cursor:pointer;transition:background .1s}
+.sm-rail-item:hover{background:var(--surface2)}
+.sm-rail-item.sel{background:var(--accent-bg);box-shadow:inset 3px 0 0 var(--accent)}
+.sm-rail-name{font-size:11.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sm-rail-item.sel .sm-rail-name{font-weight:700;color:var(--accent)}
+.sm-rail-sub{font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:2px}
+.sm-rail-ct{font-family:var(--mono);font-size:11px;font-weight:700;text-align:right;color:var(--text)}
+.sm-rail-bar{grid-column:1/-1;height:3px;background:#eceae5;border-radius:2px;overflow:hidden}
+.sm-rail-bar-fill{height:100%;background:var(--accent);border-radius:2px;opacity:.55}
+.sm-rail-empty{padding:26px 14px;text-align:center;font-size:11px;color:var(--muted);font-style:italic}
+/* Detail pane */
+.sm-detail{overflow-y:auto;min-height:0;padding-right:2px}
+.sm-dcard{background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:16px 18px;margin-bottom:12px}
+.sm-dhead{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
+.sm-dname{font-family:var(--head);font-size:19px;font-weight:700;color:var(--text);line-height:1.2}
+.sm-dmeta{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:4px}
+.sm-dbig{font-family:var(--head);font-size:30px;font-weight:700;color:var(--accent);line-height:1}
+.sm-dbig-lbl{font-family:var(--mono);font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);text-align:right;margin-top:2px}
+.sm-cover{margin-top:14px}
+.sm-cover-track{height:8px;background:#eceae5;border-radius:4px;overflow:hidden}
+.sm-cover-fill{height:100%;background:linear-gradient(90deg,var(--accent),#2E86AB);border-radius:4px}
+.sm-cover-lbl{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:5px}
+.sm-sec-title{font-family:var(--mono);font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);font-weight:700;margin:0 0 9px}
+.sm-chips{display:flex;flex-wrap:wrap;gap:6px}
+.sm-chip{display:inline-flex;align-items:baseline;gap:6px;border:1px solid var(--border);background:var(--bg);border-radius:14px;padding:3px 10px;font-size:11px;color:var(--text);cursor:pointer;transition:all .1s}
+.sm-chip:hover{border-color:var(--accent);background:var(--accent-bg);color:var(--accent)}
+.sm-chip-code{font-family:var(--mono);font-size:9px;color:var(--dim)}
+.sm-chip:hover .sm-chip-code{color:var(--accent)}
+.sm-chip.nonalloc{background:#f4f2ef;color:var(--dim);border-style:dashed}
+.sm-chip.nocode{border-color:var(--orange);background:var(--orange-bg)}
+.sm-rel{display:flex;flex-direction:column;gap:10px}
+.sm-rel-row{display:grid;grid-template-columns:118px 1fr;gap:10px;align-items:start}
+.sm-rel-lbl{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;padding:3px 7px;border-radius:6px;text-align:center;font-weight:700}
+.sm-rel-identical{background:var(--purple-bg);color:var(--purple)}
+.sm-rel-contains{background:var(--green-bg);color:var(--green)}
+.sm-rel-within{background:#E3ECF9;color:#1e40af}
+.sm-rel-overlap{background:var(--yellow-bg);color:#7a5200}
+.sm-rel-none{font-size:11px;color:var(--dim);font-style:italic}
+.sm-diff-add{color:var(--green);font-family:var(--mono);font-size:10px}
+.sm-diff-rem{color:var(--red);font-family:var(--mono);font-size:10px}
+.sm-peer{border-top:1px solid var(--border2,#f0eeea);padding:7px 0;display:grid;grid-template-columns:150px 1fr;gap:10px;align-items:baseline}
+.sm-peer:first-child{border-top:none}
+.sm-peer-name{font-size:11.5px;color:var(--accent);cursor:pointer}
+.sm-peer-name:hover{text-decoration:underline}
+.sm-empty-detail{padding:60px 20px;text-align:center;color:var(--muted);font-size:12.5px}
 .nf-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:18px 24px 12px;flex-wrap:wrap}
 .nf-title{font-family:var(--head);font-weight:700;font-size:16px;color:var(--text)}
 .nf-subtitle{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px}
@@ -12357,6 +12485,517 @@ tr.nf-strow-shifted {background:#DBEAFE}
 
   nfLoadLocal();
   console.log('[NF] module ready [nf-review-v1 · nf-release-p6l] · default season '+NF_SEASON+' · run nfWhy() or nfWhy("SKU") to debug auto-Release');
+})();
+</script>
+
+<script>
+// ══════════════════════════════════════════════════════════
+// STORE MATRIX  ·  [store-matrix-v1]
+// Read-only explorer over the current season's parsed store matrix.
+// Source of truth is window._tierToStores (built by parseStoreMatrix), so this
+// tab never re-reads the file — it can only ever agree with the tier counts the
+// rest of the app uses. Nothing here writes or persists.
+//
+// Two lenses over the same membership relation:
+//   groups ▸ stores   — pick a store group, see its stores
+//   stores ▸ groups   — pick a store, see its groups
+//
+// Beyond membership, each lens answers the question a flat grid can't:
+//   · group view — how does this group nest against every other group?
+//     (identical / contains / within / overlaps). Tier definitions drift, and
+//     a group that *should* be a strict subset but merely overlaps is a silent
+//     allocation bug.
+//   · store view — which stores have an identical membership profile, and
+//     which are one or two groups away? Near-identical stores are how you spot
+//     a missing X in the matrix.
+// ══════════════════════════════════════════════════════════
+(function(){
+  var SM_VIEW = 'groups';   // 'groups' | 'stores'
+  var SM_SEL  = null;       // selected group name or store name
+  var SM_Q    = '';         // rail search text
+  var SM_SORT = 'size';     // 'size' | 'az'
+  var SM_DATA = null;
+
+  function smEsc(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  function smAttr(s){ return smEsc(s).replace(/\\/g,'\\\\'); }
+  function smPct(n){ return Math.round(n * 100); }
+
+  // ── Build the membership model ────────────────────────────────────────────
+  function smBuild(){
+    var t2s = {};
+    try {
+      t2s = (typeof window.getTierToStores === 'function')
+        ? (window.getTierToStores() || {})
+        : (window._tierToStores || {});
+    } catch(e){ t2s = window._tierToStores || {}; }
+    var counts = {};
+    try {
+      counts = (typeof window.getTierToStoreCount === 'function')
+        ? (window.getTierToStoreCount() || {})
+        : (window._tierToStoreCount || {});
+    } catch(e){ counts = window._tierToStoreCount || {}; }
+
+    var groups = [];              // {name, set, size, nonAlloc, countOnly}
+    var byGroup = Object.create(null);
+    var storeToGroups = new Map();
+    var namesResolved = false;
+
+    Object.keys(t2s).forEach(function(g){
+      var arr = t2s[g] || [];
+      var set = new Set();
+      arr.forEach(function(s){ var v = String(s || '').trim(); if (v) set.add(v); });
+      if (set.size) namesResolved = true;
+      var rec = {
+        name: g,
+        set: set,
+        size: set.size,
+        // Fall back to the count map when store names couldn't be resolved, so
+        // the rail still shows real numbers in degraded mode.
+        count: set.size || (+counts[g] || 0),
+        nonAlloc: (typeof NON_ALLOC_TIERS !== 'undefined') && NON_ALLOC_TIERS.has(String(g).toUpperCase()),
+      };
+      groups.push(rec);
+      byGroup[g] = rec;
+      set.forEach(function(store){
+        if (!storeToGroups.has(store)) storeToGroups.set(store, new Set());
+        storeToGroups.get(store).add(g);
+      });
+    });
+
+    // Any group key present in the count map but absent from the membership map
+    // (e.g. a header column with no X's at all) still deserves a rail entry —
+    // an empty store group is itself a finding.
+    Object.keys(counts).forEach(function(g){
+      if (byGroup[g]) return;
+      var rec = {name:g, set:new Set(), size:0, count:+counts[g] || 0,
+                 nonAlloc:(typeof NON_ALLOC_TIERS !== 'undefined') && NON_ALLOC_TIERS.has(String(g).toUpperCase())};
+      groups.push(rec); byGroup[g] = rec;
+    });
+
+    var stores = [];
+    storeToGroups.forEach(function(gset, name){
+      var list = Array.from(gset).sort();
+      stores.push({
+        name: name,
+        groups: gset,
+        list: list,
+        size: gset.size,
+        sig: list.join('|'),
+        code: (typeof STORE_CODE_MAP !== 'undefined' && STORE_CODE_MAP[name]) ? STORE_CODE_MAP[name] : '',
+      });
+    });
+    stores.sort(function(a,b){ return a.name.localeCompare(b.name); });
+
+    // Distinct membership signatures = the number of genuinely different ways
+    // a store can be treated by the matrix.
+    var sigs = new Set(stores.map(function(s){ return s.sig; }));
+
+    // Cross-reference: stores that exist in Store Codes but land in no group.
+    // Advisory only — Store Codes and the matrix are separate files and can
+    // legitimately drift, so this is surfaced as a note, never as an error.
+    var orphans = [];
+    if (namesResolved && typeof STORE_CODE_MAP !== 'undefined') {
+      Object.keys(STORE_CODE_MAP).forEach(function(n){
+        if (!storeToGroups.has(n)) orphans.push(n);
+      });
+      orphans.sort();
+    }
+
+    var totalStores = stores.length;
+    var avgGroups = totalStores ? stores.reduce(function(s,x){ return s + x.size; }, 0) / totalStores : 0;
+
+    return {
+      groups: groups, byGroup: byGroup, stores: stores,
+      byStore: stores.reduce(function(a,s){ a[s.name] = s; return a; }, Object.create(null)),
+      namesResolved: namesResolved, sigCount: sigs.size,
+      orphans: orphans, totalStores: totalStores, avgGroups: avgGroups,
+      maxGroupCount: groups.reduce(function(m,g){ return Math.max(m, g.count); }, 0),
+      maxStoreGroups: stores.reduce(function(m,s){ return Math.max(m, s.size); }, 0),
+    };
+  }
+
+  // ── Set helpers ───────────────────────────────────────────────────────────
+  function smInter(a, b){ var n = 0; a.forEach(function(x){ if (b.has(x)) n++; }); return n; }
+  function smMinus(a, b){ var out = []; a.forEach(function(x){ if (!b.has(x)) out.push(x); }); return out.sort(); }
+
+  // ── Rendering ─────────────────────────────────────────────────────────────
+  function smRenderStats(){
+    var d = SM_DATA, el = document.getElementById('smStats');
+    if (!el) return;
+    var allocGroups = d.groups.filter(function(g){ return !g.nonAlloc; }).length;
+    var tiles = [
+      {lbl:'Stores in matrix', val: d.totalStores || '—',
+       sub: d.namesResolved ? 'OPEN, with a group' : 'names unresolved'},
+      {lbl:'Store groups', val: d.groups.length,
+       sub: allocGroups + ' allocating'},
+      {lbl:'Avg groups / store', val: d.totalStores ? d.avgGroups.toFixed(1) : '—',
+       sub: 'max ' + (d.maxStoreGroups || 0)},
+      {lbl:'Distinct profiles', val: d.sigCount || '—',
+       sub: 'unique membership sets'},
+    ];
+    if (d.orphans.length) {
+      tiles.push({lbl:'Unassigned', val: d.orphans.length, sub:'in Store Codes, no group'});
+    }
+    el.innerHTML = tiles.map(function(t){
+      return '<div class="sm-stat"><div class="sm-stat-lbl">' + smEsc(t.lbl) + '</div>'
+           + '<div class="sm-stat-val">' + smEsc(String(t.val)) + '</div>'
+           + '<div class="sm-stat-sub">' + smEsc(t.sub) + '</div></div>';
+    }).join('');
+  }
+
+  function smRenderWarn(){
+    var d = SM_DATA, el = document.getElementById('smWarn');
+    if (!el) return;
+    var msgs = [];
+    if (!d.groups.length) {
+      msgs.push('<b>No store matrix loaded.</b> Load the season\u2019s Store Matrix file from Data Pulls, then hit Refresh.');
+    } else if (!d.namesResolved) {
+      msgs.push('<b>Store names could not be resolved from the matrix</b> (the parser did not find a store-name column). '
+              + 'Group counts are available, but the Stores \u25B8 Groups lens and all membership detail are unavailable. '
+              + 'Check that the matrix has a store-name column matching Store Codes.');
+    } else if (d.orphans.length) {
+      msgs.push('<b>' + d.orphans.length + ' store' + (d.orphans.length === 1 ? '' : 's') + '</b> in Store Codes '
+              + 'belong to no group in the matrix: ' + smEsc(d.orphans.slice(0, 12).join(', '))
+              + (d.orphans.length > 12 ? ' \u2026 (+' + (d.orphans.length - 12) + ' more)' : '')
+              + '. These two files are maintained separately, so this may be expected.');
+    }
+    if (!msgs.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = 'block';
+    el.innerHTML = msgs.join('<br>');
+  }
+
+  function smRailRows(){
+    var d = SM_DATA, q = SM_Q.trim().toLowerCase();
+    if (SM_VIEW === 'groups') {
+      var gs = d.groups.slice();
+      if (q) gs = gs.filter(function(g){ return g.name.toLowerCase().indexOf(q) >= 0; });
+      gs.sort(SM_SORT === 'az'
+        ? function(a,b){ return a.name.localeCompare(b.name); }
+        : function(a,b){ return b.count - a.count || a.name.localeCompare(b.name); });
+      return gs.map(function(g){
+        return {key:g.name, name:g.name, ct:g.count,
+                sub:(g.nonAlloc ? 'non-allocating' : ''),
+                bar: d.maxGroupCount ? g.count / d.maxGroupCount : 0};
+      });
+    }
+    var ss = d.stores.slice();
+    if (q) ss = ss.filter(function(s){
+      return s.name.toLowerCase().indexOf(q) >= 0 || (s.code && s.code.toLowerCase().indexOf(q) >= 0);
+    });
+    ss.sort(SM_SORT === 'az'
+      ? function(a,b){ return a.name.localeCompare(b.name); }
+      : function(a,b){ return b.size - a.size || a.name.localeCompare(b.name); });
+    return ss.map(function(s){
+      return {key:s.name, name:s.name, ct:s.size, sub:s.code || 'no code',
+              bar: d.maxStoreGroups ? s.size / d.maxStoreGroups : 0};
+    });
+  }
+
+  function smRenderRail(){
+    var el = document.getElementById('smRailList');
+    if (!el) return;
+    var rows = smRailRows();
+    if (!rows.length) {
+      el.innerHTML = '<div class="sm-rail-empty">'
+        + (SM_Q ? 'Nothing matches \u201C' + smEsc(SM_Q) + '\u201D' : 'Nothing to show') + '</div>';
+      return;
+    }
+    el.innerHTML = rows.map(function(r){
+      return '<div class="sm-rail-item' + (r.key === SM_SEL ? ' sel' : '') + '" '
+           + 'onclick="smSelect(\'' + smAttr(r.key).replace(/'/g, "\\'") + '\')">'
+           + '<div><div class="sm-rail-name" title="' + smEsc(r.name) + '">' + smEsc(r.name) + '</div>'
+           + (r.sub ? '<div class="sm-rail-sub">' + smEsc(r.sub) + '</div>' : '') + '</div>'
+           + '<div class="sm-rail-ct">' + r.ct + '</div>'
+           + '<div class="sm-rail-bar"><div class="sm-rail-bar-fill" style="width:' + smPct(r.bar) + '%"></div></div>'
+           + '</div>';
+    }).join('');
+  }
+
+  function smStoreChip(name){
+    var d = SM_DATA;
+    var rec = d.byStore[name];
+    var code = rec && rec.code ? rec.code : '';
+    return '<span class="sm-chip' + (code ? '' : ' nocode') + '" '
+         + 'title="' + smEsc(name) + (code ? ' \u00B7 ' + smEsc(code) : ' \u00B7 no Store Codes entry') + '" '
+         + 'onclick="smJump(\'stores\',\'' + smAttr(name).replace(/'/g, "\\'") + '\')">'
+         + smEsc(name) + (code ? '<span class="sm-chip-code">' + smEsc(code) + '</span>' : '')
+         + '</span>';
+  }
+
+  function smGroupChip(name){
+    var g = SM_DATA.byGroup[name];
+    var na = g && g.nonAlloc;
+    return '<span class="sm-chip' + (na ? ' nonalloc' : '') + '" '
+         + 'title="' + smEsc(name) + (na ? ' \u00B7 non-allocating group' : '') + '" '
+         + 'onclick="smJump(\'groups\',\'' + smAttr(name).replace(/'/g, "\\'") + '\')">'
+         + smEsc(name) + '<span class="sm-chip-code">' + (g ? g.count : 0) + '</span></span>';
+  }
+
+  function smRelRow(cls, label, chips, note){
+    if (!chips.length) return '';
+    return '<div class="sm-rel-row"><span class="sm-rel-lbl sm-rel-' + cls + '">' + label + '</span>'
+         + '<div><div class="sm-chips">' + chips.join('') + '</div>'
+         + (note ? '<div class="sm-rail-sub" style="margin-top:5px">' + note + '</div>' : '')
+         + '</div></div>';
+  }
+
+  function smRenderGroupDetail(name){
+    var d = SM_DATA, g = d.byGroup[name];
+    if (!g) return '<div class="sm-empty-detail">Select a store group from the list.</div>';
+    var cov = d.totalStores ? g.count / d.totalStores : 0;
+
+    var html = '<div class="sm-dcard"><div class="sm-dhead">'
+      + '<div><div class="sm-dname">' + smEsc(g.name) + '</div>'
+      + '<div class="sm-dmeta">Store group' + (g.nonAlloc ? ' \u00B7 non-allocating (excluded from allocation)' : '') + '</div></div>'
+      + '<div><div class="sm-dbig">' + g.count + '</div><div class="sm-dbig-lbl">stores</div></div>'
+      + '</div>'
+      + '<div class="sm-cover"><div class="sm-cover-track"><div class="sm-cover-fill" style="width:' + smPct(cov) + '%"></div></div>'
+      + '<div class="sm-cover-lbl">' + smPct(cov) + '% of the ' + d.totalStores + ' stores in the matrix</div></div>'
+      + '</div>';
+
+    // Members
+    html += '<div class="sm-dcard"><div class="sm-sec-title">Stores in this group (' + g.set.size + ')</div>';
+    if (!g.set.size) {
+      html += '<div class="sm-rel-none">'
+           + (d.namesResolved
+              ? 'No stores are flagged for this group in the matrix.'
+              : 'Store names unavailable \u2014 only the count could be parsed.')
+           + '</div>';
+    } else {
+      html += '<div class="sm-chips">'
+           + Array.from(g.set).sort().map(smStoreChip).join('') + '</div>';
+    }
+    html += '</div>';
+
+    // Set relationships
+    if (g.set.size) {
+      var identical = [], contains = [], within = [], overlaps = [], disjoint = 0;
+      d.groups.forEach(function(h){
+        if (h.name === g.name || !h.set.size) return;
+        var inter = smInter(g.set, h.set);
+        if (inter === 0) { disjoint++; return; }
+        var hInG = inter === h.set.size, gInH = inter === g.set.size;
+        if (hInG && gInH) identical.push(h.name);
+        else if (hInG) contains.push(h.name);
+        else if (gInH) within.push(h.name);
+        else overlaps.push({name:h.name, n:inter});
+      });
+      var bySize = function(a,b){ return (d.byGroup[b].count - d.byGroup[a].count) || a.localeCompare(b); };
+      identical.sort(); contains.sort(bySize); within.sort(bySize);
+      overlaps.sort(function(a,b){ return b.n - a.n || a.name.localeCompare(b.name); });
+
+      var rows = ''
+        + smRelRow('identical','Identical', identical.map(smGroupChip),
+            'Same store set as this group \u2014 one of the pair may be redundant.')
+        + smRelRow('contains','Contains', contains.map(smGroupChip),
+            'Every store in these groups is also in ' + smEsc(g.name) + '.')
+        + smRelRow('within','Within', within.map(smGroupChip),
+            smEsc(g.name) + ' is a strict subset of these.')
+        + smRelRow('overlap','Overlaps', overlaps.slice(0, 24).map(function(o){
+            var gg = d.byGroup[o.name];
+            return '<span class="sm-chip' + (gg && gg.nonAlloc ? ' nonalloc' : '') + '" '
+                 + 'onclick="smJump(\'groups\',\'' + smAttr(o.name).replace(/'/g, "\\'") + '\')">'
+                 + smEsc(o.name) + '<span class="sm-chip-code">\u2229' + o.n + '</span></span>';
+          }), 'Partial overlap \u2014 neither group contains the other. Number shown is the shared store count.'
+              + (overlaps.length > 24 ? ' Showing the 24 largest of ' + overlaps.length + '.' : ''));
+
+      html += '<div class="sm-dcard"><div class="sm-sec-title">How this group nests against the others</div>';
+      html += rows
+        ? '<div class="sm-rel">' + rows + '</div>'
+        : '<div class="sm-rel-none">No other group shares a store with this one.</div>';
+      if (disjoint) {
+        html += '<div class="sm-rail-sub" style="margin-top:10px">' + disjoint
+             + ' group' + (disjoint === 1 ? '' : 's') + ' share no stores with this one (not listed).</div>';
+      }
+      html += '</div>';
+    }
+    return html;
+  }
+
+  function smRenderStoreDetail(name){
+    var d = SM_DATA, s = d.byStore[name];
+    if (!s) return '<div class="sm-empty-detail">Select a store from the list.</div>';
+    var cov = d.groups.length ? s.size / d.groups.length : 0;
+
+    var html = '<div class="sm-dcard"><div class="sm-dhead">'
+      + '<div><div class="sm-dname">' + smEsc(s.name) + '</div>'
+      + '<div class="sm-dmeta">' + (s.code ? 'Store code ' + smEsc(s.code) : 'No Store Codes entry') + '</div></div>'
+      + '<div><div class="sm-dbig">' + s.size + '</div><div class="sm-dbig-lbl">groups</div></div>'
+      + '</div>'
+      + '<div class="sm-cover"><div class="sm-cover-track"><div class="sm-cover-fill" style="width:' + smPct(cov) + '%"></div></div>'
+      + '<div class="sm-cover-lbl">In ' + s.size + ' of ' + d.groups.length + ' groups \u00B7 matrix average is '
+      + d.avgGroups.toFixed(1) + '</div></div></div>';
+
+    html += '<div class="sm-dcard"><div class="sm-sec-title">Groups this store belongs to (' + s.size + ')</div>'
+         + '<div class="sm-chips">' + s.list.map(smGroupChip).join('') + '</div></div>';
+
+    // Identical + near-identical profiles
+    var twins = [], near = [];
+    d.stores.forEach(function(o){
+      if (o.name === s.name) return;
+      if (o.sig === s.sig) { twins.push(o); return; }
+      var extra = smMinus(o.groups, s.groups);
+      var missing = smMinus(s.groups, o.groups);
+      var dist = extra.length + missing.length;
+      if (dist <= 2) near.push({store:o, extra:extra, missing:missing, dist:dist});
+    });
+    near.sort(function(a,b){ return a.dist - b.dist || a.store.name.localeCompare(b.store.name); });
+
+    html += '<div class="sm-dcard"><div class="sm-sec-title">Stores with the same profile (' + twins.length + ')</div>';
+    html += twins.length
+      ? '<div class="sm-chips">' + twins.map(function(o){ return smStoreChip(o.name); }).join('') + '</div>'
+        + '<div class="sm-rail-sub" style="margin-top:7px">These stores are treated identically by every group in the matrix.</div>'
+      : '<div class="sm-rel-none">No other store has exactly this membership set \u2014 this profile is unique.</div>';
+    html += '</div>';
+
+    html += '<div class="sm-dcard"><div class="sm-sec-title">Nearly the same (within 2 groups)</div>';
+    if (!near.length) {
+      html += '<div class="sm-rel-none">No store is within two groups of this profile.</div>';
+    } else {
+      html += near.slice(0, 12).map(function(n){
+        var bits = [];
+        n.extra.forEach(function(g){ bits.push('<span class="sm-diff-add" title="' + smEsc(g) + ' has it, ' + smEsc(s.name) + ' does not">+' + smEsc(g) + '</span>'); });
+        n.missing.forEach(function(g){ bits.push('<span class="sm-diff-rem" title="' + smEsc(s.name) + ' has it, ' + smEsc(n.store.name) + ' does not">\u2212' + smEsc(g) + '</span>'); });
+        return '<div class="sm-peer"><span class="sm-peer-name" onclick="smJump(\'stores\',\''
+             + smAttr(n.store.name).replace(/'/g, "\\'") + '\')">' + smEsc(n.store.name) + '</span>'
+             + '<span>' + bits.join(' &nbsp; ') + '</span></div>';
+      }).join('');
+      html += '<div class="sm-rail-sub" style="margin-top:9px">Read relative to <b>' + smEsc(s.name)
+           + '</b>: <span class="sm-diff-add">+group</span> the other store has it, '
+           + '<span class="sm-diff-rem">\u2212group</span> this store has it and the other does not. '
+           + 'A one-group gap between otherwise identical stores is often a missing X in the matrix.'
+           + (near.length > 12 ? ' Showing 12 of ' + near.length + '.' : '') + '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function smRenderDetail(){
+    var el = document.getElementById('smDetail');
+    if (!el) return;
+    var d = SM_DATA;
+    if (!d.groups.length) {
+      el.innerHTML = '<div class="sm-empty-detail">No store matrix is loaded for this season.</div>';
+      return;
+    }
+    if (SM_VIEW === 'stores' && !d.namesResolved) {
+      el.innerHTML = '<div class="sm-empty-detail">Store names could not be read from the matrix, '
+                   + 'so this lens is unavailable. Switch to Groups \u25B8 Stores for counts.</div>';
+      return;
+    }
+    if (!SM_SEL) {
+      el.innerHTML = '<div class="sm-empty-detail">Select a '
+                   + (SM_VIEW === 'groups' ? 'store group' : 'store') + ' from the list to explore it.</div>';
+      return;
+    }
+    el.innerHTML = SM_VIEW === 'groups' ? smRenderGroupDetail(SM_SEL) : smRenderStoreDetail(SM_SEL);
+    el.scrollTop = 0;
+  }
+
+  function smRenderSubtitle(){
+    var el = document.getElementById('smSubtitle');
+    if (!el) return;
+    var d = SM_DATA;
+    var szn = (typeof CONFIG_SEASON !== 'undefined' && CONFIG_SEASON) ? CONFIG_SEASON : 'current season';
+    el.textContent = d.groups.length
+      ? szn + ' store matrix \u00B7 ' + d.groups.length + ' groups \u00B7 '
+        + (d.namesResolved ? d.totalStores + ' stores' : 'counts only') + ' \u00B7 read-only'
+      : 'No matrix loaded \u00B7 read-only';
+  }
+
+  // Pick a sensible default: the biggest group, or the first store.
+  function smDefaultSel(){
+    var rows = smRailRows();
+    return rows.length ? rows[0].key : null;
+  }
+
+  function smRenderAll(){
+    smRenderSubtitle(); smRenderStats(); smRenderWarn(); smRenderRail(); smRenderDetail();
+  }
+
+  // ── Public handlers ───────────────────────────────────────────────────────
+  function smRefresh(){
+    SM_DATA = smBuild();
+    if (SM_SEL) {
+      var still = SM_VIEW === 'groups' ? SM_DATA.byGroup[SM_SEL] : SM_DATA.byStore[SM_SEL];
+      if (!still) SM_SEL = null;
+    }
+    if (!SM_SEL) SM_SEL = smDefaultSel();
+    smRenderAll();
+  }
+  function smSetView(v){
+    if (v === SM_VIEW) return;
+    SM_VIEW = v; SM_SEL = null; SM_Q = '';
+    var sb = document.getElementById('smSearch'); if (sb) sb.value = '';
+    document.getElementById('smSegGroups').classList.toggle('active', v === 'groups');
+    document.getElementById('smSegStores').classList.toggle('active', v === 'stores');
+    if (!SM_DATA) SM_DATA = smBuild();
+    SM_SEL = smDefaultSel();
+    smRenderAll();
+  }
+  function smSetSort(s){
+    if (s === SM_SORT) return;
+    SM_SORT = s;
+    document.getElementById('smSortSize').classList.toggle('active', s === 'size');
+    document.getElementById('smSortAz').classList.toggle('active', s === 'az');
+    smRenderRail();
+  }
+  function smSetQuery(q){ SM_Q = q || ''; smRenderRail(); }
+  function smSelect(key){ SM_SEL = key; smRenderRail(); smRenderDetail(); }
+  // Cross-navigation: a store chip in the group lens jumps to that store's
+  // profile, and vice versa. This is what makes the two lenses feel like one
+  // tool rather than two reports.
+  function smJump(view, key){
+    if (view !== SM_VIEW) {
+      SM_VIEW = view; SM_Q = '';
+      var sb = document.getElementById('smSearch'); if (sb) sb.value = '';
+      document.getElementById('smSegGroups').classList.toggle('active', view === 'groups');
+      document.getElementById('smSegStores').classList.toggle('active', view === 'stores');
+    }
+    SM_SEL = key;
+    smRenderAll();
+    var rail = document.getElementById('smRailList');
+    if (rail) { var sel = rail.querySelector('.sm-rail-item.sel'); if (sel && sel.scrollIntoView) sel.scrollIntoView({block:'nearest'}); }
+  }
+  function smCopyMembers(){
+    if (!SM_DATA || !SM_SEL) { if (typeof showToast === 'function') showToast('Nothing selected'); return; }
+    var lines = [];
+    if (SM_VIEW === 'groups') {
+      var g = SM_DATA.byGroup[SM_SEL];
+      lines = g ? Array.from(g.set).sort() : [];
+    } else {
+      var s = SM_DATA.byStore[SM_SEL];
+      lines = s ? s.list.slice() : [];
+    }
+    if (!lines.length) { if (typeof showToast === 'function') showToast('Nothing to copy'); return; }
+    var txt = lines.join('\n');
+    var done = function(){ if (typeof showToast === 'function') showToast('Copied ' + lines.length + ' \u00B7 ' + SM_SEL); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(done).catch(function(){ smFallbackCopy(txt); done(); });
+    } else { smFallbackCopy(txt); done(); }
+  }
+  function smFallbackCopy(txt){
+    var t = document.createElement('textarea');
+    t.value = txt; t.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(t); t.select();
+    try { document.execCommand('copy'); } catch(e){}
+    document.body.removeChild(t);
+  }
+
+  window.smRefresh      = smRefresh;
+  window.smSetView      = smSetView;
+  window.smSetSort      = smSetSort;
+  window.smSetQuery     = smSetQuery;
+  window.smSelect       = smSelect;
+  window.smJump         = smJump;
+  window.smCopyMembers  = smCopyMembers;
+  window._smBuild       = smBuild;   // exposed for the test harness
+
+  console.log('[SM] Store Matrix module ready [store-matrix-v1]');
 })();
 </script>
 
