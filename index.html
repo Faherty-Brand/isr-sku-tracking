@@ -325,6 +325,17 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .ia-skurow-prob{font-family:var(--mono);font-size:10px;text-align:right;color:var(--muted)}
 .ia-skurow-vol{font-family:var(--mono);font-size:11px;text-align:right;color:var(--text);font-weight:600}
 .ia-skulist-empty{padding:24px 14px;text-align:center;font-size:11px;color:var(--muted);font-style:italic}
+/* Delivery-month grouping inside the contributing-SKU lists */
+.ia-mgroup-head{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;padding:6px 14px;background:#eef2f7;border-top:1px solid var(--border);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2}
+.ia-mgroup-head:first-child{border-top:none}
+.ia-mgroup-name{font-family:var(--head);font-size:11px;font-weight:700;color:var(--text);letter-spacing:.05em;text-transform:uppercase}
+.ia-mgroup-ct{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.ia-mgroup-units{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--text)}
+.ia-skurow-style{color:var(--text);font-size:11px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ia-skurow-color{color:var(--muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ia-skurow-tag{display:inline-block;font-family:var(--mono);font-size:9px;padding:0 5px;border-radius:8px;border:1px solid var(--border);color:var(--muted);margin-right:5px;vertical-align:1px}
+.ia-skurow-tag.conf{background:#ecfdf5;border-color:#a7f3d0;color:#15803d}
+.ia-skurow-tag.pend{background:#fffbeb;border-color:#fde68a;color:#b45309}
 
 /* Wider stack on narrow screens — collapse cards to 1 column at <1100px */
 @media (max-width:1100px){
@@ -337,7 +348,12 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .ia-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 
 /* Drop day breakdown */
-.ia-drops{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.ia-drops{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.ia-drop-when{font-family:var(--mono);font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:#fff;background:var(--accent);border-radius:8px;padding:1px 7px;display:inline-block;margin-bottom:6px}
+.ia-drop-when.later{background:#94a3b8}
+.ia-drop-split{margin-top:10px;padding-top:8px;border-top:1px solid #f0f2f5;display:flex;flex-direction:column;gap:3px}
+.ia-drop-splitrow{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--muted)}
+.ia-drop-splitrow b{color:var(--text);font-weight:600}
 .ia-drop-item{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
 .ia-drop-day{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;margin-bottom:4px}
 .ia-drop-date{font-family:var(--head);font-size:14px;font-weight:600;color:var(--text);margin-bottom:10px}
@@ -978,7 +994,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: log-wins (p6l)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: ia-volume-rework (p7a)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1288,7 +1304,7 @@ setTimeout(function(){
         </ul>
         <p><b>Modifiers stacked on top:</b> SKUs with PLG already partially staged get the on-hand portion guaranteed (1.0); on-time history adds ±5%; a generosity multiplier (default 1.05×, adjustable in Settings) leans estimates slightly high to keep the warehouse from being underprepared.</p>
         <p><b>Bucket meanings:</b> Confirmed (≥99%, on-hand only) · Likely (80–98%) · Possible (50–79%) · Long-shot (&lt;50%).</p>
-        <p><b>Roll-forward:</b> a Pending SKU at p% this week contributes (1−p)% to next week — the remaining probability has to drop somewhere.</p>
+        <p><b>Roll-forward:</b> the leftover probability from <i>this</i> week's Pending SKUs. A Pending SKU with IA of 1,000 units at 85% contributes 850 units to This Week and the remaining 150 (1&nbsp;−&nbsp;0.85) to Next Week. The units aren't cancelled if the WIP misses its date — they slip. Only <b>Pending – Allocate This Week</b> SKUs generate roll-forward; on-hand ("Here") SKUs are certain and have no remainder. In the Drop Day Breakdown the same remainder lands on the <i>following</i> Tue/Thu drop.</p>
         <p><b>Excluded:</b> Pending SKUs without a WIP date (no signal to estimate from). They appear in the Risk Factors strip below.</p>
       </div>
     </div>
@@ -1349,14 +1365,17 @@ setTimeout(function(){
     </div>
 
     <div class="ia-section">
-      <div class="ia-section-title">Drop day breakdown</div>
+      <div class="ia-section-title">Drop day breakdown — next 3 drops</div>
+      <div style="font-size:11px;color:var(--muted);margin:-6px 0 12px;line-height:1.45" id="iaDropsNote">
+        Drops run Tuesday &amp; Thursday. Units land on the first drop on/after the SKU is ready — so anything already Ready to Allocate falls into the next drop date.
+      </div>
       <div class="ia-drops" id="iaDrops"></div>
     </div>
 
     <div class="ia-section ia-grid-2">
       <div>
-        <div class="ia-section-title">By Division (this week)</div>
-        <div class="ia-div-list" id="iaByDiv"></div>
+        <div class="ia-section-title">By Delivery Month (this week)</div>
+        <div class="ia-div-list" id="iaByMonth"></div>
       </div>
       <div>
         <div class="ia-section-title">Risk factors</div>
@@ -9130,6 +9149,64 @@ function iaDropDate(row) {
   return row.deliv_alloc_date ? parseXLDate(row.deliv_alloc_date) : null;
 }
 
+// ── Delivery-month ordering (retail season order: Nov → Oct) ────────────────
+// Local copy on purpose. LL_MONTH_ORDER lives further down the file and the IA
+// tab shouldn't depend on declaration order for a lookup this small.
+const IA_MONTH_ORDER = {
+  'November':1,'November_2':2,'December':3,'December_2':4,
+  'January':5,'January_2':6,'February':7,'February_2':8,
+  'March':9,'March_2':10,'April':11,'April_2':12,
+  'May':13,'May_2':14,'June':15,'June_2':16,
+  'July':17,'July_2':18,'August':19,'August_2':20,
+  'September':21,'September_2':22,'October':23,'October_2':24,
+};
+function iaMonthKey(m) {
+  if (!m) return 999;
+  const s = String(m).trim();
+  if (IA_MONTH_ORDER[s] != null) return IA_MONTH_ORDER[s];
+  const hit = Object.keys(IA_MONTH_ORDER).find(k => k.toLowerCase() === s.toLowerCase());
+  return hit ? IA_MONTH_ORDER[hit] : 999;
+}
+
+// ── Drop-day model ──────────────────────────────────────────────────────────
+// Allocation drops run Tuesday and Thursday, every week. Returns the next
+// `count` drop days starting from today INCLUSIVE — so if today is Tuesday,
+// today is drop #1 (same-day drop projection).
+function iaNextDropDays(today, count) {
+  const n = count || 3;
+  const out = [];
+  const d = new Date(today); d.setHours(0,0,0,0);
+  // Guard against a runaway loop if the date math ever goes sideways.
+  for (let guard = 0; guard < 60 && out.length < n; guard++) {
+    const dow = d.getDay();
+    if (dow === 2 || dow === 4) out.push(new Date(d));   // 2=Tue, 4=Thu
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+
+// First drop index on/after `ready`. Returns -1 when the SKU isn't ready until
+// after the 3-drop window closes.
+function iaAssignDropIdx(dropDays, ready) {
+  for (let i = 0; i < dropDays.length; i++) {
+    if (dropDays[i].getTime() >= ready.getTime()) return i;
+  }
+  return -1;
+}
+
+// When is this SKU actually allocatable? The later of:
+//   · its Flow-Cal alloc drop date (can't drop before the calendar says so)
+//   · its WIP in-DC date, for Pending SKUs (can't drop what isn't in the DC)
+//   · today (a past alloc date doesn't put units on a past drop — they queue
+//     up for the NEXT drop, which is why Ready-to-Allocate SKUs all land on
+//     drop #1)
+function iaReadyDate(today, dropDate, pendDate, isPending) {
+  let ready = new Date(today);
+  if (dropDate && dropDate.getTime() > ready.getTime()) ready = new Date(dropDate);
+  if (isPending && pendDate && pendDate.getTime() > ready.getTime()) ready = new Date(pendDate);
+  return ready;
+}
+
 function iaBucketLabel(prob) {
   if (prob >= 0.99) return 'Confirmed';
   if (prob >= 0.80) return 'Likely';
@@ -9142,15 +9219,21 @@ function iaBucketLabel(prob) {
 function iaCompute() {
   const today = new Date(); today.setHours(0,0,0,0);
   const { thisDropThu, nextDropThu, weekAfterDropThu } = iaWeekAnchors(today);
+  const dropDays = iaNextDropDays(today, 3);
 
   const out = {
     thisWeek: {confirmed: 0, likely: 0, possible: 0, longshot: 0, total: 0, skus: 0},
     nextWeek: {confirmed: 0, likely: 0, possible: 0, longshot: 0, rollforward: 0, total: 0, skus: 0},
-    drops: {}, // dateKey → {date, day, units, skus}
-    byDiv: {}, // division → units
+    // Next 3 Tue/Thu drops. `units` = primary expected volume, `rollUnits` =
+    // roll-forward slipping in from the prior drop's Pending misses.
+    dropDays: dropDays.map(d => ({date: d, units: 0, rollUnits: 0, skus: 0, rollSkus: 0})),
+    // Volume that falls outside the 3-drop window: either the SKU isn't ready
+    // until after drop #3, or its roll-forward remainder spills past drop #3.
+    dropsBeyond: {units: 0, skus: 0, rollUnits: 0},
+    byMonth: {},                        // delivery month → this-week units
     risks: {noWip: 0, lateWip: 0, longShot: 0},
     contribs: [], // per-SKU detail rows for the contributors widget
-    range: {thisDropThu, nextDropThu, weekAfterDropThu},
+    range: {thisDropThu, nextDropThu, weekAfterDropThu, dropDays},
   };
 
   ALL_ROWS.forEach(row => {
@@ -9169,8 +9252,16 @@ function iaCompute() {
     if (ia <= 0) return; // nothing to allocate
 
     const dropDate = iaDropDate(row);
+    const pendDate = row.cs_dc_pend ? parseXLDate(row.cs_dc_pend) : null;
+
+    // Effective (override-aware) delivery month — same resolver the grid and
+    // Late List use, so a deliv_ow edit regroups the SKU here too.
+    const delivMonth = (typeof window.resolveEffDeliv === 'function')
+      ? (window.resolveEffDeliv(row.deliv_ow, row.cs_deliv1) || '')
+      : (row.deliv_ow || row.cs_deliv1 || '');
 
     let probThis = 0, probNext = 0, isNoWip = false, contribBucket = '';
+    let dropIdx = -1;
 
     // ── This-week buckets ─────────────────────────────────────────────────
     if (proj === 'Here - Allocate This Week') {
@@ -9217,21 +9308,8 @@ function iaCompute() {
       out.thisWeek.total += thisVol;
       out.thisWeek.skus++;
 
-      // Drop-day breakdown (this week only — next-week drops grouped under next)
-      if (dropDate && dropDate <= thisDropThu) {
-        const key = dropDate.toISOString().slice(0,10);
-        if (!out.drops[key]) {
-          out.drops[key] = {date: dropDate, day: dropDate.toLocaleDateString('en-US',{weekday:'long'}),
-                            label: dropDate.toLocaleDateString('en-US',{month:'short',day:'numeric'}),
-                            units: 0, skus: 0, isNext: false};
-        }
-        out.drops[key].units += thisVol;
-        out.drops[key].skus++;
-      }
-
-      // Division
-      const div = row.division || 'Unknown';
-      out.byDiv[div] = (out.byDiv[div] || 0) + thisVol;
+      // This-week volume by delivery month (drives the bottom bar chart)
+      out.byMonth[delivMonth || '—'] = (out.byMonth[delivMonth || '—'] || 0) + thisVol;
 
       // Risk: late or long-shot
       if (probThis < 0.5) out.risks.longShot++;
@@ -9251,17 +9329,35 @@ function iaCompute() {
       }
       out.nextWeek.total += nextVol;
       out.nextWeek.skus++;
+    }
 
-      // Drop-day breakdown (next week)
-      if (dropDate && dropDate > thisDropThu && dropDate <= nextDropThu) {
-        const key = dropDate.toISOString().slice(0,10);
-        if (!out.drops[key]) {
-          out.drops[key] = {date: dropDate, day: dropDate.toLocaleDateString('en-US',{weekday:'long'}),
-                            label: dropDate.toLocaleDateString('en-US',{month:'short',day:'numeric'}),
-                            units: 0, skus: 0, isNext: true};
+    // ── Drop-day assignment ───────────────────────────────────────────────
+    // Independent of the this/next-week card math. Each SKU's expected units
+    // land on the first Tue/Thu drop on-or-after it's actually ready; a Pending
+    // SKU's leftover probability slips to the drop after that.
+    const isPendingProj = proj.indexOf('Pending') === 0;
+    const primaryProb = probThis > 0 ? probThis : probNext;
+    if (!isNoWip && primaryProb > 0) {
+      const ready = iaReadyDate(today, dropDate, pendDate, isPendingProj);
+      const idx = iaAssignDropIdx(out.range.dropDays, ready);
+      const primaryVol = ia * primaryProb;
+      const rollVol = isPendingProj ? ia * Math.max(0, 1 - primaryProb) : 0;
+
+      if (idx === -1) {
+        out.dropsBeyond.units += primaryVol;
+        out.dropsBeyond.skus++;
+      } else {
+        out.dropDays[idx].units += primaryVol;
+        out.dropDays[idx].skus++;
+        if (rollVol > 0) {
+          if (idx + 1 < out.dropDays.length) {
+            out.dropDays[idx + 1].rollUnits += rollVol;
+            out.dropDays[idx + 1].rollSkus++;
+          } else {
+            out.dropsBeyond.rollUnits += rollVol;
+          }
         }
-        out.drops[key].units += nextVol;
-        out.drops[key].skus++;
+        dropIdx = idx;
       }
     }
 
@@ -9273,13 +9369,20 @@ function iaCompute() {
     out.contribs.push({
       sku: row.sku,
       desc: `${row.style_desc||''} — ${row.color_desc||''}`,
+      style: row.style_desc || '',
+      color: row.color_desc || '',
       division: row.division || '',
       category: row.category || '',
+      delivMonth: delivMonth || '',
+      // Confirmed = physically on hand ("Here - …"). Everything else is Pending
+      // and therefore carries WIP risk. Drives the sort inside each month group.
+      isConfirmed: proj.indexOf('Here') === 0,
       ia,
       probThis, probNext,
       thisVol, nextVol,
       isNoWip,
       proj,
+      dropIdx,
       dcRecd: row.cs_dc_recd || '',
       dcPend: row.cs_dc_pend || '',
     });
@@ -9306,12 +9409,20 @@ function iaRefresh() {
   iaRenderCards();
   iaRenderSkuLists();
   iaRenderDrops();
-  iaRenderByDiv();
+  iaRenderByMonth();
   iaRenderRisks();
   iaRenderProbTable();
 }
 
 function iaFmtN(n) { return Math.round(n).toLocaleString(); }
+
+// Style/color descriptions come straight from the PST and can contain & or "
+// (e.g. 'Black & Ivory'). Escape before interpolating into innerHTML.
+function iaEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 function iaRenderCards() {
   const t = IA_DATA.thisWeek;
@@ -9356,12 +9467,8 @@ function iaBars(arr) {
 // always sorted by anticipated volume, no filter switcher, and includes the
 // in-DC date (pend/recd) which the bottom widget omits.
 function iaRenderSkuLists() {
-  const thisRows = IA_DATA.contribs
-    .filter(r => r.thisVol > 0)
-    .sort((a, b) => b.thisVol - a.thisVol);
-  const nextRows = IA_DATA.contribs
-    .filter(r => r.nextVol > 0)
-    .sort((a, b) => b.nextVol - a.nextVol);
+  const thisRows = IA_DATA.contribs.filter(r => r.thisVol > 0);
+  const nextRows = IA_DATA.contribs.filter(r => r.nextVol > 0);
 
   document.getElementById('iaThisListCount').textContent =
     thisRows.length === 1 ? '1 SKU' : `${thisRows.length} SKUs`;
@@ -9372,10 +9479,47 @@ function iaRenderSkuLists() {
   document.getElementById('iaNextList').innerHTML = renderSkuListRows(nextRows, 'next');
 }
 
+// Groups the contributing SKUs by delivery month (season order: Nov → Oct).
+// Inside each month: Confirmed (on-hand) first, then Pending ordered by
+// likelihood descending, then by volume as the tiebreak.
 function renderSkuListRows(rows, week) {
   if (rows.length === 0) {
     return `<div class="ia-skulist-empty">No SKUs contributing this week</div>`;
   }
+  const volOf  = r => (week === 'this' ? r.thisVol  : r.nextVol);
+  const probOf = r => (week === 'this' ? r.probThis : r.probNext);
+
+  const groups = new Map();
+  rows.forEach(r => {
+    const m = r.delivMonth || '—';
+    if (!groups.has(m)) groups.set(m, []);
+    groups.get(m).push(r);
+  });
+
+  const ordered = [...groups.entries()].sort((a, b) => {
+    const ka = iaMonthKey(a[0]), kb = iaMonthKey(b[0]);
+    if (ka !== kb) return ka - kb;
+    return String(a[0]).localeCompare(String(b[0]));
+  });
+
+  return ordered.map(([month, list]) => {
+    list.sort((a, b) => {
+      if (a.isConfirmed !== b.isConfirmed) return a.isConfirmed ? -1 : 1;
+      const pd = probOf(b) - probOf(a);
+      if (Math.abs(pd) > 1e-9) return pd;
+      return volOf(b) - volOf(a);
+    });
+    const units = list.reduce((s, r) => s + volOf(r), 0);
+    const head = `<div class="ia-mgroup-head">
+      <span class="ia-mgroup-name">${iaEsc(month)}</span>
+      <span class="ia-mgroup-ct">${list.length} SKU${list.length === 1 ? '' : 's'}</span>
+      <span class="ia-mgroup-units">${iaFmtN(units)}</span>
+    </div>`;
+    return head + renderSkuRowSet(list, week);
+  }).join('');
+}
+
+function renderSkuRowSet(rows, week) {
   return rows.map(r => {
     const prob = week === 'this' ? r.probThis : r.probNext;
     const vol  = week === 'this' ? r.thisVol  : r.nextVol;
@@ -9399,13 +9543,19 @@ function renderSkuListRows(rows, week) {
     }
 
     const probPct = Math.round(prob * 100);
-    const catLine = [r.division, r.category].filter(Boolean).join(' · ') || '—';
+    const tag = r.isConfirmed
+      ? `<span class="ia-skurow-tag conf">CONF</span>`
+      : `<span class="ia-skurow-tag pend">PEND</span>`;
+    const styleTxt = iaEsc(r.style || '—');
+    const colorTxt = iaEsc(r.color || '—');
+    const subLine  = [r.division, r.category].filter(Boolean).join(' · ');
 
-    return `<div class="ia-skurow" onclick="switchTab('sku');setTimeout(()=>openDrilldown('${r.sku}'),100)">
+    return `<div class="ia-skurow" title="${iaEsc(r.proj || '')}" onclick="switchTab('sku');setTimeout(()=>openDrilldown('${r.sku}'),100)">
       <div class="ia-skurow-stripe ${stripeCls}"></div>
-      <span class="ia-skurow-sku">${r.sku}</span>
+      <span class="ia-skurow-sku">${tag}${r.sku}</span>
       <div class="ia-skurow-meta">
-        <span class="ia-skurow-cat">${catLine}</span>
+        <span class="ia-skurow-style">${styleTxt}</span>
+        <span class="ia-skurow-color">${colorTxt}${subLine ? ' · ' + iaEsc(subLine) : ''}</span>
         <span class="ia-skurow-dc ${dcCls}">${dcLabel}</span>
       </div>
       <span class="ia-skurow-prob">${probPct}%</span>
@@ -9414,35 +9564,77 @@ function renderSkuListRows(rows, week) {
   }).join('');
 }
 
+// Next three Tue/Thu drops with projected volume. Each SKU's units land on
+// the first drop on/after it's ready (see iaReadyDate) — so anything already
+// Ready to Allocate shows on drop #1, never on a past date.
 function iaRenderDrops() {
-  const drops = Object.values(IA_DATA.drops).sort((a,b) => a.date - b.date);
-  const max = Math.max(...drops.map(d => d.units), 1);
+  const drops = IA_DATA.dropDays || [];
+  const el = document.getElementById('iaDrops');
+  if (!el) return;
   if (drops.length === 0) {
-    document.getElementById('iaDrops').innerHTML = `<div class="ia-card-empty" style="grid-column:1/-1;text-align:center;padding:20px">No drops scheduled in this/next week window.</div>`;
+    el.innerHTML = `<div class="ia-card-empty" style="grid-column:1/-1;text-align:center;padding:20px">No drop days resolved.</div>`;
     return;
   }
-  document.getElementById('iaDrops').innerHTML = drops.map(d => `
-    <div class="ia-drop-item">
-      <div class="ia-drop-day">${d.isNext ? 'Next Week · ' : 'This Week · '}${d.day}</div>
-      <div class="ia-drop-date">${d.label}</div>
-      <div class="ia-drop-units">${iaFmtN(d.units)}</div>
-      <div class="ia-drop-skus">${d.skus} SKU${d.skus===1?'':'s'}</div>
-      <div class="ia-drop-bar"><div class="ia-drop-bar-fill" style="width:${(d.units/max)*100}%"></div></div>
-    </div>
-  `).join('');
+  const totals = drops.map(d => d.units + d.rollUnits);
+  const max = Math.max(...totals, 1);
+  const today = new Date(); today.setHours(0,0,0,0);
+  const thisSat = new Date(today.getTime() + ((6 - today.getDay()) * 86400000));
+
+  el.innerHTML = drops.map((d, i) => {
+    const total = d.units + d.rollUnits;
+    const isToday = d.date.getTime() === today.getTime();
+    const sameWeek = d.date.getTime() <= thisSat.getTime();
+    const whenLbl = isToday ? 'Today' : (sameWeek ? 'This week' : 'Next week');
+    const dayName = d.date.toLocaleDateString('en-US', {weekday: 'short'});
+    const dateLbl = d.date.toLocaleDateString('en-US', {month: 'short', day: 'numeric'});
+    const split = d.rollUnits > 0
+      ? `<div class="ia-drop-split">
+           <div class="ia-drop-splitrow"><span>Scheduled</span><b>${iaFmtN(d.units)}</b></div>
+           <div class="ia-drop-splitrow"><span>Roll-fwd in</span><b>${iaFmtN(d.rollUnits)}</b></div>
+         </div>`
+      : '';
+    return `<div class="ia-drop-item">
+      <span class="ia-drop-when ${sameWeek ? '' : 'later'}">Drop ${i + 1} · ${whenLbl}</span>
+      <div class="ia-drop-date">${dayName} ${dateLbl}</div>
+      <div class="ia-drop-units">${iaFmtN(total)}</div>
+      <div class="ia-drop-skus">${d.skus} SKU${d.skus === 1 ? '' : 's'}${d.rollSkus ? ` · +${d.rollSkus} roll-fwd` : ''}</div>
+      <div class="ia-drop-bar"><div class="ia-drop-bar-fill" style="width:${(total / max) * 100}%"></div></div>
+      ${split}
+    </div>`;
+  }).join('');
+
+  const note = document.getElementById('iaDropsNote');
+  if (note) {
+    const beyond = IA_DATA.dropsBeyond || {units: 0, skus: 0, rollUnits: 0};
+    const lastLbl = drops[drops.length - 1].date.toLocaleDateString('en-US', {month:'short', day:'numeric'});
+    const tail = [];
+    if (beyond.skus > 0) {
+      tail.push(`<b>${iaFmtN(beyond.units)}</b> units across ${beyond.skus} SKU${beyond.skus === 1 ? '' : 's'} aren't ready until after ${lastLbl}`);
+    }
+    if (beyond.rollUnits > 0.5) {
+      tail.push(`<b>${iaFmtN(beyond.rollUnits)}</b> units of roll-forward spill past ${lastLbl}`);
+    }
+    note.innerHTML = `Drops run Tuesday &amp; Thursday. Units land on the first drop on/after the SKU is ready &mdash; so anything already Ready to Allocate falls into the next drop date.`
+      + (tail.length ? ` Outside this window: ${tail.join('; ')}.` : '');
+  }
 }
 
-function iaRenderByDiv() {
-  const entries = Object.entries(IA_DATA.byDiv).sort((a,b) => b[1] - a[1]);
+// Volume this week by delivery month — replaces the old By Division rollup.
+// Month order follows the retail season (Nov -> Oct), not alphabetical.
+function iaRenderByMonth() {
+  const el = document.getElementById('iaByMonth');
+  if (!el) return;
+  const entries = Object.entries(IA_DATA.byMonth || {})
+    .sort((a, b) => iaMonthKey(a[0]) - iaMonthKey(b[0]) || String(a[0]).localeCompare(String(b[0])));
   const max = Math.max(...entries.map(e => e[1]), 1);
   if (entries.length === 0) {
-    document.getElementById('iaByDiv').innerHTML = `<div class="ia-card-empty">No SKUs in this-week scope.</div>`;
+    el.innerHTML = `<div class="ia-card-empty">No SKUs in this-week scope.</div>`;
     return;
   }
-  document.getElementById('iaByDiv').innerHTML = entries.map(([div, val]) => `
+  el.innerHTML = entries.map(([month, val]) => `
     <div class="ia-div-row">
-      <span class="ia-div-name">${div || '—'}</span>
-      <div class="ia-div-track"><div class="ia-div-fill" style="width:${(val/max)*100}%"></div></div>
+      <span class="ia-div-name">${iaEsc(month || '—')}</span>
+      <div class="ia-div-track"><div class="ia-div-fill" style="width:${(val / max) * 100}%"></div></div>
       <span class="ia-div-val">${iaFmtN(val)}</span>
     </div>
   `).join('');
