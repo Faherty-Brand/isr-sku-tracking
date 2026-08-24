@@ -1005,7 +1005,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: store-matrix (p7d)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: store-matrix-usage (p7e)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -11325,6 +11325,39 @@ ${'</' + 'script>'}
 .sm-cover-fill{height:100%;background:linear-gradient(90deg,var(--accent),#2E86AB);border-radius:4px}
 .sm-cover-lbl{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:5px}
 .sm-sec-title{font-family:var(--mono);font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);font-weight:700;margin:0 0 9px}
+.sm-dnums{display:flex;gap:22px;align-items:flex-start}
+.sm-card-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:9px}
+.sm-mini-btn{border:1px solid var(--border);background:var(--bg);border-radius:7px;font-family:var(--mono);font-size:10px;padding:3px 9px;cursor:pointer;color:var(--muted)}
+.sm-mini-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
+/* Vertical alphabetical lists (replaced the wrapped chip clouds) */
+.sm-vlist{border:1px solid var(--border);border-radius:8px;background:var(--bg);max-height:330px;overflow-y:auto}
+.sm-vlist::-webkit-scrollbar{width:8px}
+.sm-vlist::-webkit-scrollbar-thumb{background:#dcd8d1;border-radius:4px}
+.sm-vrow{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:6px 11px;border-bottom:1px solid var(--border2,#f0eeea);font-size:11.5px;cursor:pointer}
+.sm-vrow:last-child{border-bottom:none}
+.sm-vrow:hover{background:var(--accent-bg)}
+.sm-vrow-name{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sm-vrow:hover .sm-vrow-name{color:var(--accent)}
+.sm-vrow-meta{font-family:var(--mono);font-size:9.5px;color:var(--dim);white-space:nowrap}
+.sm-vrow.nonalloc .sm-vrow-name{color:var(--dim);font-style:italic}
+.sm-vlist-sku{max-height:300px}
+.sm-skurow{display:grid;grid-template-columns:118px 1fr 70px;gap:10px;align-items:center;padding:5px 11px;border-bottom:1px solid var(--border2,#f0eeea);font-size:11px}
+.sm-skurow:last-child{border-bottom:none}
+.sm-skurow:hover{background:var(--surface2)}
+.sm-skurow-sku{font-family:var(--mono);font-size:10.5px;color:var(--accent)}
+.sm-skurow-desc{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sm-skurow-ia{font-family:var(--mono);font-size:10.5px;text-align:right;color:var(--muted)}
+/* Usage summary + mini breakdown bars */
+.sm-usage{display:flex;gap:26px;padding:4px 0 2px}
+.sm-usage-val{font-family:var(--head);font-size:24px;font-weight:700;color:var(--text);line-height:1.1}
+.sm-usage-lbl{font-family:var(--mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-top:2px}
+.sm-mini{display:flex;flex-direction:column;gap:4px}
+.sm-mini-row{display:grid;grid-template-columns:130px 1fr 52px 34px;gap:9px;align-items:center;font-size:11px}
+.sm-mini-lbl{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sm-mini-track{height:6px;background:#eceae5;border-radius:3px;overflow:hidden}
+.sm-mini-fill{height:100%;background:var(--accent);border-radius:3px;opacity:.75}
+.sm-mini-val{font-family:var(--mono);font-size:10.5px;text-align:right;color:var(--text)}
+.sm-mini-pct{font-family:var(--mono);font-size:9.5px;text-align:right;color:var(--dim)}
 .sm-chips{display:flex;flex-wrap:wrap;gap:6px}
 .sm-chip{display:inline-flex;align-items:baseline;gap:6px;border:1px solid var(--border);background:var(--bg);border-radius:14px;padding:3px 10px;font-size:11px;color:var(--text);cursor:pointer;transition:all .1s}
 .sm-chip:hover{border-color:var(--accent);background:var(--accent-bg);color:var(--accent)}
@@ -12521,7 +12554,6 @@ tr.nf-strow-shifted {background:#DBEAFE}
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
-  function smAttr(s){ return smEsc(s).replace(/\\/g,'\\\\'); }
   function smPct(n){ return Math.round(n * 100); }
 
   // ── Build the membership model ────────────────────────────────────────────
@@ -12619,8 +12651,51 @@ tr.nf-strow-shifted {background:#DBEAFE}
   }
 
   // ── Set helpers ───────────────────────────────────────────────────────────
-  function smInter(a, b){ var n = 0; a.forEach(function(x){ if (b.has(x)) n++; }); return n; }
-  function smMinus(a, b){ var out = []; a.forEach(function(x){ if (!b.has(x)) out.push(x); }); return out.sort(); }
+  // ── SKU coverage index ────────────────────────────────────────────────────
+  // "How widely used is this store group?" is answered by counting the SKUs
+  // tiered to it. Tier resolution goes through llSeasonTier(row, CONFIG_SEASON)
+  // — the same season-aware, override-aware resolver the Late List uses — so a
+  // tier override here agrees with the grid. Falls back to the config-projected
+  // fields only if that resolver isn't reachable.
+  //
+  // Note on scope: ALL_ROWS is a top-level `let` in an earlier <script> block.
+  // It is NOT a window property, but top-level let/const live in the shared
+  // global lexical scope, so the bare identifier resolves fine from here. The
+  // typeof guard covers the pre-data-load case.
+  function smSkuIndex(){
+    var rows = (typeof ALL_ROWS !== 'undefined' && Array.isArray(ALL_ROWS)) ? ALL_ROWS : [];
+    var season = (typeof CONFIG_SEASON !== 'undefined' && CONFIG_SEASON) ? CONFIG_SEASON : '';
+    var byTier = Object.create(null);
+    var tieredTotal = 0;
+
+    rows.forEach(function(r){
+      var t = '';
+      if (season && typeof llSeasonTier === 'function') {
+        try { t = llSeasonTier(r, season); } catch(e){ t = ''; }
+      }
+      if (!t) t = String((r.tier_ow || r.cs_tier || '')).trim().toUpperCase();
+      if (!t) return;
+      if (!byTier[t]) byTier[t] = [];
+      byTier[t].push({
+        sku: r.sku || '',
+        style: r.style_desc || '',
+        color: r.color_desc || '',
+        division: r.division || '',
+        deliv: r.cs_deliv1 || '',
+        ia: +r.syrup_ia || 0,
+      });
+      tieredTotal++;
+    });
+    Object.keys(byTier).forEach(function(k){
+      byTier[k].sort(function(a,b){ return a.sku.localeCompare(b.sku); });
+    });
+    return {byTier: byTier, tieredTotal: tieredTotal, season: season, rowCount: rows.length};
+  }
+
+  function smSkusFor(groupName){
+    if (!SM_DATA || !SM_DATA.sku) return [];
+    return SM_DATA.sku.byTier[String(groupName).trim().toUpperCase()] || [];
+  }
 
   // ── Rendering ─────────────────────────────────────────────────────────────
   function smRenderStats(){
@@ -12706,7 +12781,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     }
     el.innerHTML = rows.map(function(r){
       return '<div class="sm-rail-item' + (r.key === SM_SEL ? ' sel' : '') + '" '
-           + 'onclick="smSelect(\'' + smAttr(r.key).replace(/'/g, "\\'") + '\')">'
+           + 'data-sm-key="' + smEsc(r.key) + '">'
            + '<div><div class="sm-rail-name" title="' + smEsc(r.name) + '">' + smEsc(r.name) + '</div>'
            + (r.sub ? '<div class="sm-rail-sub">' + smEsc(r.sub) + '</div>' : '') + '</div>'
            + '<div class="sm-rail-ct">' + r.ct + '</div>'
@@ -12715,104 +12790,162 @@ tr.nf-strow-shifted {background:#DBEAFE}
     }).join('');
   }
 
-  function smStoreChip(name){
-    var d = SM_DATA;
-    var rec = d.byStore[name];
+  // ── Vertical list rows ────────────────────────────────────────────────────
+  // Alphabetical vertical lists, not chip clouds: with 80+ stores and 40+
+  // groups a wrapped cloud is genuinely hard to scan for a specific name.
+  // All navigation goes through data attributes + one delegated listener —
+  // never an inline onclick with an interpolated name. Group and store names
+  // come from a spreadsheet and routinely contain apostrophes
+  // ("All Doors minus Martha's Vineyard"), which cannot be safely embedded in
+  // an inline handler: HTML-escaping turns the quote into &#39;, the parser
+  // decodes it back to a bare ' before the JS is parsed, and the string
+  // literal ends early. Data attributes have no such round-trip.
+  function smStoreRow(name){
+    var rec = SM_DATA.byStore[name];
     var code = rec && rec.code ? rec.code : '';
-    return '<span class="sm-chip' + (code ? '' : ' nocode') + '" '
-         + 'title="' + smEsc(name) + (code ? ' \u00B7 ' + smEsc(code) : ' \u00B7 no Store Codes entry') + '" '
-         + 'onclick="smJump(\'stores\',\'' + smAttr(name).replace(/'/g, "\\'") + '\')">'
-         + smEsc(name) + (code ? '<span class="sm-chip-code">' + smEsc(code) + '</span>' : '')
-         + '</span>';
+    var ct = rec ? rec.size : 0;
+    return '<div class="sm-vrow" data-sm-nav="stores" data-sm-key="' + smEsc(name) + '" '
+         + 'title="' + smEsc(name) + (code ? ' \u00B7 ' + smEsc(code) : ' \u00B7 no Store Codes entry') + '">'
+         + '<span class="sm-vrow-name">' + smEsc(name) + '</span>'
+         + '<span class="sm-vrow-meta">' + (code ? smEsc(code) : '\u2014') + ' \u00B7 ' + ct + ' grp</span>'
+         + '</div>';
   }
 
-  function smGroupChip(name){
+  function smGroupRow(name){
     var g = SM_DATA.byGroup[name];
     var na = g && g.nonAlloc;
-    return '<span class="sm-chip' + (na ? ' nonalloc' : '') + '" '
-         + 'title="' + smEsc(name) + (na ? ' \u00B7 non-allocating group' : '') + '" '
-         + 'onclick="smJump(\'groups\',\'' + smAttr(name).replace(/'/g, "\\'") + '\')">'
-         + smEsc(name) + '<span class="sm-chip-code">' + (g ? g.count : 0) + '</span></span>';
+    var skus = smSkusFor(name).length;
+    return '<div class="sm-vrow' + (na ? ' nonalloc' : '') + '" data-sm-nav="groups" data-sm-key="' + smEsc(name) + '" '
+         + 'title="' + smEsc(name) + (na ? ' \u00B7 non-allocating group' : '') + '">'
+         + '<span class="sm-vrow-name">' + smEsc(name) + '</span>'
+         + '<span class="sm-vrow-meta">' + (g ? g.count : 0) + ' stores \u00B7 ' + skus.toLocaleString() + ' SKU</span>'
+         + '</div>';
   }
 
-  function smRelRow(cls, label, chips, note){
-    if (!chips.length) return '';
-    return '<div class="sm-rel-row"><span class="sm-rel-lbl sm-rel-' + cls + '">' + label + '</span>'
-         + '<div><div class="sm-chips">' + chips.join('') + '</div>'
-         + (note ? '<div class="sm-rail-sub" style="margin-top:5px">' + note + '</div>' : '')
-         + '</div></div>';
+  function smVList(rows, emptyMsg){
+    if (!rows.length) return '<div class="sm-rel-none">' + emptyMsg + '</div>';
+    return '<div class="sm-vlist">' + rows.join('') + '</div>';
+  }
+
+  // Small horizontal breakdown bars (division mix within a tier).
+  function smMiniBars(pairs, total){
+    if (!pairs.length) return '';
+    var max = pairs.reduce(function(m,p){ return Math.max(m, p[1]); }, 0) || 1;
+    return '<div class="sm-mini">' + pairs.map(function(p){
+      return '<div class="sm-mini-row"><span class="sm-mini-lbl">' + smEsc(p[0] || '\u2014') + '</span>'
+           + '<div class="sm-mini-track"><div class="sm-mini-fill" style="width:' + Math.round(p[1] / max * 100) + '%"></div></div>'
+           + '<span class="sm-mini-val">' + p[1].toLocaleString() + '</span>'
+           + '<span class="sm-mini-pct">' + (total ? Math.round(p[1] / total * 100) : 0) + '%</span></div>';
+    }).join('') + '</div>';
+  }
+
+  var SM_SKU_CAP = 400;   // render ceiling; the copy button still takes everything
+
+  function smSkuListHtml(skus){
+    if (!skus.length) return '';
+    var shown = skus.slice(0, SM_SKU_CAP);
+    var html = '<div class="sm-vlist sm-vlist-sku">' + shown.map(function(k){
+      var sc = [k.style, k.color].filter(Boolean).join(' \u00B7 ') || '\u2014';
+      return '<div class="sm-skurow" title="' + smEsc(k.sku + ' \u2014 ' + sc) + '">'
+           + '<span class="sm-skurow-sku">' + smEsc(k.sku) + '</span>'
+           + '<span class="sm-skurow-desc">' + smEsc(sc) + '</span>'
+           + '<span class="sm-skurow-ia">' + (k.ia ? k.ia.toLocaleString() : '\u2014') + '</span>'
+           + '</div>';
+    }).join('') + '</div>';
+    if (skus.length > SM_SKU_CAP) {
+      html += '<div class="sm-rail-sub" style="margin-top:6px">Showing the first '
+            + SM_SKU_CAP.toLocaleString() + ' of ' + skus.length.toLocaleString()
+            + ' by SKU. Use Copy SKUs for the full set.</div>';
+    }
+    return html;
+  }
+
+  // "SKUs tiered here" card — the answer to how widely a group is actually used.
+  function smSkuCard(groupNames, label){
+    var d = SM_DATA, idx = d.sku;
+    var seen = Object.create(null), skus = [];
+    groupNames.forEach(function(g){
+      smSkusFor(g).forEach(function(k){
+        if (seen[k.sku]) return;
+        seen[k.sku] = 1; skus.push(k);
+      });
+    });
+    skus.sort(function(a,b){ return a.sku.localeCompare(b.sku); });
+
+    if (!idx.rowCount) {
+      return '<div class="sm-dcard"><div class="sm-sec-title">' + label + '</div>'
+           + '<div class="sm-rel-none">No SKU data loaded yet \u2014 load the Data Pulls, then Refresh.</div></div>';
+    }
+
+    var pct = idx.tieredTotal ? Math.round(skus.length / idx.tieredTotal * 100) : 0;
+    var units = skus.reduce(function(a,k){ return a + k.ia; }, 0);
+
+    var divCt = Object.create(null), delCt = Object.create(null);
+    skus.forEach(function(k){
+      divCt[k.division || '\u2014'] = (divCt[k.division || '\u2014'] || 0) + 1;
+      if (k.deliv) delCt[k.deliv] = (delCt[k.deliv] || 0) + 1;
+    });
+    var divPairs = Object.keys(divCt).map(function(k){ return [k, divCt[k]]; })
+      .sort(function(a,b){ return b[1] - a[1]; });
+    var delPairs = Object.keys(delCt).map(function(k){ return [k, delCt[k]]; })
+      .sort(function(a,b){ return (typeof monthSortKey === 'function' ? monthSortKey(a[0]) - monthSortKey(b[0]) : 0) || a[0].localeCompare(b[0]); });
+
+    var html = '<div class="sm-dcard">'
+      + '<div class="sm-card-head"><div class="sm-sec-title" style="margin:0">' + label + '</div>'
+      + (skus.length ? '<button class="sm-mini-btn" data-sm-act="copyskus">\u2398 Copy SKUs</button>' : '')
+      + '</div>';
+
+    if (!skus.length) {
+      html += '<div class="sm-rel-none">No SKUs are tiered to this store group for ' + smEsc(idx.season || 'the current season')
+           + '. The group exists in the matrix but nothing is currently assorted to it.</div></div>';
+      return html;
+    }
+
+    html += '<div class="sm-usage">'
+      + '<div class="sm-usage-cell"><div class="sm-usage-val">' + skus.length.toLocaleString() + '</div>'
+      + '<div class="sm-usage-lbl">SKUs tiered</div></div>'
+      + '<div class="sm-usage-cell"><div class="sm-usage-val">' + pct + '%</div>'
+      + '<div class="sm-usage-lbl">of all tiered SKUs</div></div>'
+      + '<div class="sm-usage-cell"><div class="sm-usage-val">' + units.toLocaleString() + '</div>'
+      + '<div class="sm-usage-lbl">Syrup IA units</div></div>'
+      + '</div>';
+
+    if (divPairs.length > 1) {
+      html += '<div class="sm-sec-title" style="margin:14px 0 7px">By division</div>' + smMiniBars(divPairs, skus.length);
+    }
+    if (delPairs.length > 1) {
+      html += '<div class="sm-sec-title" style="margin:14px 0 7px">By delivery month</div>' + smMiniBars(delPairs, skus.length);
+    }
+    html += '<div class="sm-sec-title" style="margin:14px 0 7px">SKUs (A\u2013Z)</div>' + smSkuListHtml(skus);
+    html += '</div>';
+    return html;
   }
 
   function smRenderGroupDetail(name){
     var d = SM_DATA, g = d.byGroup[name];
     if (!g) return '<div class="sm-empty-detail">Select a store group from the list.</div>';
     var cov = d.totalStores ? g.count / d.totalStores : 0;
+    var skuCt = smSkusFor(name).length;
 
     var html = '<div class="sm-dcard"><div class="sm-dhead">'
       + '<div><div class="sm-dname">' + smEsc(g.name) + '</div>'
       + '<div class="sm-dmeta">Store group' + (g.nonAlloc ? ' \u00B7 non-allocating (excluded from allocation)' : '') + '</div></div>'
+      + '<div class="sm-dnums">'
       + '<div><div class="sm-dbig">' + g.count + '</div><div class="sm-dbig-lbl">stores</div></div>'
-      + '</div>'
+      + '<div><div class="sm-dbig">' + skuCt.toLocaleString() + '</div><div class="sm-dbig-lbl">SKUs</div></div>'
+      + '</div></div>'
       + '<div class="sm-cover"><div class="sm-cover-track"><div class="sm-cover-fill" style="width:' + smPct(cov) + '%"></div></div>'
       + '<div class="sm-cover-lbl">' + smPct(cov) + '% of the ' + d.totalStores + ' stores in the matrix</div></div>'
       + '</div>';
 
-    // Members
-    html += '<div class="sm-dcard"><div class="sm-sec-title">Stores in this group (' + g.set.size + ')</div>';
-    if (!g.set.size) {
-      html += '<div class="sm-rel-none">'
-           + (d.namesResolved
-              ? 'No stores are flagged for this group in the matrix.'
-              : 'Store names unavailable \u2014 only the count could be parsed.')
-           + '</div>';
-    } else {
-      html += '<div class="sm-chips">'
-           + Array.from(g.set).sort().map(smStoreChip).join('') + '</div>';
-    }
-    html += '</div>';
+    html += smSkuCard([name], 'SKUs tiered to this group');
 
-    // Set relationships
-    if (g.set.size) {
-      var identical = [], contains = [], within = [], overlaps = [], disjoint = 0;
-      d.groups.forEach(function(h){
-        if (h.name === g.name || !h.set.size) return;
-        var inter = smInter(g.set, h.set);
-        if (inter === 0) { disjoint++; return; }
-        var hInG = inter === h.set.size, gInH = inter === g.set.size;
-        if (hInG && gInH) identical.push(h.name);
-        else if (hInG) contains.push(h.name);
-        else if (gInH) within.push(h.name);
-        else overlaps.push({name:h.name, n:inter});
-      });
-      var bySize = function(a,b){ return (d.byGroup[b].count - d.byGroup[a].count) || a.localeCompare(b); };
-      identical.sort(); contains.sort(bySize); within.sort(bySize);
-      overlaps.sort(function(a,b){ return b.n - a.n || a.name.localeCompare(b.name); });
-
-      var rows = ''
-        + smRelRow('identical','Identical', identical.map(smGroupChip),
-            'Same store set as this group \u2014 one of the pair may be redundant.')
-        + smRelRow('contains','Contains', contains.map(smGroupChip),
-            'Every store in these groups is also in ' + smEsc(g.name) + '.')
-        + smRelRow('within','Within', within.map(smGroupChip),
-            smEsc(g.name) + ' is a strict subset of these.')
-        + smRelRow('overlap','Overlaps', overlaps.slice(0, 24).map(function(o){
-            var gg = d.byGroup[o.name];
-            return '<span class="sm-chip' + (gg && gg.nonAlloc ? ' nonalloc' : '') + '" '
-                 + 'onclick="smJump(\'groups\',\'' + smAttr(o.name).replace(/'/g, "\\'") + '\')">'
-                 + smEsc(o.name) + '<span class="sm-chip-code">\u2229' + o.n + '</span></span>';
-          }), 'Partial overlap \u2014 neither group contains the other. Number shown is the shared store count.'
-              + (overlaps.length > 24 ? ' Showing the 24 largest of ' + overlaps.length + '.' : ''));
-
-      html += '<div class="sm-dcard"><div class="sm-sec-title">How this group nests against the others</div>';
-      html += rows
-        ? '<div class="sm-rel">' + rows + '</div>'
-        : '<div class="sm-rel-none">No other group shares a store with this one.</div>';
-      if (disjoint) {
-        html += '<div class="sm-rail-sub" style="margin-top:10px">' + disjoint
-             + ' group' + (disjoint === 1 ? '' : 's') + ' share no stores with this one (not listed).</div>';
-      }
-      html += '</div>';
-    }
+    html += '<div class="sm-dcard"><div class="sm-sec-title">Stores in this group (' + g.set.size + ') \u00B7 A\u2013Z</div>'
+      + smVList(Array.from(g.set).sort(function(a,b){ return a.localeCompare(b); }).map(smStoreRow),
+          d.namesResolved
+            ? 'No stores are flagged for this group in the matrix.'
+            : 'Store names unavailable \u2014 only the count could be parsed.')
+      + '</div>';
     return html;
   }
 
@@ -12821,56 +12954,30 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (!s) return '<div class="sm-empty-detail">Select a store from the list.</div>';
     var cov = d.groups.length ? s.size / d.groups.length : 0;
 
+    var reach = Object.create(null);
+    s.list.forEach(function(g){ smSkusFor(g).forEach(function(k){ reach[k.sku] = 1; }); });
+    var reachCt = Object.keys(reach).length;
+
     var html = '<div class="sm-dcard"><div class="sm-dhead">'
       + '<div><div class="sm-dname">' + smEsc(s.name) + '</div>'
       + '<div class="sm-dmeta">' + (s.code ? 'Store code ' + smEsc(s.code) : 'No Store Codes entry') + '</div></div>'
+      + '<div class="sm-dnums">'
       + '<div><div class="sm-dbig">' + s.size + '</div><div class="sm-dbig-lbl">groups</div></div>'
-      + '</div>'
+      + '<div><div class="sm-dbig">' + reachCt.toLocaleString() + '</div><div class="sm-dbig-lbl">SKUs</div></div>'
+      + '</div></div>'
       + '<div class="sm-cover"><div class="sm-cover-track"><div class="sm-cover-fill" style="width:' + smPct(cov) + '%"></div></div>'
       + '<div class="sm-cover-lbl">In ' + s.size + ' of ' + d.groups.length + ' groups \u00B7 matrix average is '
       + d.avgGroups.toFixed(1) + '</div></div></div>';
 
-    html += '<div class="sm-dcard"><div class="sm-sec-title">Groups this store belongs to (' + s.size + ')</div>'
-         + '<div class="sm-chips">' + s.list.map(smGroupChip).join('') + '</div></div>';
+    // Groups list doubles as the usage breakdown: each row carries the SKU
+    // count that group contributes, so it is obvious which memberships
+    // actually drive this store's assortment and which are dormant.
+    html += '<div class="sm-dcard"><div class="sm-sec-title">Groups this store belongs to (' + s.size + ') \u00B7 A\u2013Z</div>'
+      + smVList(s.list.slice().sort(function(a,b){ return a.localeCompare(b); }).map(smGroupRow),
+          'This store is in no store group.')
+      + '</div>';
 
-    // Identical + near-identical profiles
-    var twins = [], near = [];
-    d.stores.forEach(function(o){
-      if (o.name === s.name) return;
-      if (o.sig === s.sig) { twins.push(o); return; }
-      var extra = smMinus(o.groups, s.groups);
-      var missing = smMinus(s.groups, o.groups);
-      var dist = extra.length + missing.length;
-      if (dist <= 2) near.push({store:o, extra:extra, missing:missing, dist:dist});
-    });
-    near.sort(function(a,b){ return a.dist - b.dist || a.store.name.localeCompare(b.store.name); });
-
-    html += '<div class="sm-dcard"><div class="sm-sec-title">Stores with the same profile (' + twins.length + ')</div>';
-    html += twins.length
-      ? '<div class="sm-chips">' + twins.map(function(o){ return smStoreChip(o.name); }).join('') + '</div>'
-        + '<div class="sm-rail-sub" style="margin-top:7px">These stores are treated identically by every group in the matrix.</div>'
-      : '<div class="sm-rel-none">No other store has exactly this membership set \u2014 this profile is unique.</div>';
-    html += '</div>';
-
-    html += '<div class="sm-dcard"><div class="sm-sec-title">Nearly the same (within 2 groups)</div>';
-    if (!near.length) {
-      html += '<div class="sm-rel-none">No store is within two groups of this profile.</div>';
-    } else {
-      html += near.slice(0, 12).map(function(n){
-        var bits = [];
-        n.extra.forEach(function(g){ bits.push('<span class="sm-diff-add" title="' + smEsc(g) + ' has it, ' + smEsc(s.name) + ' does not">+' + smEsc(g) + '</span>'); });
-        n.missing.forEach(function(g){ bits.push('<span class="sm-diff-rem" title="' + smEsc(s.name) + ' has it, ' + smEsc(n.store.name) + ' does not">\u2212' + smEsc(g) + '</span>'); });
-        return '<div class="sm-peer"><span class="sm-peer-name" onclick="smJump(\'stores\',\''
-             + smAttr(n.store.name).replace(/'/g, "\\'") + '\')">' + smEsc(n.store.name) + '</span>'
-             + '<span>' + bits.join(' &nbsp; ') + '</span></div>';
-      }).join('');
-      html += '<div class="sm-rail-sub" style="margin-top:9px">Read relative to <b>' + smEsc(s.name)
-           + '</b>: <span class="sm-diff-add">+group</span> the other store has it, '
-           + '<span class="sm-diff-rem">\u2212group</span> this store has it and the other does not. '
-           + 'A one-group gap between otherwise identical stores is often a missing X in the matrix.'
-           + (near.length > 12 ? ' Showing 12 of ' + near.length + '.' : '') + '</div>';
-    }
-    html += '</div>';
+    html += smSkuCard(s.list, 'SKUs reaching this store (all groups combined)');
     return html;
   }
 
@@ -12920,6 +13027,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   // ── Public handlers ───────────────────────────────────────────────────────
   function smRefresh(){
     SM_DATA = smBuild();
+    SM_DATA.sku = smSkuIndex();
     if (SM_SEL) {
       var still = SM_VIEW === 'groups' ? SM_DATA.byGroup[SM_SEL] : SM_DATA.byStore[SM_SEL];
       if (!still) SM_SEL = null;
@@ -12933,7 +13041,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var sb = document.getElementById('smSearch'); if (sb) sb.value = '';
     document.getElementById('smSegGroups').classList.toggle('active', v === 'groups');
     document.getElementById('smSegStores').classList.toggle('active', v === 'stores');
-    if (!SM_DATA) SM_DATA = smBuild();
+    if (!SM_DATA) { SM_DATA = smBuild(); SM_DATA.sku = smSkuIndex(); }
     SM_SEL = smDefaultSel();
     smRenderAll();
   }
@@ -12961,6 +13069,16 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var rail = document.getElementById('smRailList');
     if (rail) { var sel = rail.querySelector('.sm-rail-item.sel'); if (sel && sel.scrollIntoView) sel.scrollIntoView({block:'nearest'}); }
   }
+  function smCopySkus(){
+    if (!SM_DATA || !SM_SEL) return;
+    var names = SM_VIEW === 'groups' ? [SM_SEL] : ((SM_DATA.byStore[SM_SEL] || {}).list || []);
+    var seen = Object.create(null), out = [];
+    names.forEach(function(g){ smSkusFor(g).forEach(function(k){ if (!seen[k.sku]) { seen[k.sku] = 1; out.push(k.sku); } }); });
+    out.sort();
+    if (!out.length) { if (typeof showToast === 'function') showToast('No SKUs to copy'); return; }
+    smWriteClip(out.join('\n'), out.length + ' SKUs \u00B7 ' + SM_SEL);
+  }
+
   function smCopyMembers(){
     if (!SM_DATA || !SM_SEL) { if (typeof showToast === 'function') showToast('Nothing selected'); return; }
     var lines = [];
@@ -12972,8 +13090,11 @@ tr.nf-strow-shifted {background:#DBEAFE}
       lines = s ? s.list.slice() : [];
     }
     if (!lines.length) { if (typeof showToast === 'function') showToast('Nothing to copy'); return; }
-    var txt = lines.join('\n');
-    var done = function(){ if (typeof showToast === 'function') showToast('Copied ' + lines.length + ' \u00B7 ' + SM_SEL); };
+    smWriteClip(lines.join('\n'), lines.length + ' \u00B7 ' + SM_SEL);
+  }
+
+  function smWriteClip(txt, label){
+    var done = function(){ if (typeof showToast === 'function') showToast('Copied ' + label); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(txt).then(done).catch(function(){ smFallbackCopy(txt); done(); });
     } else { smFallbackCopy(txt); done(); }
@@ -12986,6 +13107,25 @@ tr.nf-strow-shifted {background:#DBEAFE}
     document.body.removeChild(t);
   }
 
+  // ── One delegated listener for the whole panel ────────────────────────────
+  // Replaces every inline onclick that used to interpolate a store/group name
+  // into executable JS. Names with apostrophes, quotes or backslashes are now
+  // inert data, so "All Doors minus Martha's Vineyard" behaves like any other.
+  function smOnClick(e){
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var act = t.closest('[data-sm-act]');
+    if (act) { if (act.getAttribute('data-sm-act') === 'copyskus') smCopySkus(); return; }
+    var hit = t.closest('[data-sm-key]');
+    if (!hit) return;
+    var key = hit.getAttribute('data-sm-key');
+    var nav = hit.getAttribute('data-sm-nav');
+    if (nav && nav !== SM_VIEW) smJump(nav, key);
+    else smSelect(key);
+  }
+  var _smPanel = document.getElementById('smPanel');
+  if (_smPanel && _smPanel.addEventListener) _smPanel.addEventListener('click', smOnClick);
+
   window.smRefresh      = smRefresh;
   window.smSetView      = smSetView;
   window.smSetSort      = smSetSort;
@@ -12993,6 +13133,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.smSelect       = smSelect;
   window.smJump         = smJump;
   window.smCopyMembers  = smCopyMembers;
+  window.smCopySkus     = smCopySkus;
   window._smBuild       = smBuild;   // exposed for the test harness
 
   console.log('[SM] Store Matrix module ready [store-matrix-v1]');
