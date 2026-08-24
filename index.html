@@ -1005,7 +1005,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: store-matrix-usage (p7e)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: matrix-sku-sort (p7f)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1459,7 +1459,7 @@ setTimeout(function(){
       <div class="sm-rail-head">
         <input class="sm-search" id="smSearch" type="text" placeholder="Search…" oninput="smSetQuery(this.value)">
         <div class="sm-sortseg">
-          <button class="sm-sort-btn active" id="smSortSize" onclick="smSetSort('size')">Size</button>
+          <button class="sm-sort-btn active" id="smSortSize" onclick="smSetSort('size')">SKUs</button>
           <button class="sm-sort-btn" id="smSortAz" onclick="smSetSort('az')">A–Z</button>
         </div>
       </div>
@@ -11302,12 +11302,12 @@ ${'</' + 'script>'}
 .sm-sort-btn{flex:1;border:1px solid var(--border);background:var(--surface);border-radius:6px;font-family:var(--mono);font-size:9.5px;padding:3px 0;cursor:pointer;color:var(--muted);text-transform:uppercase;letter-spacing:.07em}
 .sm-sort-btn.active{background:var(--accent-bg);border-color:var(--accent);color:var(--accent);font-weight:700}
 .sm-rail-list{flex:1;overflow-y:auto;min-height:0}
-.sm-rail-item{display:grid;grid-template-columns:1fr 38px;gap:8px;align-items:center;padding:7px 11px;border-bottom:1px solid var(--border2,#f0eeea);cursor:pointer;transition:background .1s}
+.sm-rail-item{display:grid;grid-template-columns:1fr 52px;gap:8px;align-items:center;padding:7px 11px;border-bottom:1px solid var(--border2,#f0eeea);cursor:pointer;transition:background .1s}
 .sm-rail-item:hover{background:var(--surface2)}
 .sm-rail-item.sel{background:var(--accent-bg);box-shadow:inset 3px 0 0 var(--accent)}
 .sm-rail-name{font-size:11.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sm-rail-item.sel .sm-rail-name{font-weight:700;color:var(--accent)}
-.sm-rail-sub{font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:2px}
+.sm-rail-sub{font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sm-rail-ct{font-family:var(--mono);font-size:11px;font-weight:700;text-align:right;color:var(--text)}
 .sm-rail-bar{grid-column:1/-1;height:3px;background:#eceae5;border-radius:2px;overflow:hidden}
 .sm-rail-bar-fill{height:100%;background:var(--accent);border-radius:2px;opacity:.55}
@@ -12697,6 +12697,31 @@ tr.nf-strow-shifted {background:#DBEAFE}
     return SM_DATA.sku.byTier[String(groupName).trim().toUpperCase()] || [];
   }
 
+  // Stamp SKU usage onto the group and store records once per refresh, so the
+  // rail can sort and label by it without recomputing on every keystroke.
+  //   group.skuCount — SKUs tiered to that group
+  //   store.skuReach — distinct SKUs across ALL the groups the store is in
+  // Store reach is a union, so it is deliberately not the sum of its groups'
+  // counts: overlapping groups would double-count.
+  function smAttachUsage(d){
+    d.groups.forEach(function(g){ g.skuCount = (d.sku.byTier[String(g.name).trim().toUpperCase()] || []).length; });
+    var setFor = Object.create(null);
+    d.stores.forEach(function(st){
+      var seen = Object.create(null), n = 0;
+      st.list.forEach(function(gname){
+        var arr = d.sku.byTier[String(gname).trim().toUpperCase()];
+        if (!arr) return;
+        for (var i = 0; i < arr.length; i++) {
+          if (!seen[arr[i].sku]) { seen[arr[i].sku] = 1; n++; }
+        }
+      });
+      st.skuReach = n;
+      setFor[st.name] = n;
+    });
+    d.maxGroupSkus = d.groups.reduce(function(m,g){ return Math.max(m, g.skuCount); }, 0);
+    d.maxStoreSkus = d.stores.reduce(function(m,x){ return Math.max(m, x.skuReach); }, 0);
+  }
+
   // ── Rendering ─────────────────────────────────────────────────────────────
   function smRenderStats(){
     var d = SM_DATA, el = document.getElementById('smStats');
@@ -12745,16 +12770,20 @@ tr.nf-strow-shifted {background:#DBEAFE}
 
   function smRailRows(){
     var d = SM_DATA, q = SM_Q.trim().toLowerCase();
+    var fmt = function(n){ return (n || 0).toLocaleString(); };
     if (SM_VIEW === 'groups') {
       var gs = d.groups.slice();
       if (q) gs = gs.filter(function(g){ return g.name.toLowerCase().indexOf(q) >= 0; });
+      // "SKUs" sort ranks by how widely the group is actually used, which is
+      // the question the tab exists to answer. Store count breaks ties.
       gs.sort(SM_SORT === 'az'
         ? function(a,b){ return a.name.localeCompare(b.name); }
-        : function(a,b){ return b.count - a.count || a.name.localeCompare(b.name); });
+        : function(a,b){ return (b.skuCount||0) - (a.skuCount||0) || b.count - a.count || a.name.localeCompare(b.name); });
       return gs.map(function(g){
-        return {key:g.name, name:g.name, ct:g.count,
-                sub:(g.nonAlloc ? 'non-allocating' : ''),
-                bar: d.maxGroupCount ? g.count / d.maxGroupCount : 0};
+        var sub = fmt(g.count) + ' stores | ' + fmt(g.skuCount) + ' SKUs'
+                + (g.nonAlloc ? ' | non-allocating' : '');
+        return {key:g.name, name:g.name, ct:g.skuCount || 0, sub:sub,
+                bar: d.maxGroupSkus ? (g.skuCount || 0) / d.maxGroupSkus : 0};
       });
     }
     var ss = d.stores.slice();
@@ -12763,10 +12792,11 @@ tr.nf-strow-shifted {background:#DBEAFE}
     });
     ss.sort(SM_SORT === 'az'
       ? function(a,b){ return a.name.localeCompare(b.name); }
-      : function(a,b){ return b.size - a.size || a.name.localeCompare(b.name); });
+      : function(a,b){ return (b.skuReach||0) - (a.skuReach||0) || b.size - a.size || a.name.localeCompare(b.name); });
     return ss.map(function(s){
-      return {key:s.name, name:s.name, ct:s.size, sub:s.code || 'no code',
-              bar: d.maxStoreGroups ? s.size / d.maxStoreGroups : 0};
+      var sub = (s.code ? s.code + ' | ' : '') + fmt(s.size) + ' groups | ' + fmt(s.skuReach) + ' SKUs';
+      return {key:s.name, name:s.name, ct:s.skuReach || 0, sub:sub,
+              bar: d.maxStoreSkus ? (s.skuReach || 0) / d.maxStoreSkus : 0};
     });
   }
 
@@ -13028,6 +13058,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function smRefresh(){
     SM_DATA = smBuild();
     SM_DATA.sku = smSkuIndex();
+    smAttachUsage(SM_DATA);
     if (SM_SEL) {
       var still = SM_VIEW === 'groups' ? SM_DATA.byGroup[SM_SEL] : SM_DATA.byStore[SM_SEL];
       if (!still) SM_SEL = null;
@@ -13041,7 +13072,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var sb = document.getElementById('smSearch'); if (sb) sb.value = '';
     document.getElementById('smSegGroups').classList.toggle('active', v === 'groups');
     document.getElementById('smSegStores').classList.toggle('active', v === 'stores');
-    if (!SM_DATA) { SM_DATA = smBuild(); SM_DATA.sku = smSkuIndex(); }
+    if (!SM_DATA) { SM_DATA = smBuild(); SM_DATA.sku = smSkuIndex(); smAttachUsage(SM_DATA); }
     SM_SEL = smDefaultSel();
     smRenderAll();
   }
