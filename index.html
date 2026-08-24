@@ -564,6 +564,17 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .ll-th.sorted{color:var(--accent)}
 .ll-td{padding:6px 10px;border-bottom:1px solid var(--border2);white-space:nowrap;vertical-align:middle}
 .ll-td.num{text-align:right;font-family:var(--mono);font-size:11px}
+/* ── PINNED SKU COLUMN (Late List) ──
+   Mirrors .col-sku-pin on the SKU Tracking grid. The <thead> is already sticky
+   on the vertical axis; adding left:0 to the SKU <th> makes that one cell
+   sticky on both axes at once. Body cells need an explicit opaque background,
+   since .ll-td is transparent by default and would otherwise let the columns
+   scrolling underneath show through. The group-header row is intentionally NOT
+   pinned — its cells use colspan, so sticking one would drag a 7-column band
+   across the table. That matches how SKU Tracking already behaves. */
+.ll-table thead th.ll-pin{position:sticky;left:0;z-index:60;background:var(--surface);box-shadow:2px 0 4px -2px rgba(0,0,0,.10)}
+.ll-table tbody td.ll-pin{position:sticky;left:0;z-index:5;background:var(--surface);box-shadow:2px 0 4px -2px rgba(0,0,0,.10)}
+.ll-row:hover td.ll-pin{background:var(--surface2)}
 .ll-row:hover td{background:rgba(255,255,255,.03)}
 .ll-badge-critical{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:var(--red-bg);color:var(--red);border:1px solid rgba(192,57,43,.2)}
 .ll-badge-atrisk{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:var(--orange-bg);color:var(--orange);border:1px solid rgba(211,84,0,.2)}
@@ -994,7 +1005,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: ia-reconcile (p7b)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: pinned-sku (p7c)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -10736,12 +10747,14 @@ function renderLateListTable() {
     grpRow += `<th class="ll-th-group" colspan="${span}" style="background:${LL_GRP_COLORS[grp]||'#1E3A5F'}">${grp}</th>`;
   });
   grpRow += '</tr>';
-  LL_COLS.forEach(col => {
+  LL_COLS.forEach((col, ci) => {
     const isSorted   = LL_SORT_COL === col.id;
     const _sel = LL_COL_FILTERS[col.id] || new Set();
     const isFiltered = _sel.size > 0 && _sel.size < _llColAllVals(col.id).size;
     const arrow = isSorted ? (LL_SORT_DIR === -1 ? '▼' : '▲') : '▾';
-    colRow += `<th class="ll-th${isSorted?' sorted':''}" id="ll_th_${col.id}">
+    // Freeze the leftmost column (SKU) so it stays visible while scrolling right.
+    const pinCls = ci === 0 ? ' ll-pin' : '';
+    colRow += `<th class="ll-th${isSorted?' sorted':''}${pinCls}" id="ll_th_${col.id}">
       <div class="ll-th-inner">
         <span onclick="llSetSort('${col.id}')" style="flex:1;cursor:pointer">
           ${col.label}<span class="sort-arrow${isSorted?' active':''}">${arrow}</span>
@@ -10781,7 +10794,7 @@ function renderLateListTable() {
           return `<td class="ll-td num" style="${color}">${n.toLocaleString()}</td>`;
         }
         if (col.id === 'sku') {
-          return `<td class="ll-td"><span class="sku-code" onclick="switchTab('sku');setTimeout(()=>openDrilldown('${v}'),100)">${v}</span></td>`;
+          return `<td class="ll-td ll-pin"><span class="sku-code" onclick="switchTab('sku');setTimeout(()=>openDrilldown('${v}'),100)">${v}</span></td>`;
         }
         if (col.id === 'division') {
           const cls = v==='Mens'?'pill-blue':v==='Womens'?'pill-purple':'pill-muted';
@@ -10936,6 +10949,10 @@ body{font-family:var(--body);background:var(--bg);color:var(--text);display:flex
 .ll-th:hover{color:var(--text)}
 .ll-td{padding:4px 8px;border-bottom:1px solid var(--border);border-right:1px solid rgba(0,0,0,.03);white-space:nowrap;font-family:var(--mono);font-size:11px}
 .ll-td.num{text-align:right}
+.ll-table thead th.ll-pin{position:sticky;left:0;z-index:20;background:var(--surface);box-shadow:2px 0 4px -2px rgba(0,0,0,.10)}
+.ll-table tbody td.ll-pin{position:sticky;left:0;z-index:5;background:var(--surface);box-shadow:2px 0 4px -2px rgba(0,0,0,.10)}
+.ll-row:hover td.ll-pin{background:var(--surface2)}
+.ll-table{width:max-content;min-width:100%}
 .ll-badge-critical{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:var(--red-bg);color:var(--red);border:1px solid rgba(192,57,43,.2)}
 .ll-badge-atrisk{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:var(--orange-bg);color:var(--orange);border:1px solid rgba(211,84,0,.2)}
 .ll-badge-late{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:var(--yellow-bg);color:var(--yellow);border:1px solid rgba(160,107,0,.2)}
@@ -11143,18 +11160,18 @@ function renderTable(){
   LL_COLS.forEach((c,i)=>{if(c.grp!==cg){if(cg)grps.push({g:cg,s:cs});cg=c.grp;cs=1}else cs++;if(i===LL_COLS.length-1)grps.push({g:cg,s:cs})});
   const grpRow='<tr>'+grps.map(g=>'<th class="ll-th-group" colspan="'+g.s+'" style="background:'+(LL_GRP_COLORS[g.g]||'#1E3A5F')+'">'+g.g+'</th>').join('')+'</tr>';
   let colRow='<tr>';
-  LL_COLS.forEach(col=>{const is=LL_SORT_COL===col.id;const ar=is?(LL_SORT_DIR===-1?'\\u25BC':'\\u25B2'):'\\u25BE';colRow+='<th class="ll-th" onclick="llSetSort(\\x27'+col.id+'\\x27)">'+col.label+'<span class="sort-arrow'+(is?' active':'')+'">'+ar+'</span></th>'});
+  LL_COLS.forEach((col,ci)=>{const is=LL_SORT_COL===col.id;const ar=is?(LL_SORT_DIR===-1?'\\u25BC':'\\u25B2'):'\\u25BE';colRow+='<th class="ll-th'+(ci===0?' ll-pin':'')+'" onclick="llSetSort(\\x27'+col.id+'\\x27)">'+col.label+'<span class="sort-arrow'+(is?' active':'')+'">'+ar+'</span></th>'});
   colRow+='</tr>';
   document.getElementById('llTableHead').innerHTML=grpRow+colRow;
   // Body
-  const body=slice.map(r=>{let tr='<tr>';LL_COLS.forEach(c=>{const v=r[c.id];let cell='';
+  const body=slice.map(r=>{let tr='<tr class="ll-row">';LL_COLS.forEach((c,ci)=>{const v=r[c.id];let cell='';
     if(c.id==='urgency'){const cls=v==='Critical'?'ll-badge-critical':v==='At Risk'?'ll-badge-atrisk':v==='Late'?'ll-badge-late':'ll-badge-noeta';cell='<span class="'+cls+'">'+(v||'—')+'</span>'}
     else if(c.id==='new_cf'){cell=v?'<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:600;'+(v==='Newness'?'background:#efe7fb;color:#6b21a8':v==='CF'?'background:#e3ecf9;color:#1e40af':'background:#ececec;color:#555')+'">'+v+'</span>':'—'}
     else if(c.id==='tier'){cell=v?'<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;background:#ececec;color:#444">'+v+'</span>':'—'}
     else if(c.id==='days_late'){cell=v!==null&&v!==undefined?'<span class="ll-days-late">+'+v+'</span>':'—'}
     else if(c.num){cell=v!=null?Number(v).toLocaleString():'—'}
     else{cell=v||'—'}
-    tr+='<td class="ll-td'+(c.num?' num':'')+'">'+cell+'</td>'});
+    tr+='<td class="ll-td'+(c.num?' num':'')+(ci===0?' ll-pin':'')+'">'+cell+'</td>'});
     return tr+'</tr>'}).join('');
   document.getElementById('llTableBody').innerHTML=body||'<tr><td colspan="'+LL_COLS.length+'" style="padding:40px;text-align:center;color:var(--muted)">No late SKUs match filters</td></tr>';
   // Pagination
@@ -11233,7 +11250,27 @@ ${'</' + 'script>'}
 .nf-colordesc{max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 .nf-table td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap;color:var(--text)}
 .nf-table tr:last-child td{border-bottom:none}
-.nf-table tbody tr:hover{filter:brightness(0.965)}
+/* Hover uses an inset shadow rather than filter:brightness(). A `filter` on the
+   <tr> would make it a containing block for its descendants, which breaks
+   position:sticky on the pinned SKU cell — the column would visibly detach and
+   jump every time the cursor crossed a row. The inset shadow paints above the
+   background but below cell content, so it darkens rows identically with no
+   side effects on positioning. */
+.nf-table tbody tr:hover td{box-shadow:inset 0 0 0 9999px rgba(0,0,0,.04)}
+/* ── PINNED SKU COLUMN (NF Review) ──
+   .nf-table th is already sticky top:0; adding left:0 to the first cell of each
+   header row makes it sticky on both axes. Body cells need an opaque
+   background, and because the status tint lives on the <tr> (not the <td>), the
+   pinned cell has to restate each tint or the row colour would break at the
+   frozen column. */
+.nf-table thead th.nf-pin{left:0;z-index:6;background:var(--surface2);box-shadow:2px 0 4px -2px rgba(0,0,0,.10)}
+.nf-table thead tr.nf-filterrow th.nf-pin{z-index:6;background:var(--surface)}
+.nf-table tbody td.nf-pin{position:sticky;left:0;z-index:3;background:var(--surface);box-shadow:2px 0 4px -2px rgba(0,0,0,.10)}
+tr.nf-strow-accepted td.nf-pin{background:var(--green-bg)}
+tr.nf-strow-released td.nf-pin{background:var(--purple-bg)}
+tr.nf-strow-hold     td.nf-pin{background:var(--orange-bg)}
+tr.nf-strow-shifted  td.nf-pin{background:#DBEAFE}
+.nf-table tbody tr:hover td.nf-pin{box-shadow:inset 0 0 0 9999px rgba(0,0,0,.04),2px 0 4px -2px rgba(0,0,0,.10)}
 .nf-desc{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 .nf-num{font-family:var(--mono)}
 .nf-target{font-family:var(--mono);color:var(--accent)}
@@ -11773,10 +11810,13 @@ tr.nf-strow-shifted {background:#DBEAFE}
 
   function nfRenderHead(allRecs){
     var el = document.getElementById('nfHead'); if (!el) return;
-    var labelRow = '<tr>' + NF_COLS.map(function(c){ return '<th class="'+(c[2]||'')+'">'+c[1]+'</th>'; }).join('') + '</tr>';
-    var filterRow = '<tr class="nf-filterrow">' + NF_COLS.map(function(c){
+    // Freeze the leftmost column (SKU) on both header rows so it lines up with
+    // the pinned body cells during horizontal scroll.
+    var labelRow = '<tr>' + NF_COLS.map(function(c, i){
+      return '<th class="'+(c[2]||'')+(i===0?' nf-pin':'')+'">'+c[1]+'</th>'; }).join('') + '</tr>';
+    var filterRow = '<tr class="nf-filterrow">' + NF_COLS.map(function(c, i){
       var cell = NF_FILTER_SPEC[c[0]] ? nfFilterCell(c[0], allRecs||[]) : '';
-      return '<th class="'+(c[2]||'')+'">'+cell+'</th>';
+      return '<th class="'+(c[2]||'')+(i===0?' nf-pin':'')+'">'+cell+'</th>';
     }).join('') + '</tr>';
     el.innerHTML = labelRow + filterRow;
   }
@@ -11838,7 +11878,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
       var depthVal = r.hasKey ? round1(r.hardkey) : '';
       var depthPh  = round1(r.desired > 0 ? r.desired : r.curDepth);
       return '<tr class="nf-strow-'+r.status+'">' +
-        '<td class="l"><span class="nf-sku" onclick="nfOpenSku(\''+nfEsc(r.sku)+'\')">'+nfEsc(r.sku)+'</span></td>' +
+        '<td class="l nf-pin"><span class="nf-sku" onclick="nfOpenSku(\''+nfEsc(r.sku)+'\')">'+nfEsc(r.sku)+'</span></td>' +
         '<td class="l nf-styledesc" title="'+nfEsc(r.styleDesc)+'">'+nfEsc(r.styleDesc)+'</td>' +
         '<td class="l nf-colordesc" title="'+nfEsc(r.colorDesc)+'">'+nfEsc(r.colorDesc)+'</td>' +
         '<td class="l">'+nfEsc(r.division)+'</td>' +
