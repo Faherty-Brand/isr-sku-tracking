@@ -1037,7 +1037,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: force-ia-drives-newcf (p7j)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: inv-header-resolution (p7l)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1440,7 +1440,13 @@ setTimeout(function(){
         <span class="nf-ctrl-lbl">Season</span>
         <div class="nf-seg" id="nfSeasonSeg"></div>
       </div>
-      <button class="nf-action-btn" id="nfRelToggle" onclick="nfToggleReleased()">👁 Released: hidden</button>
+      <!-- [p7k] Mode segment replaces the old "Released: hidden" row-hide toggle.
+           These are two genuinely different universes, not one list with rows
+           hidden — see nfUniverse(). -->
+      <div class="nf-ctrl">
+        <span class="nf-ctrl-lbl">View</span>
+        <div class="nf-seg" id="nfModeSeg"></div>
+      </div>
       <button class="nf-action-btn" onclick="nfBulkOpen()">✎ Bulk Update</button>
       <button class="nf-action-btn" onclick="nfCopySkus()">⎘ Copy SKUs</button>
       <button class="nf-action-btn" onclick="nfExportCSV()">⬇ Export CSV</button>
@@ -2175,6 +2181,62 @@ function setOW(sku, field, val){
   else mo.seasons[seasonId][f] = val;
   owLegacyMirror(mo);
 }
+// ── CANONICAL EFFECTIVE TIER / DELIVERY RESOLVERS  [p7k] ────────────────────
+// Single source of truth for "what tier / delivery does this SKU actually have
+// for season X, after overrides?".
+//
+// WHY THIS EXISTS: row.seasons[code] is a deliberate raw PST mirror — there is a
+// parity check (seasonPivotParityCheck) asserting each slice equals the legacy
+// <prefix>_* fields verbatim. Overrides therefore CANNOT be baked into the
+// slice; every consumer has to layer them at read time. Before p7k six sites did
+// that independently and had drifted:
+//
+//   main grid v_tier/v_deliv1 ....... override-aware (both)
+//   resolveEffDeliv ................. override-aware (delivery, None sentinel)
+//   llSeasonTier .................... override-aware (tier)
+//   computeLateList delivMonth ...... NOT override-aware  ← silent bug
+//   nfUniverse ...................... config season only (both)
+//   nfCompute ....................... config season only (tier)
+//
+// The Late List gap meant a delivery retier (e.g. August → September) updated
+// the row's Store Group but NOT its delivery: the row kept resolving its alloc
+// drop date from the OLD month's Flow Cal entry, kept computing days_late
+// against it, and stayed filed under the old month in the month filter.
+//
+// Both resolvers are SEASON-SCOPED: they read that season's own override slot.
+// Overrides are written by setOW() to CONFIG_SEASON only, so a retier surfaces
+// on the config season everywhere and display-only historical seasons
+// (SP26/HO25) correctly keep their untouched PST values.
+//
+// Sentinels (mirroring the pre-existing ps_tier_ow / deliv_ow behavior):
+//   tier  "None"            → '' (no tier at all)
+//   tier  "CF"/"Carry Forward" → '__CF__' (carry marker) when wantCF is set,
+//                             otherwise the literal override text
+//   deliv "None"            → '' (behaves like a SKU with no PST delivery)
+
+// Effective store tier for (row, season), uppercased. Falls back through the
+// slice's own tier sources in the same priority order llSeasonEffTier used.
+// Pass wantCF=true to collapse the CF sentinel to '__CF__'.
+function effTierFor(row, seasonId, wantCF){
+  var s   = (row && row.seasons && row.seasons[seasonId]) || {};
+  var ovr = String(getOWFor(row && row.sku, seasonId, 'tier_ow') || '').trim();
+  var up  = ovr.toUpperCase();
+  if (up === 'NONE') return '';
+  if (wantCF && (up === 'CF' || up === 'CARRY FORWARD')) return '__CF__';
+  var raw = ovr || s.tier || s.corr_tier || s.store_tier_raw || '';
+  return String(raw).trim().toUpperCase();
+}
+
+// Effective delivery month for (row, season). Preserves original casing —
+// callers feed this to Flow Calendar lookups and month sorting, which are
+// whitespace/case tolerant but display the value verbatim.
+function effDelivFor(row, seasonId){
+  var s   = (row && row.seasons && row.seasons[seasonId]) || {};
+  var ovr = String(getOWFor(row && row.sku, seasonId, 'deliv_ow') || '').trim();
+  if (ovr.toUpperCase() === 'NONE') return '';
+  return String(ovr || s.deliv1 || '').trim();
+}
+
 // One-time, idempotent, non-destructive migration of a single override record.
 function upgradeOWRow(mo){
   if (!mo || typeof mo !== 'object') return mo || {};
@@ -2649,6 +2711,9 @@ async function buildFromParsed(P) {
   // Expose flowCalMap globally so computeLateList can resolve alloc dates for any season
   window._flowCalMap = lookups.flowCalMap;
   window._invOnline  = lookups.invOnline;   // SKU → online OH (SUMIFS from ISR INV Pull)
+  // [p7k] SKU → { storeName: units } retail OH, for the NF Released view's
+  // actual per-store depth. Sparse; only stores actually holding units appear.
+  window._invByStore = lookups.invByStore || {};
 
   // Clear cached dropdown option lists so they rebuild from new data
   if (typeof clearOWCaches === 'function') clearOWCaches();
@@ -2988,6 +3053,18 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
   // ── Inventory (ISR INV Pull.csv) ──
   // Finds each column by trying many possible header name variants.
   const invOnline = {}, invRetail = {}, invTier = {}, priceLevel = {};
+  // [p7k] Per-store retail on-hand: { sku: { storeName: units } }.
+  // The ISR INV Pull carries a "Location Name" column that was previously summed
+  // away into the invRetail[sku] total. The NF Review Released view needs ACTUAL
+  // depth per store, which requires keeping that dimension.
+  // Sparse by construction — only non-zero retail rows are recorded — so the
+  // footprint is roughly (SKUs × stores actually carrying stock), not the full
+  // cross product.
+  // NOTE: there is NO size dimension in this feed. The SKU here is style-color
+  // (e.g. UAF2406-GRY); the only size-level data in the workbook is Safety Stock
+  // (a target, not on-hand). Per-size figures downstream are therefore DERIVED
+  // (÷ size count) and labeled as such.
+  const invByStore = {};
 
   // Helper: find a value from a row object trying multiple possible key names
   function getField(row, ...keys) {
@@ -3013,27 +3090,83 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
   // The ISR INV Pull spec has col A = SKU and col B = Price Level. Reading by
   // position makes us resilient to header renames, while the getField fallback
   // still catches the case where columns get reordered in a future export.
+  // ── Column resolution: HEADER NAME first, position as fallback  [p7l] ─────
+  // Previously this read SKU from column A *positionally* and only consulted
+  // header names when column A was BLANK. That made a layout change silently
+  // corrupting rather than loud: if any other column occupies position A and is
+  // populated, its value wins and becomes the "SKU".
+  //
+  // Observed live while validating p7k against the workbook's own staging sheet
+  // (which prepends Tier / Tier Inv helper columns): 2,041 of 2,650 retail rows
+  // resolved their SKU to the literal string "ALL STORES" — the Tier value — and
+  // 104 real SKUs vanished from the lookups. No error, no warning.
+  //
+  // Now the header name wins, position is the fallback, and a disagreement
+  // between the two is logged. Behavior on a spec-compliant file is unchanged:
+  // 'SKU' resolves to index 0 and 'Price Level' to index 1, exactly as before.
   const invHeaderKeys = invRows.length > 0 ? Object.keys(invRows[0]) : [];
-  const INV_COL_A = invHeaderKeys[0] || '';   // expected: SKU
-  const INV_COL_B = invHeaderKeys[1] || '';   // expected: Price Level
-  console.log(`[INV] Position keys — col A="${INV_COL_A}" | col B="${INV_COL_B}"`);
+
+  // Find a header key matching any candidate name, tightest match first:
+  // exact → case-insensitive → normalized (alphanumerics only) → substring.
+  // Normalization is what tolerates stray whitespace and CR characters from a
+  // CRLF export, which is why an exact-only match is not enough.
+  function resolveInvCol(candidates){
+    const norm = s => String(s).toLowerCase().replace(/[^a-z0-9]/g,'');
+    for (const c of candidates){
+      let k = invHeaderKeys.find(h => h === c);                       if (k) return k;
+      k = invHeaderKeys.find(h => h.toLowerCase() === c.toLowerCase()); if (k) return k;
+      k = invHeaderKeys.find(h => norm(h) === norm(c));                 if (k) return k;
+    }
+    // Substring only after every candidate has failed a whole-field match, so a
+    // precise header is never beaten by a loose one elsewhere in the row.
+    for (const c of candidates){
+      const k = invHeaderKeys.find(h => norm(h).includes(norm(c)));
+      if (k) return k;
+    }
+    return '';
+  }
+
+  // Resolve by name, then fall back to the documented position.
+  function invColumn(label, candidates, fallbackIdx){
+    const byName = resolveInvCol(candidates);
+    const posKey = invHeaderKeys[fallbackIdx] || '';
+    if (byName){
+      const at = invHeaderKeys.indexOf(byName);
+      if (at !== fallbackIdx){
+        // Not an error — just no longer silent. The name is still trusted.
+        console.warn(`[INV] ⚠ ${label} resolved by header to "${byName}" at col index ${at}, `
+          + `not the expected index ${fallbackIdx} ("${posKey}"). Using the header match. `
+          + `Headers: ${invHeaderKeys.join(' | ')}`);
+      }
+      return byName;
+    }
+    if (posKey){
+      console.warn(`[INV] ⚠ Could not resolve ${label} by header name — falling back to `
+        + `col index ${fallbackIdx} ("${posKey}"). If ${label} values look wrong, check the `
+        + `ISR INV Pull column headers. Headers: ${invHeaderKeys.join(' | ')}`);
+    }
+    return posKey;
+  }
+
+  const INV_COL_SKU = invColumn('SKU', ['SKU','Style-Color','Item','Product'], 0);
+  const INV_COL_PL  = invColumn('Price Level', ['Price Level','FP/MD','Pricing'], 1);
+  console.log(`[INV] Columns — SKU="${INV_COL_SKU}" | Price Level="${INV_COL_PL}"`);
 
   // Track total OH units per (SKU, priceLevel) so split SKUs can be resolved
   // by whichever price level has the larger on-hand quantity.
   const priceLevelOH = {}; // sku → {priceLevel: totalUnits}
 
   invRows.forEach(r => {
-    // SKU: col A first, then header-name fallback
+    // Resolved SKU column first; getField only if that column is empty.
     const sku = String(
-      (INV_COL_A ? r[INV_COL_A] : '') ||
+      (INV_COL_SKU ? r[INV_COL_SKU] : '') ||
       getField(r, 'SKU', 'Style-Color', 'Item', 'Product', 'sku') ||
       ''
     ).trim();
     if (!sku) return;
 
-    // Price Level: col B first, then header-name fallback
     const pl = String(
-      (INV_COL_B ? r[INV_COL_B] : '') ||
+      (INV_COL_PL ? r[INV_COL_PL] : '') ||
       getField(r, 'Price Level', 'price level', 'FP/MD', 'Pricing') ||
       ''
     ).trim();
@@ -3041,6 +3174,10 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     const locType = String(getField(r, 'Location Type', 'location type', 'Loc Type', 'Channel', 'Type') || '').trim().toLowerCase();
     const units   = parseFloat(getField(r, 'Avail. Stock Units - TY', 'Avail Stock Units', 'Available Units', 'OH Units', 'On Hand', 'Available Stock Units - TY', 'units') || 0) || 0;
     const tierInv = String(getField(r, 'Tier Inv', 'Tier', 'tier inv', 'In Tier') || '').trim();
+    // [p7k] Store identity for the per-store breakdown. Resolved by header name
+    // with a broad vocabulary; absent header simply leaves the breakdown empty
+    // rather than breaking the SKU-level totals.
+    const locName = String(getField(r, 'Location Name', 'location name', 'Store Name', 'Store', 'Location') || '').trim();
 
     if (pl) {
       if (!priceLevelOH[sku]) priceLevelOH[sku] = {};
@@ -3054,6 +3191,12 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
       invRetail[sku] = (invRetail[sku] || 0) + units;
       if (tierInv.toUpperCase() === 'X' || tierInv === '1' || tierInv.toLowerCase() === 'true') {
         invTier[sku] = (invTier[sku] || 0) + units;
+      }
+      // [p7k] Keep the store dimension for the NF Released view. Only non-zero
+      // rows are stored, keeping the map sparse.
+      if (locName && units) {
+        if (!invByStore[sku]) invByStore[sku] = {};
+        invByStore[sku][locName] = (invByStore[sku][locName] || 0) + units;
       }
     }
   });
@@ -3791,7 +3934,7 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
 
   return {
     pstBySeasonSku, pstBySku,
-    invOnline, invRetail, invTier, priceLevel,
+    invOnline, invRetail, invTier, invByStore, priceLevel,
     lcwOnline, lcwRetail,
     newnessMap, flowCalMap,
     wipMap, wipXSBySku,
@@ -10091,9 +10234,9 @@ const LL_EXCLUDED_TIERS = NON_ALLOC_TIERS;
 function llSeasonTier(row, code) {
   // season-pivot audit: read the immutable per-season tier from row.seasons +
   // that season's own override — never the config-projected cs_* fields.
-  var s = (row.seasons && row.seasons[code]) || {};
-  var ovr = getOWFor(row.sku, code, 'tier_ow');
-  return String(ovr || s.tier || '').trim().toUpperCase();
+  // [p7k] delegates to the canonical resolver so tier resolution can't drift
+  // from the main grid / NF Review again.
+  return effTierFor(row, code);
 }
 
 // ── Season-aware Newness / Carry-Forward classification ───────────────────
@@ -10120,13 +10263,9 @@ function llPrevSeasonId(seasonId){
 // tier. Mirrors the twin sentinels the PS override uses: "None" forces no tier,
 // "CF"/"Carry Forward" forces a carry marker.
 function llSeasonEffTier(row, seasonId){
-  var s = (row.seasons && row.seasons[seasonId]) || {};
-  var ovr = String(getOWFor(row.sku, seasonId, 'tier_ow') || '').trim();
-  var up = ovr.toUpperCase();
-  if (up === 'NONE') return '';
-  if (up === 'CF' || up === 'CARRY FORWARD') return '__CF__';
-  var raw = ovr || s.tier || s.corr_tier || s.store_tier_raw || '';
-  return String(raw).trim().toUpperCase();
+  // [p7k] delegates to the canonical resolver (wantCF=true keeps the '__CF__'
+  // carry marker this caller relies on).
+  return effTierFor(row, seasonId, true);
 }
 
 // True when the SKU is allocated to stores in `seasonId` — i.e. it has a
@@ -10193,7 +10332,16 @@ function computeLateList(season) {
 
     seasonsToCheck.forEach(({ code, delivField, pendField }) => {
       const sSlice = sMap[code] || {};
-      const delivMonth = sSlice.deliv1 || '';
+      // [p7k] Effective (override-aware) delivery. Previously read sSlice.deliv1
+      // raw, so a delivery retier from the grid/side panel did NOT reach the Late
+      // List: the row kept resolving its alloc drop date from the ORIGINAL
+      // month's Flow Cal entry, kept computing days_late against it, and stayed
+      // filed under the original month in the month filter — while its Store
+      // Group DID update. Half-updated rows were the visible symptom.
+      // NOTE: this legitimately changes which rows appear and their days_late,
+      // since delivery drives the alloc drop date. A retiered SKU can now drop
+      // off the Late List entirely, or newly appear.
+      const delivMonth = effDelivFor(row, code);
 
       if (!delivMonth) {
         return;
@@ -10809,7 +10957,9 @@ function updateLLStats() {
   const fCatSet = LL_TB_FILTERS.category; // Set (empty = all)
 
   const universe = ALL_ROWS.filter(r => {
-    const dm = ((r.seasons && r.seasons[sznCode]) || {}).deliv1 || '';
+    // [p7k] override-aware so the stats denominator agrees with the rows
+    // computeLateList actually built (which now honor deliv_ow).
+    const dm = effDelivFor(r, sznCode);
     if (!dm) return false;
     if (fMonths.size > 0 && !fMonths.has(dm)) return false;
     if (fDivSet.size > 0 && !fDivSet.has(r.division)) return false;
@@ -11037,8 +11187,12 @@ function renderLateListTable() {
           return `<td class="ll-td"><span class="pill ${cls}">${v}</span></td>`;
         }
         if (col.id === 'tier') {
+          // [p7k] Clickable Store Group — opens the member-store popover, same
+          // affordance as the main grid. sgValueSpan handles the sentinel cases
+          // (None / CF / blank) by rendering a plain, non-clickable span.
           if (!v) return `<td class="ll-td"><span class="muted-cell">—</span></td>`;
-          return `<td class="ll-td"><span class="pill pill-muted">${v}</span></td>`;
+          const pill = `<span class="pill pill-muted">${v}</span>`;
+          return `<td class="ll-td">${sgValueSpan(pill, v, row.deliv_month)}</td>`;
         }
         if (!v || v === '') return `<td class="ll-td"><span class="muted-cell">—</span></td>`;
         return `<td class="ll-td">${v}</td>`;
@@ -11562,6 +11716,10 @@ ${'</' + 'script>'}
 .nf-seg-btn{padding:5px 12px;font-family:var(--mono);font-size:11px;border:none;background:transparent;color:var(--muted);cursor:pointer;border-right:1px solid var(--border)}
 .nf-seg-btn:last-child{border-right:none}
 .nf-seg-btn.active{background:var(--accent);color:#fff;font-weight:600}
+/* [p7k] Released mode is config-season only — show it as unavailable rather
+   than letting a click silently no-op. */
+.nf-seg-btn:disabled{opacity:.4;cursor:not-allowed}
+.nf-seg-btn:disabled.active{background:transparent;color:var(--muted)}
 .nf-select{padding:5px 8px;font-family:var(--mono);font-size:11px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);cursor:pointer}
 .nf-action-btn{padding:6px 12px;font-family:var(--mono);font-size:11px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);cursor:pointer}
 .nf-action-btn:hover{background:var(--surface2)}
@@ -11666,12 +11824,19 @@ tr.nf-strow-shifted {background:#DBEAFE}
   //   select → exact match · text → case-insensitive substring · min → value ≥ N
   var NF_FILT   = {};
   var NF_DATA   = {};              // { season: { sku: {depth, tier, status} } }
-  // [nf-release-p6l] Released rows are hidden by default — a released SKU's
-  // review workflow is done, so it's noise in the working view. Persisted so
-  // the choice survives a reload. The Released stat tile still counts them, and
-  // setting the Status column filter to "Released" bypasses the hide.
-  var NF_SHOW_RELEASED = false;
-  try { NF_SHOW_RELEASED = localStorage.getItem('isr_nf_show_released') === '1'; } catch(e){}
+  // [p7k] View mode: 'pending' | 'released'. Replaces the old NF_SHOW_RELEASED
+  // row-hide. These select different universe GATES (see nfUniverse) rather than
+  // filtering one list, which is what makes released SKUs reachable at all —
+  // the lifecycle gate had been discarding them upstream of any row-hide.
+  // Persisted so the choice survives a reload.
+  var NF_MODE = 'pending';
+  try {
+    var _pm = localStorage.getItem('isr_nf_mode');
+    if (_pm === 'released' || _pm === 'pending') NF_MODE = _pm;
+    // Migrate the retired flag: if the user had Released showing, land on the
+    // Released view rather than silently resetting them to Pending.
+    else if (localStorage.getItem('isr_nf_show_released') === '1') NF_MODE = 'released';
+  } catch(e){}
   var _nfCloudInit = false;
   var _nfSyncCache = {};           // id -> json (for diff pushes)
   var NF_TABLE = 'nf_review';
@@ -11764,39 +11929,58 @@ tr.nf-strow-shifted {background:#DBEAFE}
   //      NOT Carried-Forward. Store OH is intentionally NOT a gate — early-
   //      released newness and returning IA styles can carry store units and
   //      still belong in the review; only CF SKUs are excluded. ----
-  function nfUniverse(code){
+  // [p7k] MODE-AWARE. `mode` is 'pending' or 'released' and selects the GATE:
+  //
+  //   pending  — IA-eligibility gate (cfg_life === 'IA'). The forward-looking
+  //              review: what still needs a depth decision.
+  //
+  //   released — Newness-Log presence gate (within the season window), with the
+  //              IA requirement DROPPED entirely.
+  //
+  // WHY THE SPLIT (root cause of "released SKUs are missing"): the old single
+  // gate required cfg_life === 'IA' for the config season. computeCfgLife()
+  // returns 'Replen' as soon as the Syrup config start date is in the past — and
+  // a RELEASED SKU has by definition dropped, so its start date HAS passed.
+  // Released SKUs therefore flipped to Replen and were discarded HERE, before
+  // the old NF_SHOW_RELEASED row-hide was ever evaluated downstream. That toggle
+  // could only unhide rows already in the universe; it could not recover rows the
+  // universe had thrown away. Measured on the FA26 workbook: of 978 unique
+  // Newness Log SKUs, 631 were Replen and 25 Expired — ~650 hard-blocked, with
+  // only 120 still 'IA' and therefore visible.
+  //
+  // Delivery and non-allocated-tier exclusions apply in BOTH modes.
+  function nfUniverse(code, mode){
     var out = [];
     var rows = (typeof ALL_ROWS !== 'undefined' && Array.isArray(ALL_ROWS)) ? ALL_ROWS : [];
     if (!rows.length) return out;
+    var relMode = (mode === 'released');
     for (var i=0;i<rows.length;i++){
       var row = rows[i];
       var slice = row.seasons ? row.seasons[code] : null;
       if (!slice) continue;
-      // Effective delivery: honor the SKU-Tracking config-season delivery override
-      // (deliv_ow) so a delivery retier from the grid/side panel pulls into NF.
-      // 'NONE' clears the delivery.
-      var deliv1;
-      if (code === CONFIG_SEASON && row.deliv_ow){
-        var _dow = String(row.deliv_ow).trim();
-        deliv1 = (_dow.toUpperCase() === 'NONE') ? '' : _dow;
-      } else {
-        deliv1 = String(slice.deliv1||'').trim();
-      }
+      // Effective delivery via the canonical resolver — season-scoped and
+      // override-aware ('None' clears it), so a delivery retier from the
+      // grid/side panel pulls into NF.
+      var deliv1 = effDelivFor(row, code);
       if (!deliv1) continue;                          // must be planned to deliver in this season
-      // Config season: include ONLY IA-eligible SKUs. Once a SKU flips from IA to
-      // Replen (config start date passed, i.e. the buffer after the drop) it
-      // leaves the review. This removes carryforward/replen SKUs while KEEPING IA
-      // SKUs that carry some spare OH in PLG/stores. Other seasons: season-relative
-      // carryforward exclusion.
-      if (code === CONFIG_SEASON){
+      if (relMode){
+        // Released view: gate on "actually dropped" rather than lifecycle.
+        if (!nfIsReleased(row, code)) continue;
+      } else if (code === CONFIG_SEASON){
+        // Config season: include ONLY IA-eligible SKUs. Once a SKU flips from IA
+        // to Replen (config start date passed, i.e. the buffer after the drop) it
+        // leaves the pending review. This removes carryforward/replen SKUs while
+        // KEEPING IA SKUs that carry some spare OH in PLG/stores.
         if (!nfIsIAEligible(row)) continue;
+        if (nfIsReleased(row, code)) continue;         // released rows live in the other mode
       } else {
+        // Other seasons: season-relative carryforward exclusion.
         if (nfIsCF(row, code)) continue;
       }
       // Exclude non-store-allocated tiers (Online Only, Partnership, Wholesale
       // Exclusive, Do Not Allocate, Drop, NFL, Collegiate, NBA) — they only
-      // clutter the review. Override-aware for the config season.
-      var effTier = String((code === CONFIG_SEASON ? (row.tier_ow || slice.tier) : slice.tier) || '').trim().toUpperCase();
+      // clutter the review. Override-aware via the canonical resolver.
+      var effTier = effTierFor(row, code);
       if (NON_ALLOC_TIERS.has(effTier)) continue;
       out.push({row:row, slice:slice, deliv1:deliv1});
     }
@@ -11855,6 +12039,38 @@ tr.nf-strow-shifted {background:#DBEAFE}
     return win;
   }
 
+  // ---- shared release test  [p7k] ----------------------------------------
+  // Single definition of "this SKU has dropped", used BOTH by the Released-mode
+  // universe gate and by nfCompute's status. Extracted so the gate and the row
+  // can never disagree about what Released means.
+  //
+  // Returns {dropped, inLog, logTs, bar, whyNot}. Trigger is PRESENCE in the
+  // Newness Log; the date is only a season guard, compared inclusively at day
+  // granularity against the SKU's own Flow Cal drop date (the log is cumulative
+  // and has no season column, so without the guard a SKU that dropped two
+  // seasons ago would auto-release here).
+  function nfReleaseInfo(row, code){
+    var whyNot = '';
+    var inLog = !!row.in_newness;
+    if (code !== CONFIG_SEASON){ inLog = false; whyNot = 'season'; }
+    else if (!inLog) whyNot = 'notInLog';
+
+    var logTs = dayTs(row.newness_ts);
+    var ownTs = dayTs(row.deliv_alloc_ts);
+    var bar   = null;
+    if (inLog && logTs !== null){
+      // Prefer the SKU's own drop date; fall back to the season minimum.
+      var base = (ownTs !== null) ? ownTs : nfWindowStart(code);
+      bar = (base === null) ? null : (base - NF_WINDOW_BUFFER_DAYS*86400000);
+    }
+    // logTs === null → no date on the log row → presence alone releases it.
+    // bar === null   → nothing to compare against → guard inert.
+    var dropped = inLog && (logTs === null || bar === null || logTs >= bar);
+    if (inLog && !dropped) whyNot = 'window';
+    return {dropped:dropped, inLog:inLog, logTs:logTs, ownTs:ownTs, bar:bar, whyNot:whyNot};
+  }
+  function nfIsReleased(row, code){ return nfReleaseInfo(row, code).dropped; }
+
   // ---- compute one display record ----
   function nfCompute(entry){
     var row = entry.row, slice = entry.slice, deliv = entry.deliv1, sku = row.sku;
@@ -11875,23 +12091,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
     //
     // nfWhyNot records which gate applied: '' (released) | 'season' |
     // 'notInLog' | 'window' | 'manual:<status>' (only when NOT logged).
-    var whyNot = '';
-    var inLog = !!row.in_newness;
-    if (NF_SEASON !== CONFIG_SEASON){ inLog = false; whyNot = 'season'; }
-    else if (!inLog) whyNot = 'notInLog';
-
-    var logTs = dayTs(row.newness_ts);
-    var ownTs = dayTs(row.deliv_alloc_ts);
-    var bar   = null;
-    if (inLog && logTs !== null){
-      // Prefer the SKU's own drop date; fall back to the season minimum.
-      var base = (ownTs !== null) ? ownTs : nfWindowStart(NF_SEASON);
-      bar = (base === null) ? null : (base - NF_WINDOW_BUFFER_DAYS*86400000);
-    }
-    // logTs === null → no date on the log row → presence alone releases it.
-    // bar === null   → nothing to compare against → guard inert.
-    var dropped = inLog && (logTs === null || bar === null || logTs >= bar);
-    if (inLog && !dropped) whyNot = 'window';
+    // [p7k] release determination now comes from the shared nfReleaseInfo() so
+    // this row and the Released-mode universe gate use one definition.
+    var _rel  = nfReleaseInfo(row, NF_SEASON);
+    var inLog = _rel.inLog;
+    var dropped = _rel.dropped;
+    var whyNot = _rel.whyNot;
     // Only report a stored status as the governing reason when the SKU is NOT in
     // the log at all. A logged-but-window-rejected SKU keeps the 'window'
     // verdict — that is the informative fact; its stored status is reported
@@ -11903,11 +12108,13 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var sizeCt = sizeCtFor(slice.size_scale);
     var baseTier = String(slice.tier||'').trim();
     var tmap = tierMap(deliv);
-    // Store Tier follows the SKU-Tracking config-season tier override (tier_ow)
-    // when set — a retier from the grid/side panel pulls into NF as the Store
-    // Tier and drives the effective tier.
-    var _tierOverridden = !!(NF_SEASON === CONFIG_SEASON && row.tier_ow && String(row.tier_ow).trim());
-    if (_tierOverridden) baseTier = String(row.tier_ow).trim();
+    // Store Tier follows the tier override when set — a retier from the grid/side
+    // panel pulls into NF as the Store Tier and drives the effective tier.
+    // [p7k] resolved via the canonical season-scoped resolver instead of reading
+    // the flat row.tier_ow mirror, so NF, the Late List and the main grid agree.
+    var _ovrTier = String(getOWFor(sku, NF_SEASON, 'tier_ow') || '').trim();
+    var _tierOverridden = !!_ovrTier && _ovrTier.toUpperCase() !== 'NONE';
+    if (_tierOverridden) baseTier = _ovrTier;
     // When retiered, use the override tier's footprint for the store count (not
     // the original tier's planned count) so depth & New Rec reflect the new tier.
     var baseStoreCt = _tierOverridden ? (tmap[baseTier.toUpperCase()] || 0)
@@ -11937,6 +12144,39 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var light = (desired>0 && effDepth>0 && effDepth < NF_LIGHT_RATIO*desired);
     var omniRisk = (omni>0 && newRec > NF_OMNI_RATIO*omni);
 
+    // ---- ACTUAL depth (Released view)  [p7k] -------------------------------
+    // Pending answers "how deep SHOULD this go?" (effDepth / newRec — planned).
+    // Released answers "how deep DID it actually land?" — measured from the ISR
+    // INV Pull's per-store retail on-hand.
+    //
+    // actStores  = stores actually holding units (the realized footprint)
+    // actUnits   = total retail units on hand across those stores
+    // actDepth   = actUnits / actStores  → ACTUAL units per store carrying it
+    // actPerSize = actDepth / sizeCt     → DERIVED, an even-spread assumption
+    //
+    // actPerSize is NOT measured. The INV Pull has no size dimension (its SKU is
+    // style-color), so per-size actuals cannot be computed from current inputs.
+    // It is rendered with a "derived" marker so it can't be mistaken for fact.
+    //
+    // Denominator note: dividing by actStores (not the planned tier count) means
+    // actDepth reads as depth-where-stocked. actCoverage carries the other half
+    // of the story — how much of the intended footprint was actually reached.
+    var storeMap = (window._invByStore && window._invByStore[sku]) || null;
+    var actUnits = 0, actStores = 0, actMin = null, actMax = null;
+    if (storeMap){
+      for (var _sn in storeMap){
+        var _u = num(storeMap[_sn]);
+        if (!_u) continue;
+        actStores++; actUnits += _u;
+        if (actMin === null || _u < actMin) actMin = _u;
+        if (actMax === null || _u > actMax) actMax = _u;
+      }
+    }
+    var actDepth    = actStores > 0 ? actUnits/actStores : 0;
+    var actPerSize  = (actDepth > 0 && sizeCt > 0) ? actDepth/sizeCt : 0;
+    // Realized footprint vs the intended tier footprint.
+    var actCoverage = stores > 0 ? actStores/stores : 0;
+
     return {
       sku: sku,
       desc: (row.style_desc||'') + (row.color_desc? ' — '+row.color_desc : ''),
@@ -11962,13 +12202,17 @@ tr.nf-strow-shifted {background:#DBEAFE}
       newRec: newRec, perSize: perSize,
       retail: retail, online: online, omni: omni, pctOmni: pctOmni, pctRetail: pctRetail,
       light: light, omniRisk: omniRisk,
+      // [p7k] actuals (Released view). actPerSize is DERIVED — see nfCompute.
+      actUnits: actUnits, actStores: actStores, actDepth: actDepth,
+      actPerSize: actPerSize, actCoverage: actCoverage,
+      actMin: (actMin === null ? 0 : actMin), actMax: (actMax === null ? 0 : actMax),
       status: dropped ? 'released' : (stored.status || 'pending'),
       autoReleased: dropped,
       logLocked: dropped,
       overridden: overridden,
       droppedDate: droppedDate,
       // [nf-release-p6i] diagnostics for nfWhy()
-      whyNot: whyNot, inLog: inLog, logTs: logTs, ownTs: ownTs, bar: bar,
+      whyNot: whyNot, inLog: inLog, logTs: _rel.logTs, ownTs: _rel.ownTs, bar: _rel.bar,
       storedStatus: stored.status || '',
       _tmap: tmap
     };
@@ -12021,7 +12265,15 @@ tr.nf-strow-shifted {background:#DBEAFE}
     pctretail: { type:'min',    get:function(r){ return r.retail>0 ? r.pctRetail*100 : null; } },
     pctomni:   { type:'min',    get:function(r){ return r.omni>0   ? r.pctOmni*100  : null; } },
     health:    { type:'select', get:function(r){ return r.omniRisk?'Omni-risk':(r.light?'Light':'OK'); } },
-    status:    { type:'select', get:function(r){ return NF_STATUS_LABEL[r.status]; } }
+    status:    { type:'select', get:function(r){ return NF_STATUS_LABEL[r.status]; } },
+    // ---- Released-view actuals  [p7k] ----
+    dropped:    { type:'select', get:function(r){ return r.droppedDate; } },
+    actstores:  { type:'num',    get:function(r){ return r.actStores; } },
+    actunits:   { type:'num',    get:function(r){ return r.actUnits; } },
+    actdepth:   { type:'min',    get:function(r){ return r.actDepth; } },
+    actpersize: { type:'min',    get:function(r){ return r.actPerSize; } },
+    // Coverage as a whole percent so the filter reads "≥ 60" not "≥ 0.6".
+    actcoverage:{ type:'min',    get:function(r){ return r.stores>0 ? r.actCoverage*100 : null; } }
   };
 
   // ---- distinct non-empty values for a filter spec (drives select options) ----
@@ -12117,6 +12369,27 @@ tr.nf-strow-shifted {background:#DBEAFE}
 
   function nfRenderStats(recs){
     var el = document.getElementById('nfStats'); if (!el) return;
+    // [p7k] Released mode: every row is released by construction, so the status
+    // tiles carry no information. Show distribution quality instead — the actual
+    // question on a dropped SKU is "did it land where and as deep as intended?".
+    if (NF_MODE === 'released'){
+      var withInv = 0, noInv = 0, under = 0, unitTot = 0, depthSum = 0, covSum = 0, covN = 0;
+      recs.forEach(function(r){
+        if (r.actStores > 0){ withInv++; depthSum += r.actDepth; unitTot += r.actUnits; }
+        else noInv++;
+        if (r.stores > 0){ covSum += r.actCoverage; covN++; if (r.actCoverage < 0.6) under++; }
+      });
+      var avgDepth = withInv > 0 ? depthSum/withInv : 0;
+      var avgCov   = covN > 0 ? covSum/covN : 0;
+      el.innerHTML =
+        nfStat(recs.length, 'Released SKUs', 'var(--purple)') +
+        nfStat(unitTot.toLocaleString(), 'Store Units', 'var(--text)') +
+        nfStat(round1(avgDepth), 'Avg Act Depth', 'var(--text)') +
+        nfStat(Math.round(avgCov*100)+'%', 'Avg Coverage', 'var(--text)') +
+        nfStat(under, 'Under 60% Cov', under?'var(--red)':'var(--muted)') +
+        nfStat(noInv, 'No Store Stock', noInv?'var(--orange)':'var(--muted)');
+      return;
+    }
     var c = {pending:0,accepted:0,released:0,shifted:0,hold:0}, light=0, omni=0;
     recs.forEach(function(r){ c[r.status]=(c[r.status]||0)+1; if(r.light)light++; if(r.omniRisk)omni++; });
     var cs = 'var(--muted)';
@@ -12131,7 +12404,11 @@ tr.nf-strow-shifted {background:#DBEAFE}
       nfStat(omni, 'Omni-risk', 'var(--red)');
   }
 
-  var NF_COLS = [
+  // ---- column sets  [p7k] -------------------------------------------------
+  // Pending answers "how deep SHOULD this go?" — planning inputs and the depth
+  // hardkey. Released answers "how deep DID it land?" — measured actuals. The
+  // two sets deliberately share the identity columns and diverge after that.
+  var NF_COLS_PENDING = [
     ['sku','SKU','l'],['styledesc','Style Description','l'],['colordesc','Color','l'],
     ['div','Div','l'],['cat','Category','l'],
     ['deliv','Deliv','l'],['lifecycle','Lifecycle','l'],['size','Size','l'],['plg','PLG OH',''],['ia','Syrup IA',''],
@@ -12140,14 +12417,117 @@ tr.nf-strow-shifted {background:#DBEAFE}
     ['retailbuy','Retail Buy',''],['omnibuy','Omni Buy',''],
     ['pctretail','% Retail',''],['pctomni','% Omni',''],['health','Health',''],['status','Status','l'],['notes','Notes','l']
   ];
+  // Released: actual store footprint and depth, measured from the ISR INV Pull.
+  // 'Per Size' is DERIVED (actual depth ÷ size count) — the INV Pull has no size
+  // dimension — and is marked with a ˚ so it reads as an estimate, not a fact.
+  var NF_COLS_RELEASED = [
+    ['sku','SKU','l'],['styledesc','Style Description','l'],['colordesc','Color','l'],
+    ['div','Div','l'],['cat','Category','l'],
+    ['deliv','Deliv','l'],['dropped','Dropped','l'],['size','Size','l'],
+    ['storetier','Store Tier','l'],['stores','Tier Stores',''],
+    ['actstores','Act Stores',''],['actcoverage','Coverage',''],
+    ['actunits','Store Units',''],['actdepth','Act Depth',''],['actpersize','Per Size ˚',''],
+    ['actrange','Range','l'],
+    ['ia','Syrup IA',''],['plg','PLG OH',''],['retailbuy','Retail Buy',''],
+    ['status','Status','l'],['notes','Notes','l']
+  ];
+  function nfCols(){ return NF_MODE === 'released' ? NF_COLS_RELEASED : NF_COLS_PENDING; }
+
+  // ---- per-column cell renderers  [p7k] -----------------------------------
+  // Previously the body template was one long positional string that had to stay
+  // in lockstep with NF_COLS by hand. With two column sets that coupling becomes
+  // a bug waiting to happen, so each column now owns its own cell renderer and
+  // both sets render through this map.
+  var NF_CELL = {
+    sku: function(r){ return '<td class="l nf-pin"><span class="nf-sku" onclick="nfOpenSku(\''+nfEsc(r.sku)+'\')">'+nfEsc(r.sku)+'</span></td>'; },
+    styledesc: function(r){ return '<td class="l nf-styledesc" title="'+nfEsc(r.styleDesc)+'">'+nfEsc(r.styleDesc)+'</td>'; },
+    colordesc: function(r){ return '<td class="l nf-colordesc" title="'+nfEsc(r.colorDesc)+'">'+nfEsc(r.colorDesc)+'</td>'; },
+    div: function(r){ return '<td class="l">'+nfEsc(r.division)+'</td>'; },
+    cat: function(r){ return '<td class="l">'+nfEsc(r.category)+'</td>'; },
+    deliv: function(r){ return '<td class="l">'+nfEsc(r.deliv)+'</td>'; },
+    lifecycle: function(r){ return '<td class="l">'+nfEsc(r.lifecycle||'—')+'</td>'; },
+    size: function(r){ return '<td class="l nf-num">'+nfEsc(r.sizeScale)+' · '+r.sizeCt+'</td>'; },
+    plg: function(r){ return '<td class="nf-num'+(r.plgOH>0?' nf-recv':'')+'">'+(r.plgOH>0?r.plgOH.toLocaleString():'—')+'</td>'; },
+    ia: function(r){ return '<td class="nf-num">'+(r.iaRec?r.iaRec.toLocaleString():'—')+'</td>'; },
+    storect: function(r){ return '<td class="nf-num">'+r.iaStores+'</td>'; },
+    curdepth: function(r){ return '<td class="nf-cur">'+round1(r.curDepth)+'</td>'; },
+    aps: function(r){ return '<td class="nf-num">'+(r.aps>0?round1(r.aps):'—')+'</td>'; },
+    target: function(r){ return '<td class="nf-target">'+round1(r.desired)+'</td>'; },
+    depth: function(r){
+      var depthVal = r.hasKey ? round1(r.hardkey) : '';
+      var depthPh  = round1(r.desired > 0 ? r.desired : r.curDepth);
+      return '<td><input class="nf-depth-input'+(r.hasKey?' set':'')+'" type="number" min="0" step="0.5" value="'+depthVal+'" placeholder="'+depthPh+'" '
+           + 'onchange="nfEditDepth(\''+nfEsc(r.sku)+'\',this.value)" title="Blank = use the Target depth (APS formula). Type a number to override the target for this SKU."></td>';
+    },
+    // [p7k] Store Tier is clickable — opens the shared member-store popover, the
+    // same affordance as the main grid and Late List. sgValueSpan renders
+    // sentinels (None / CF / blank) as a plain non-clickable span.
+    storetier: function(r){
+      if (!r.baseTier) return '<td class="l">—</td>';
+      return '<td class="l">'+sgValueSpan(nfEsc(r.baseTier), r.baseTier, r.delivRaw)+'</td>';
+    },
+    alttier: function(r){ return '<td class="l">'+nfTierSelect(r)+'</td>'; },
+    stores: function(r){ return '<td class="nf-num">'+r.stores+'</td>'; },
+    newrec: function(r){ return '<td class="nf-newrec">'+r.newRec.toLocaleString()+'</td>'; },
+    retailbuy: function(r){ return '<td class="nf-num">'+(r.retail>0?r.retail.toLocaleString():'—')+'</td>'; },
+    omnibuy: function(r){ return '<td class="nf-num">'+(r.omni>0?r.omni.toLocaleString():'—')+'</td>'; },
+    pctretail: function(r){ return '<td class="nf-num">'+(r.retail>0?Math.round(r.pctRetail*100)+'%':'—')+'</td>'; },
+    pctomni: function(r){ return '<td class="nf-num">'+(r.omni>0?Math.round(r.pctOmni*100)+'%':'—')+'</td>'; },
+    health: function(r){ return '<td>'+nfFlags(r)+'</td>'; },
+    status: function(r){
+      return '<td class="l">'+nfStatusSelect(r)
+        + (r.autoReleased?' <span title="In Newness Log'+(r.droppedDate?' — '+nfEsc(r.droppedDate):'')+'" style="color:var(--purple);font-size:11px;margin-left:2px">⬇</span>':'')
+        + '</td>';
+    },
+    notes: function(r){ return '<td class="l"><input class="nf-note-input" type="text" value="'+nfEsc(r.note||'')+'" placeholder="note…" onchange="nfEditNote(\''+nfEsc(r.sku)+'\',this.value)" title="Note for merchandising partners — saved, synced, and included in the CSV export."></td>'; },
+    // ---- Released-view actuals ----
+    dropped: function(r){ return '<td class="l" style="font-family:var(--mono);font-size:10.5px">'+nfEsc(r.droppedDate||'—')+'</td>'; },
+    actstores: function(r){
+      if (!(r.actStores > 0)) return '<td class="nf-num">—</td>';
+      return '<td class="nf-num"><span class="sg-clickable" '
+        + 'title="Stores currently holding retail units (ISR INV Pull, Location Name). Click for the per-store breakdown." '
+        + 'onclick="nfShowStoreDepth(event,\''+nfEsc(r.sku)+'\')">'
+        + r.actStores.toLocaleString() + '</span></td>';
+    },
+    actcoverage: function(r){
+      if (!r.stores || !r.actStores) return '<td class="nf-num">—</td>';
+      var pct = Math.round(r.actCoverage*100);
+      // Under-reached footprint is the actionable signal on a released SKU.
+      var col = pct < 60 ? 'var(--red)' : pct < 85 ? 'var(--orange)' : 'var(--green)';
+      return '<td class="nf-num" style="color:'+col+'" title="'+r.actStores+' of '+r.stores+' tier stores are holding units.">'+pct+'%</td>';
+    },
+    actunits: function(r){
+      return '<td class="nf-num" title="Total retail on-hand units across all stores.">'
+        + (r.actUnits>0 ? r.actUnits.toLocaleString() : '—') + '</td>';
+    },
+    actdepth: function(r){
+      if (!(r.actDepth>0)) return '<td class="nf-num">—</td>';
+      return '<td class="nf-cur" title="ACTUAL units per stocked store = '+r.actUnits.toLocaleString()
+        + ' units ÷ '+r.actStores+' stores. Measured, not planned.">'+round1(r.actDepth)+'</td>';
+    },
+    actpersize: function(r){
+      if (!(r.actPerSize>0)) return '<td class="nf-num">—</td>';
+      return '<td class="nf-num" style="opacity:.8;font-style:italic" '
+        + 'title="DERIVED, not measured: actual depth '+round1(r.actDepth)+' ÷ '+r.sizeCt
+        + ' sizes, i.e. an even-spread assumption. The ISR INV Pull has no size dimension, '
+        + 'so true per-size on-hand cannot be computed from current inputs.">'
+        + round1(r.actPerSize)+'</td>';
+    },
+    actrange: function(r){
+      if (!r.actStores) return '<td class="l">—</td>';
+      return '<td class="l nf-num" title="Lowest and highest per-store unit count — a wide spread means uneven distribution.">'
+        + r.actMin+'–'+r.actMax+'</td>';
+    }
+  };
 
   function nfRenderHead(allRecs){
     var el = document.getElementById('nfHead'); if (!el) return;
+    var COLS = nfCols();
     // Freeze the leftmost column (SKU) on both header rows so it lines up with
     // the pinned body cells during horizontal scroll.
-    var labelRow = '<tr>' + NF_COLS.map(function(c, i){
+    var labelRow = '<tr>' + COLS.map(function(c, i){
       return '<th class="'+(c[2]||'')+(i===0?' nf-pin':'')+'">'+c[1]+'</th>'; }).join('') + '</tr>';
-    var filterRow = '<tr class="nf-filterrow">' + NF_COLS.map(function(c, i){
+    var filterRow = '<tr class="nf-filterrow">' + COLS.map(function(c, i){
       var cell = NF_FILTER_SPEC[c[0]] ? nfFilterCell(c[0], allRecs||[]) : '';
       return '<th class="'+(c[2]||'')+(i===0?' nf-pin':'')+'">'+cell+'</th>';
     }).join('') + '</tr>';
@@ -12203,42 +12583,21 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (!recs.length){
       body.innerHTML = '';
       if (empty){ empty.style.display='block'; empty.style.color='var(--muted)';
-        empty.textContent = 'No '+(NF_SEASON===CONFIG_SEASON?'IA-eligible':'Newness')+' SKUs for '+NF_SEASON+(nfActiveFilterCount()?' matching the current column filters':'')+'.'; }
+        empty.textContent = (NF_MODE === 'released')
+          ? 'No released SKUs for '+NF_SEASON+(nfActiveFilterCount()?' matching the current column filters':'')+'. Released rows come from the Newness Log.'
+          : 'No '+(NF_SEASON===CONFIG_SEASON?'IA-eligible':'Newness')+' SKUs for '+NF_SEASON+(nfActiveFilterCount()?' matching the current column filters':'')+'.'; }
       return;
     }
     if (empty) empty.style.display='none';
+    var COLS = nfCols();
     var rows = recs.map(function(r){
-      var depthVal = r.hasKey ? round1(r.hardkey) : '';
-      var depthPh  = round1(r.desired > 0 ? r.desired : r.curDepth);
-      return '<tr class="nf-strow-'+r.status+'">' +
-        '<td class="l nf-pin"><span class="nf-sku" onclick="nfOpenSku(\''+nfEsc(r.sku)+'\')">'+nfEsc(r.sku)+'</span></td>' +
-        '<td class="l nf-styledesc" title="'+nfEsc(r.styleDesc)+'">'+nfEsc(r.styleDesc)+'</td>' +
-        '<td class="l nf-colordesc" title="'+nfEsc(r.colorDesc)+'">'+nfEsc(r.colorDesc)+'</td>' +
-        '<td class="l">'+nfEsc(r.division)+'</td>' +
-        '<td class="l">'+nfEsc(r.category)+'</td>' +
-        '<td class="l">'+nfEsc(r.deliv)+'</td>' +
-        '<td class="l">'+nfEsc(r.lifecycle||'—')+'</td>' +
-        '<td class="l nf-num">'+nfEsc(r.sizeScale)+' · '+r.sizeCt+'</td>' +
-        '<td class="nf-num'+(r.plgOH>0?' nf-recv':'')+'">'+(r.plgOH>0?r.plgOH.toLocaleString():'—')+'</td>' +
-        '<td class="nf-num">'+(r.iaRec?r.iaRec.toLocaleString():'—')+'</td>' +
-        '<td class="nf-num">'+r.iaStores+'</td>' +
-        '<td class="nf-cur">'+round1(r.curDepth)+'</td>' +
-        '<td class="nf-num">'+(r.aps>0?round1(r.aps):'—')+'</td>' +
-        '<td class="nf-target">'+round1(r.desired)+'</td>' +
-        '<td><input class="nf-depth-input'+(r.hasKey?' set':'')+'" type="number" min="0" step="0.5" value="'+depthVal+'" placeholder="'+depthPh+'" ' +
-             'onchange="nfEditDepth(\''+nfEsc(r.sku)+'\',this.value)" title="Blank = use the Target depth (APS formula). Type a number to override the target for this SKU."></td>' +
-        '<td class="l">'+nfEsc(r.baseTier||'—')+'</td>' +
-        '<td class="l">'+nfTierSelect(r)+'</td>' +
-        '<td class="nf-num">'+r.stores+'</td>' +
-        '<td class="nf-newrec">'+r.newRec.toLocaleString()+'</td>' +
-        '<td class="nf-num">'+(r.retail>0?r.retail.toLocaleString():'—')+'</td>' +
-        '<td class="nf-num">'+(r.omni>0?r.omni.toLocaleString():'—')+'</td>' +
-        '<td class="nf-num">'+(r.retail>0?Math.round(r.pctRetail*100)+'%':'—')+'</td>' +
-        '<td class="nf-num">'+(r.omni>0?Math.round(r.pctOmni*100)+'%':'—')+'</td>' +
-        '<td>'+nfFlags(r)+'</td>' +
-        '<td class="l">'+nfStatusSelect(r)+(r.autoReleased?' <span title="In Newness Log'+(r.droppedDate?' — '+nfEsc(r.droppedDate):'')+'" style="color:var(--purple);font-size:11px;margin-left:2px">⬇</span>':'')+'</td>' +
-        '<td class="l"><input class="nf-note-input" type="text" value="'+nfEsc(r.note||'')+'" placeholder="note…" onchange="nfEditNote(\''+nfEsc(r.sku)+'\',this.value)" title="Note for merchandising partners — saved, synced, and included in the CSV export."></td>' +
-      '</tr>';
+      var tds = COLS.map(function(c){
+        var fn = NF_CELL[c[0]];
+        // Unknown id renders an empty cell rather than throwing, so the row count
+        // and column count can never fall out of sync.
+        return fn ? fn(r) : '<td></td>';
+      }).join('');
+      return '<tr class="nf-strow-'+r.status+'">'+tds+'</tr>';
     }).join('');
     body.innerHTML = rows;
   }
@@ -12253,22 +12612,16 @@ tr.nf-strow-shifted {background:#DBEAFE}
       // next to nfCompute over the universe.
       _nfWinCache = {};
       nfRenderSeasonSeg();
-      var universe = nfUniverse(NF_SEASON);
+      nfRenderModeSeg();
+      // [p7k] The mode selects the universe GATE. No released row-hide remains:
+      // Pending and Released are disjoint sets by construction (nfUniverse
+      // excludes released rows from pending and requires them for released), so
+      // filtering the same list would be both redundant and lossy.
+      var universe = nfUniverse(NF_SEASON, NF_MODE);
       var allRecs = universe.map(nfCompute);           // full set (drives filter options + stays stable)
       nfRenderHead(allRecs);
       var recs = allRecs.filter(nfPass);               // apply column filters
-      // [nf-release-p6l] Stats are computed BEFORE the released-hide so the
-      // Released tile always shows the true count, then the hide is applied to
-      // the body. An explicit Status=Released filter bypasses it — otherwise
-      // filtering for Released would return an empty grid.
       var statsRecs = recs;
-      var hiddenRel = 0;
-      // NF_FILTER_SPEC.status stores the DISPLAY LABEL ('Released'), not the key.
-      if (!NF_SHOW_RELEASED && String(NF_FILT.status||'') !== NF_STATUS_LABEL.released){
-        var before = recs.length;
-        recs = recs.filter(function(r){ return r.status !== 'released'; });
-        hiddenRel = before - recs.length;
-      }
       recs.sort(function(a,b){
         var d = nfDivRank(a.division) - nfDivRank(b.division); if (d) return d;
         var c = nfAlpha(a.category, b.category); if (c) return c;
@@ -12280,10 +12633,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
       _lastRecs = recs;
       nfRenderStats(statsRecs);
       nfRenderBody(recs);
-      nfRenderRelToggle(hiddenRel);
       var sub = document.getElementById('nfSubtitle');
       var nf = nfActiveFilterCount();
-      if (sub) sub.textContent = (NF_SEASON===CONFIG_SEASON?'IA-eligible':'Newness (excl. CF)') + ' · excl. non-alloc tiers · '+NF_SEASON+' · '+recs.length+' of '+allRecs.length+' SKUs'+(hiddenRel?(' · '+hiddenRel+' released hidden'):'')+(nf?(' · '+nf+' filter'+(nf>1?'s':'')+' active'):'');
+      var scope = (NF_MODE === 'released')
+        ? 'Released (dropped per Newness Log) · actual depth'
+        : (NF_SEASON===CONFIG_SEASON?'IA-eligible':'Newness (excl. CF)');
+      if (sub) sub.textContent = scope + ' · excl. non-alloc tiers · '+NF_SEASON+' · '+recs.length+' of '+allRecs.length+' SKUs'+(nf?(' · '+nf+' filter'+(nf>1?'s':'')+' active'):'');
       if (!_nfCloudInit){ _nfCloudInit = true; nfCloudInit(); }
     } catch(err){
       console.error('[NF] nfRefresh failed:', err);
@@ -12328,24 +12683,47 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (!val){ delete rec.status; } else { rec.status = val; }
     nfAfterEdit(sku);
   }
-  function nfRenderRelToggle(hiddenCt){
-    var b = document.getElementById('nfRelToggle'); if (!b) return;
-    b.textContent = NF_SHOW_RELEASED
-      ? '👁 Released: shown'
-      : '👁 Released: hidden' + (hiddenCt ? ' ('+hiddenCt+')' : '');
-    b.title = NF_SHOW_RELEASED
-      ? 'Released SKUs are in the grid. Click to hide them.'
-      : 'Released SKUs are hidden — their review is done. Click to show them.';
-    b.style.borderColor = NF_SHOW_RELEASED ? 'var(--purple)' : 'var(--border)';
-    b.style.color = NF_SHOW_RELEASED ? 'var(--purple)' : 'var(--text)';
+  // ---- mode segment  [p7k] ------------------------------------------------
+  // Pending / Released. Released is only meaningful for the config season (the
+  // Newness Log window guard keys off it), so the button is disabled elsewhere
+  // and the mode falls back to Pending.
+  function nfRenderModeSeg(){
+    var seg = document.getElementById('nfModeSeg'); if (!seg) return;
+    var relOk = (NF_SEASON === CONFIG_SEASON);
+    var modes = [
+      {id:'pending',  label:'Pending',  ok:true},
+      {id:'released', label:'Released', ok:relOk}
+    ];
+    seg.innerHTML = modes.map(function(m){
+      return '<button class="nf-seg-btn'+(NF_MODE===m.id?' active':'')+'"'
+        + (m.ok ? '' : ' disabled')
+        + ' title="'+(m.ok
+            ? (m.id==='released'
+               ? 'SKUs that have dropped per the Newness Log — shows ACTUAL depth'
+               : 'SKUs still awaiting a depth decision')
+            : 'Released view applies to the config season ('+CONFIG_SEASON+') only')+'"'
+        + ' onclick="nfSetMode(\''+m.id+'\')">'+m.label+'</button>';
+    }).join('');
   }
-  function nfToggleReleased(){
-    NF_SHOW_RELEASED = !NF_SHOW_RELEASED;
-    try { localStorage.setItem('isr_nf_show_released', NF_SHOW_RELEASED ? '1' : '0'); } catch(e){}
+  function nfSetMode(mode){
+    if (mode !== 'pending' && mode !== 'released') return;
+    if (mode === 'released' && NF_SEASON !== CONFIG_SEASON) return;
+    if (mode === NF_MODE) return;
+    NF_MODE = mode;
+    // Column filters are mode-specific (the Released view exposes different
+    // columns), so clear them rather than carry a stale filter across.
+    NF_FILT = {};
+    try { localStorage.setItem('isr_nf_mode', NF_MODE); } catch(e){}
     nfRefresh();
   }
 
-  function nfSetSeason(code){ if (code===NF_SEASON) return; NF_SEASON = code; NF_FILT = {}; nfRefresh(); }
+  function nfSetSeason(code){
+    if (code===NF_SEASON) return;
+    NF_SEASON = code; NF_FILT = {};
+    // Released view is config-season only — fall back if we just left it.
+    if (NF_MODE === 'released' && NF_SEASON !== CONFIG_SEASON) NF_MODE = 'pending';
+    nfRefresh();
+  }
 
   // ---- diagnostics  [nf-release-p6i] --------------------------------------
   // nfWhy()        → gate-rejection summary for the whole current view
@@ -12417,7 +12795,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     L.push('  in log w/o own Flow Cal date: '+noOwnCt+(noOwnCt?'  ← these fall back to the season minimum':''));
     if (pinned.length) L.push('  stored (not in log): '+pinned.slice(0,60).join(', ')+(pinned.length>60?' …+'+(pinned.length-60):''));
     if (overridden.length) L.push('  overridden by log ('+overridden.length+'): '+overridden.slice(0,60).join(', ')+(overridden.length>60?' …+'+(overridden.length-60):''));
-    if (!NF_SHOW_RELEASED) L.push('  note: Released rows are hidden in the grid — this tally covers the visible set only.');
+    if (NF_MODE !== 'released') L.push('  note: view mode is Pending — released SKUs live in the Released view; this tally covers the Pending set only.');
     console.log(L.join('\n'));
   }
   // Migrate legacy p6g-era statuses. Under p6g, "Accepted" was the tag for
@@ -12493,6 +12871,56 @@ tr.nf-strow-shifted {background:#DBEAFE}
     try { if (typeof openDrilldown === 'function') openDrilldown(sku); } catch(e){}
   }
 
+  // ---- per-store actual depth popover  [p7k] ------------------------------
+  // Reuses the #sgPopover element and its sgp-* classes, which means the shared
+  // outside-click / Escape / scroll dismissal already applies — no second set of
+  // listeners to keep in sync. The trigger carries .sg-clickable so the
+  // mousedown dismisser treats it as a popover trigger rather than an outside
+  // click.
+  function nfShowStoreDepth(evt, sku){
+    try { if (evt && evt.stopPropagation) evt.stopPropagation(); } catch(e){}
+    if (typeof ensureSgPopover !== 'function') return;
+    var el = ensureSgPopover();
+    var map = (window._invByStore && window._invByStore[sku]) || {};
+    var rows = [];
+    for (var s in map){ var u = num(map[s]); if (u) rows.push([s, u]); }
+    // Deepest first — the distribution outliers are the point of this view.
+    rows.sort(function(a,b){ return b[1]-a[1] || String(a[0]).localeCompare(String(b[0])); });
+    var tot = rows.reduce(function(a,r){ return a+r[1]; }, 0);
+    var avg = rows.length ? tot/rows.length : 0;
+
+    var listHtml;
+    if (rows.length){
+      listHtml = '<div class="sgp-list">' + rows.map(function(r){
+        var code = (typeof STORE_CODE_MAP!=='undefined' && STORE_CODE_MAP[r[0]]) ? STORE_CODE_MAP[r[0]] : '';
+        return '<div class="sgp-item"><span>'+nfEsc(r[0])+(code?' <span class="sgp-code">'+nfEsc(code)+'</span>':'')+'</span>'
+             + '<span class="sgp-code" style="font-weight:700;color:var(--text)">'+r[1].toLocaleString()+'</span></div>';
+      }).join('') + '</div>';
+    } else {
+      listHtml = '<div class="sgp-empty">No store-level retail units for this SKU in the current '
+               + 'ISR INV Pull \u2014 it may be online-only, sold through, or not yet received.</div>';
+    }
+
+    el.innerHTML =
+      '<div class="sgp-head"><div>'
+      + '<div class="sgp-title">'+nfEsc(sku)+' \u00B7 actual store depth</div>'
+      + '<div class="sgp-sub">'+rows.length+' store'+(rows.length===1?'':'s')+' \u00B7 '
+      + tot.toLocaleString()+' units \u00B7 avg '+round1(avg)+'/store</div>'
+      + '</div><button class="sgp-close" title="Close" onclick="hideStoreGroupPopover()">\u00D7</button></div>'
+      + listHtml;
+
+    el.style.display = 'flex';
+    el.style.left = '0px'; el.style.top = '0px';
+    var rect = el.getBoundingClientRect();
+    var pad = 8;
+    var x = evt.clientX + 4, y = evt.clientY + 6;
+    if (x + rect.width  + pad > window.innerWidth)  x = Math.max(pad, window.innerWidth  - rect.width  - pad);
+    if (y + rect.height + pad > window.innerHeight) y = Math.max(pad, evt.clientY - rect.height - 6);
+    if (y < pad) y = pad;
+    el.style.left = x + 'px';
+    el.style.top  = y + 'px';
+  }
+
   // ---- bulk status update ----
   function nfBulkOpen(){
     var m = document.getElementById('nfBulkModal'); if (!m) return;
@@ -12565,24 +12993,44 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function nfExportCSV(){
     var recs = _lastRecs || [];
     if (!recs.length){ if (typeof showToast==='function') showToast('Nothing to export'); return; }
-    var head = ['SKU','Style Description','Color','Division','Category','Delivery','Lifecycle','Size Set','Size Ct','PLG OH','Syrup IA',
-      'Receiving Locations','Current Depth','APS','Desired Depth (target)','Effective Depth','Store Tier','Alt Tier','Stores',
-      'New Rec','Per Size','Retail Buy','Omni Buy','% Retail','% Omni','Status','Notes'];
     var q = function(v){ v = (v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
-    var lines = [head.join(',')];
-    recs.forEach(function(r){
-      lines.push([
-        r.sku, r.styleDesc, r.colorDesc, r.division, r.category, r.deliv, r.lifecycle||'', r.sizeScale, r.sizeCt, r.plgOH, r.iaRec,
-        r.iaStores, round1(r.curDepth), round1(r.aps), round1(r.desired), round1(r.effDepth),
-        r.baseTier||'', r.altTier || '', r.stores, r.newRec, round1(r.perSize), r.retail, r.omni,
-        (r.retail>0?Math.round(r.pctRetail*100)+'%':''), (r.omni>0?Math.round(r.pctOmni*100)+'%':''), NF_STATUS_LABEL[r.status], r.note || ''
-      ].map(q).join(','));
-    });
+    var head, lines;
+    // [p7k] Released export carries the ACTUALS, not the planning columns —
+    // exporting Target/New Rec for a SKU that has already dropped invites the
+    // planned figure being read as what shipped.
+    if (NF_MODE === 'released'){
+      head = ['SKU','Style Description','Color','Division','Category','Delivery','Dropped','Size Set','Size Ct',
+        'Store Tier','Tier Stores','Actual Stores','Coverage %','Store Units','Actual Depth',
+        'Per Size (derived)','Min/Store','Max/Store','Syrup IA','PLG OH','Retail Buy','Status','Notes'];
+      lines = [head.join(',')];
+      recs.forEach(function(r){
+        lines.push([
+          r.sku, r.styleDesc, r.colorDesc, r.division, r.category, r.deliv, r.droppedDate||'',
+          r.sizeScale, r.sizeCt, r.baseTier||'', r.stores, r.actStores,
+          (r.stores>0?Math.round(r.actCoverage*100)+'%':''), r.actUnits, round1(r.actDepth),
+          round1(r.actPerSize), r.actMin, r.actMax, r.iaRec, r.plgOH, r.retail,
+          NF_STATUS_LABEL[r.status], r.note || ''
+        ].map(q).join(','));
+      });
+    } else {
+      head = ['SKU','Style Description','Color','Division','Category','Delivery','Lifecycle','Size Set','Size Ct','PLG OH','Syrup IA',
+        'Receiving Locations','Current Depth','APS','Desired Depth (target)','Effective Depth','Store Tier','Alt Tier','Stores',
+        'New Rec','Per Size','Retail Buy','Omni Buy','% Retail','% Omni','Status','Notes'];
+      lines = [head.join(',')];
+      recs.forEach(function(r){
+        lines.push([
+          r.sku, r.styleDesc, r.colorDesc, r.division, r.category, r.deliv, r.lifecycle||'', r.sizeScale, r.sizeCt, r.plgOH, r.iaRec,
+          r.iaStores, round1(r.curDepth), round1(r.aps), round1(r.desired), round1(r.effDepth),
+          r.baseTier||'', r.altTier || '', r.stores, r.newRec, round1(r.perSize), r.retail, r.omni,
+          (r.retail>0?Math.round(r.pctRetail*100)+'%':''), (r.omni>0?Math.round(r.pctOmni*100)+'%':''), NF_STATUS_LABEL[r.status], r.note || ''
+        ].map(q).join(','));
+      });
+    }
     var blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8'});
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url;
-    a.download = 'NF_Review_'+NF_SEASON+(nfActiveFilterCount()?'_filtered':'')+'.csv';
+    a.download = 'NF_Review_'+NF_SEASON+'_'+NF_MODE+(nfActiveFilterCount()?'_filtered':'')+'.csv';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
     if (typeof showToast==='function') showToast('Exported '+recs.length+' rows');
@@ -12673,7 +13121,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.nfWhy        = nfWhy;        // [nf-release-p6i] diagnostics
   window.nfResetAuto  = nfResetAuto;
   window.nfMigrateAccepted = nfMigrateAccepted;  // [nf-release-p6k] legacy status migration
-  window.nfToggleReleased  = nfToggleReleased;   // [nf-release-p6l] hide/show released
+  window.nfSetMode         = nfSetMode;          // [p7k] Pending / Released view mode
+  window.nfShowStoreDepth  = nfShowStoreDepth;   // [p7k] per-store actual depth popover
   window.nfSetSeason  = nfSetSeason;
   window.nfSetFilter  = nfSetFilter;
   window.nfSetNumFilter = nfSetNumFilter;
