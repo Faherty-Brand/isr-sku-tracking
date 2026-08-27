@@ -1005,7 +1005,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: matrix-sku-sort (p7f)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: force-ia-drives-newcf (p7g)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -2112,16 +2112,20 @@ function owPrevKey(){
   return (i > 0) ? SEASON_REGISTRY[i-1].id : null;
 }
 // Mirror the legacy CS(default)/PS seasons back onto flat keys for old clients.
+// force_ia joined the season-scoped set in p7g (it now drives new_cf and the
+// generated config dates, so an unscoped flag would leak across season rolls
+// and push wrong validFrom dates to Syrup). It mirrors from the CS season for
+// the same backward-compat reason as tier_ow/deliv_ow.
 function owLegacyMirror(mo){
   var cs = (mo.seasons && mo.seasons[SEASONS.cs]) || {};
   var ps = (mo.seasons && mo.seasons[SEASONS.ps]) || {};
   if (cs.tier_ow) mo.tier_ow = cs.tier_ow; else delete mo.tier_ow;
   if (cs.deliv_ow) mo.deliv_ow = cs.deliv_ow; else delete mo.deliv_ow;
+  if (cs.force_ia) mo.force_ia = cs.force_ia; else delete mo.force_ia;
   if (ps.tier_ow) mo.ps_tier_ow = ps.tier_ow; else delete mo.ps_tier_ow;
 }
 function getOW(sku, field){
   var mo = MANUAL_OW[sku]; if (!mo) return '';
-  if (field === 'force_ia') return mo.force_ia || '';
   var seasonId = (field === 'ps_tier_ow') ? owPrevKey() : owConfigKey();
   var f = (field === 'ps_tier_ow') ? 'tier_ow' : field;
   if (!seasonId) return '';
@@ -2130,7 +2134,6 @@ function getOW(sku, field){
 function setOW(sku, field, val){
   if (!MANUAL_OW[sku]) MANUAL_OW[sku] = {};
   var mo = MANUAL_OW[sku]; mo._owv = 2;
-  if (field === 'force_ia'){ if (val === '' || val == null) delete mo.force_ia; else mo.force_ia = val; return; }
   var seasonId = (field === 'ps_tier_ow') ? owPrevKey() : owConfigKey();
   var f = (field === 'ps_tier_ow') ? 'tier_ow' : field;
   if (!seasonId) return;
@@ -2169,8 +2172,65 @@ function upgradeOWRow(mo){
   delete mo.tier_ow; delete mo.deliv_ow; delete mo.ps_tier_ow;
   return mo;
 }
+// ── force_ia season migration (p7g) ─────────────────────────────────────────
+// force_ia used to live flat on the record, unscoped, because it only painted
+// the Status pill. In p7g it drives new_cf and therefore the generated config
+// dates, so an unscoped flag would follow a SKU through every season roll and
+// silently emit wrong validFrom rows to Syrup.
+//
+// This runs INDEPENDENTLY of upgradeOWRow's _owv gate: the old setOW wrote flat
+// force_ia even on already-v2 records, so a v2 record can still carry one and
+// upgradeOWRow returns early before it could be seen.
+//
+// Flat values are attributed to the FIXED legacy season (same constant and same
+// reasoning as upgradeOWRow) rather than the live season. A flat 'Y' was authored
+// under the old cosmetic semantics and carries no intent about config generation;
+// re-filing it into the live season would activate config emission for it without
+// the user asking. Filing it under SU26 preserves the record without activating
+// anything under FA26+.
+//
+// Guarded by its own _fiav marker rather than by absence of the flat key, because
+// owLegacyMirror re-writes a flat mirror for live-season values — without the
+// marker, a newly-set FA26 flag would be re-migrated into SU26 on the next load.
+var _FIA_LEGACY_SEASON = 'SU26';
+
+// Single predicate for "is Force IA on?" — the field is free text, so every
+// consumer (new_cf resolution, computeStatus, the New/CF pill) must agree on
+// exactly which values count. Accepts Y/YES/TRUE/1, case-insensitive.
+function isForceIA(v){
+  var s = String(v == null ? '' : v).trim().toUpperCase();
+  return s === 'Y' || s === 'YES' || s === 'TRUE' || s === '1';
+}
+
+function upgradeForceIA(mo){
+  if (!mo || typeof mo !== 'object') return mo || {};
+  if (mo._fiav >= 1) return mo;
+  var moved = false;
+  if (mo.force_ia){
+    var seasons = mo.seasons || {};
+    seasons[_FIA_LEGACY_SEASON] = seasons[_FIA_LEGACY_SEASON] || {};
+    if (!seasons[_FIA_LEGACY_SEASON].force_ia) seasons[_FIA_LEGACY_SEASON].force_ia = mo.force_ia;
+    mo.seasons = seasons;
+    delete mo.force_ia;
+    moved = true;
+  }
+  mo._fiav = 1;
+  mo._fiaMoved = moved || undefined;  // transient marker for the load-time log
+  return mo;
+}
 function upgradeOWStore(store){
-  if (store && typeof store === 'object') Object.keys(store).forEach(function(sku){ store[sku] = upgradeOWRow(store[sku]); });
+  if (!store || typeof store !== 'object') return store;
+  var movedSkus = [];
+  Object.keys(store).forEach(function(sku){
+    store[sku] = upgradeForceIA(upgradeOWRow(store[sku]));
+    if (store[sku] && store[sku]._fiaMoved){ movedSkus.push(sku); delete store[sku]._fiaMoved; }
+  });
+  if (movedSkus.length){
+    console.log('%c[p7g] force_ia is now season-scoped. ' + movedSkus.length +
+      ' pre-existing flat flag(s) filed under ' + _FIA_LEGACY_SEASON +
+      ' (NOT activated under ' + CONFIG_SEASON + '). Re-set them on the current season if you still want them:',
+      'color:#d97706;font-weight:bold', movedSkus);
+  }
   return store;
 }
 
@@ -4073,10 +4133,22 @@ function computeAllRows(lookups) {
     //     uses internally is just a non-empty string — eff_ps_tier is only
     //     checked for non-emptiness in the new_cf computation, not for
     //     specific tier values.
+    // ── Force IA (p7g) ──
+    // Declared BEFORE the PS resolution because it now participates in it.
+    // Force IA is no longer a Status-only stamp: it suppresses the PS tier the
+    // same way the "None" sentinel does, so new_cf resolves to Newness and the
+    // whole config chain (calc_start / calc_end -> date check -> Configs
+    // Generator) follows. Without this it changed the pill and nothing else,
+    // which meant the app disagreed with the rows it would upload to Syrup.
+    const force_ia = getOW(sku, 'force_ia');
+    const force_ia_on = isForceIA(force_ia);
+
     const ps_tier_ow_upper = ps_tier_ow.trim().toUpperCase();
     const ps_ow_is_none = ps_tier_ow_upper === 'NONE';
     const ps_ow_is_cf   = ps_tier_ow_upper === 'CF' || ps_tier_ow_upper === 'CARRY FORWARD';
-    const eff_ps_tier = ps_ow_is_none
+    // Force IA wins over the CF sentinel: both are explicit user intent, but
+    // Force IA is the newer and more specific statement ("this drops as IA").
+    const eff_ps_tier = (force_ia_on || ps_ow_is_none)
       ? ''
       : ps_ow_is_cf
         ? '__CF__'  // sentinel string — non-empty triggers CF, distinguishable in display
@@ -4084,12 +4156,13 @@ function computeAllRows(lookups) {
            || ps_corr_tier
            || (ps_store_tier_passes ? ps_store_tier_raw : ''));
     const effTierForCF = (tier_ow || cs_tier_raw || '').trim().toUpperCase();
+    // Force IA does NOT override these two gates. A blank effective delivery
+    // means out-of-season (fix with a delivery override); an excluded/dropped
+    // tier must stay the strongest off-signal so a drop can't be resurrected
+    // into a live Syrup config. Both still blank new_cf.
     const new_cf = (!deliv_to_use || EXCLUDED_TIERS.has(effTierForCF))
       ? ''
       : (eff_ps_tier ? 'CF' : 'Newness');
-
-    // ── Force IA ──
-    const force_ia = getOW(sku, 'force_ia');
 
     // ── Status (AN) ──
     // Pass effective (override-aware) values: deliv_to_use as cs_deliv1, eff_tier
@@ -5166,8 +5239,18 @@ function computeStatus({sku, fp_md, is_md, alloc_date, new_cf, cs_deliv1, ns_del
     return 'N/A: Do Not Allocate';
   }
 
-  // ── Enhancement: Force IA override (not in Excel formula) ──
-  if (force_ia === 'Y' || force_ia === 'y') return 'READY - Force IA';
+  // ── Force IA (p7g) — no longer a short-circuit ──
+  // It used to return 'READY - Force IA' from right here, which overwrote the
+  // status and touched nothing else: new_cf stayed CF, calc_start kept the
+  // 1/1/2025 sentinel, and the Configs Generator still emitted replen-shaped
+  // rows. The pill said IA while the upload said replen.
+  //
+  // Force IA now does its work upstream (it suppresses the PS tier so new_cf
+  // resolves to Newness), so status is left to compute naturally and reports
+  // the real drop state — 'Pending Allocation: 08/27/26' rather than a flat
+  // 'READY' for a SKU whose drop is three weeks out. The only thing it still
+  // overrides here is the Allocated gate at step 4, below.
+  const _forceIAOn = isForceIA(force_ia);
 
   // ── Excel step 2: No CS delivery month → N/A ──
   // Matches $L4="" — if no effective delivery month, SKU is out of season
@@ -5201,7 +5284,14 @@ function computeStatus({sku, fp_md, is_md, alloc_date, new_cf, cs_deliv1, ns_del
   // allocation no longer counts and the SKU drops back to Pending so it can
   // be re-allocated against the new delivery.
   // Empty AJ ($deliv_alloc_date null) → Excel treats as 0, so AH >= 0 is true.
-  if (alloc_date && (!deliv_alloc_date || alloc_date >= deliv_alloc_date)) {
+  //
+  // p7g: Force IA suppresses this gate. A stale Newness Log date at/after the
+  // current drop date otherwise re-buries a forced SKU as 'Allocated for
+  // Season', and computeNewnessProj short-circuits on startsWith('Allocated'),
+  // so it would drop straight back out of IA Volume and NF Review. This is the
+  // one thing Force IA does that the PS Tier="None" sentinel structurally
+  // cannot, and it's why Force IA is a superset rather than a duplicate.
+  if (!_forceIAOn && alloc_date && (!deliv_alloc_date || alloc_date >= deliv_alloc_date)) {
     return 'Allocated for Season';
   }
 
@@ -5474,7 +5564,10 @@ function recomputeRowDerived(row) {
   //    Twin sentinels in ps_tier_ow:
   //      "None"          → forces eff_ps_tier="" → Newness
   //      "CF" / "Carry Forward" → forces eff_ps_tier=sentinel → CF
-  //    See computeAllRows for the full reasoning.
+  //    p7g: force_ia also suppresses the PS tier (same effect as "None") and
+  //    wins over the CF sentinel. MUST stay identical to computeAllRows — this
+  //    is the post-override path and any divergence shows up as a row that
+  //    changes on reload. See computeAllRows for the full reasoning.
   const effTierUpper = (row.tier_ow || row.cs_tier || '').trim().toUpperCase();
   const psStoreTierRaw = row.ps_store_tier_raw || '';
   const psStorePasses = psStoreTierRaw &&
@@ -5482,7 +5575,8 @@ function recomputeRowDerived(row) {
   const psOwUpper = (row.ps_tier_ow || '').trim().toUpperCase();
   const psOwIsNone = psOwUpper === 'NONE';
   const psOwIsCF   = psOwUpper === 'CF' || psOwUpper === 'CARRY FORWARD';
-  const effPSTier = psOwIsNone
+  const forceIAOn  = isForceIA(row.force_ia);
+  const effPSTier = (forceIAOn || psOwIsNone)
     ? ''
     : psOwIsCF
       ? '__CF__'
@@ -5539,9 +5633,11 @@ function recomputeRowDerived(row) {
   //    expected-vs-configured count comparison flips. Without this step a
   //    SKU that was Off (count mismatch) before the override stays Off after,
   //    and vice versa. Mirrors the count-side rules from computeAllRows.
-  //    (Date side already cached on the row from initial build — overrides
-  //    don't move calc start/end dates today, but if they ever do, this is
-  //    where to recompute config_dt_status too.)
+  //    (The date side IS recomputed — see step 7. deliv_ow moves
+  //    deliv_alloc_date → calc_start; ps_tier_ow and force_ia flip new_cf,
+  //    which swaps the CF sentinels for real IA dates. An earlier version of
+  //    this comment claimed overrides never moved the calc dates; that stopped
+  //    being true once the PS sentinels landed.)
   const expected   = row.cs_store_ct || 0;
   const configured = row.config_store_ct || 0;
   const hasCfg     = row._cfgPresent === true || !!row._cfgStatusUpper;
@@ -6278,10 +6374,30 @@ const STATUS_CLASS = {
   'Allocated LS (CF)': 'pill-blue',
   'N/A: Out of Szn, MD': 'pill-muted',
   'N/A: Do Not Allocate': 'pill-muted',
-  'READY - Force IA': 'pill-orange',
+  // 'READY - Force IA' removed in p7g — computeStatus can no longer emit it.
+  // Force IA now works upstream on new_cf and lets status compute naturally.
   'READY - Insufficient Inv!': 'pill-red',
   'READY TO ALLOCATE': 'pill-orange',
 };
+
+// ── Canonical New/CF pill (p7g) ─────────────────────────────────────────────
+// One renderer shared by the grid, the inline repaint path and the drilldown so
+// the three can't drift.
+//
+// The underlying new_cf VALUE is deliberately left alone. FILTER_TYPE and the
+// New/CF column filter both key off r.new_cf, so encoding the forced state into
+// the string ('Newness (Forced)') would fragment both filters and split the
+// Newness bucket in two. The forced state is carried purely as a visual affix.
+function newCfPillHtml(row){
+  var v = row && row.new_cf;
+  if (!v) return '<span class="muted-cell">—</span>';
+  var cls = v === 'Newness' ? 'pill-purple' : v === 'CF' ? 'pill-blue' : 'pill-muted';
+  var affix = isForceIA(row.force_ia)
+    ? ' <span title="Force IA is on: PS tier suppressed, config dates generated as Newness"'
+      + ' style="font-size:11px;color:var(--orange);font-weight:700;cursor:help">&#9889;</span>'
+    : '';
+  return '<span class="pill ' + cls + '">' + v + '</span>' + affix;
+}
 
 function statusClass(s) {
   if (!s) return 'pill-muted';
@@ -6721,7 +6837,7 @@ function renderPage() {
           : 'pill-yellow';
         return `<td><span class="pill ${cls}">${v}</span></td>`;
       }
-      if (id === 'new_cf') return `<td>${v==='Newness'?'<span class="pill pill-purple">Newness</span>':v==='CF'?'<span class="pill pill-blue">CF</span>':'<span class="pill pill-muted">'+v+'</span>'}</td>`;
+      if (id === 'new_cf') return `<td>${newCfPillHtml(row)}</td>`;
       if (id === 'config_status') {
         return `<td>${renderConfigStatusPill(row)}</td>`;
       }
@@ -6867,7 +6983,7 @@ function openDrilldown(sku) {
     {title: allocTitle, rows: [
       ...(ddIsConfig ? [] : [['__note__', `Delivery, Store Group, Store Count, Lifecycle &amp; End Week reflect <b>${ddSeasonKey}</b> (season toggle). Status, alloc dates &amp; Newness Proj are for the working season <b>${CONFIG_SEASON}</b>.`]]),
       ['Status', `<span class="pill ${statusClass(row.status)}">${row.status||'—'}</span>`],
-      ['New/CF', row.new_cf ? `<span class="pill ${row.new_cf==='Newness'?'pill-purple':'pill-blue'}">${row.new_cf}</span>` : '—'],
+      ['New/CF', newCfPillHtml(row)],
       ['FP/MD', row.fp_md ? `<span class="pill ${row.fp_md==='Markdown'?'pill-yellow':'pill-blue'}">${row.fp_md}</span>` : '—'],
       ['Lifecycle', row.v_lifecycle || '—'],
       ['End Week (MD Exit)', row.v_md_exit || '—'],
@@ -6906,7 +7022,7 @@ function openDrilldown(sku) {
       ['Delivery Override', 'deliv_ow', getOW(sku, 'deliv_ow'), 'delivery'],
       ['Tier Override (CS)', 'tier_ow', getOW(sku, 'tier_ow'), 'tier'],
       ['PS Tier Override', 'ps_tier_ow', getOW(sku, 'ps_tier_ow'), 'tier'],
-      ['Force IA (AK)', 'force_ia', getOW(sku, 'force_ia'), 'text'],
+      ['Force IA — "Y" (forces Newness + IA config dates)', 'force_ia', getOW(sku, 'force_ia'), 'text'],
     ]},
     // ── INVENTORY: includes the depth metrics that previously lived in their
     // own "Depth Chain" section. Only the two depth metrics carry over; the
@@ -7741,13 +7857,7 @@ function refreshDependentCells(tr, row) {
       cell.innerHTML = row.deliv_alloc_date || '<span class="muted-cell">—</span>';
     }
     if (id === 'new_cf') {
-      const v = row.new_cf;
-      if (!v) { cell.innerHTML = '<span class="muted-cell">—</span>'; return; }
-      cell.innerHTML = v === 'Newness'
-        ? '<span class="pill pill-purple">Newness</span>'
-        : v === 'CF'
-          ? '<span class="pill pill-blue">CF</span>'
-          : `<span class="pill pill-muted">${v}</span>`;
+      cell.innerHTML = newCfPillHtml(row);
     }
     if (id === 'status') {
       cell.innerHTML = `<span class="pill ${statusClass(row.status)}">${row.status||'—'}</span>`;
