@@ -662,7 +662,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
       var nt = await window.SB.from(NOTES_TABLE).select('sku,data');
       if (nt.error) throw nt.error;
       (nt.data || []).forEach(function(r){ if (r && r.sku) localNotes[r.sku] = r.data || {}; });
-      upgradeOWStore(localOW);  // season-pivot p4
+      var _fiaMoved = upgradeOWStore(localOW);  // season-pivot p4
       if (typeof upgradeNotesStore === 'function') upgradeNotesStore(localNotes);  // notes → per-season shape
       try { localStorage.setItem('isr_manual_ow', JSON.stringify(localOW)); } catch(e){}
       try { localStorage.setItem('isr_drilldown_notes', JSON.stringify(localNotes)); } catch(e){}
@@ -673,6 +673,38 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
       window.cloudReady = true;
       setStatus('on');
       console.log('[Cloud] loaded shared data: ' + (ov.data||[]).length + ' override SKUs, ' + (nt.data||[]).length + ' note SKUs');
+      // ---- p7i: make the force_ia migration stick in the cloud ----
+      // Without this the migration only ever reached localStorage, so every
+      // client re-read the un-migrated flat keys from Supabase, re-migrated in
+      // memory, and logged again — forever. Worse, a client on an older build
+      // could write the flat shape back and undo the fix for everyone.
+      //
+      // Overwrite safety, since this is the one place we write during startup:
+      //  * Only the SKUs in _fiaMoved are touched. Records that didn't move are
+      //    never sent, so nothing else in the table is at risk.
+      //  * The payload is the row we read from Supabase moments earlier in THIS
+      //    function, plus the field move. It is the freshest available copy, so
+      //    there is no stale-overwrite: we cannot clobber a value we never saw.
+      //    The residual race (someone edits one of these dormant SKUs inside the
+      //    same second) is the app's existing last-write-wins behaviour on every
+      //    save, not a new class of risk.
+      //  * _owSyncCache was set to the MIGRATED shape just above, so the
+      //    realtime echo of our own upsert is deduped by applyRemoteOverride.
+      //  * upgradeForceIA's gate is structural, so a record that already has a
+      //    season-scoped value is skipped entirely — two clients migrating at
+      //    once converge on the same result instead of fighting.
+      if (_fiaMoved && _fiaMoved.length){
+        try {
+          var _n = getUserName(), _t = new Date().toISOString();
+          var _ups = _fiaMoved.map(function(sku){
+            return { sku: sku, data: localOW[sku] || {}, updated_by: _n, updated_at: _t };
+          });
+          window.SB.from(OVERRIDES_TABLE).upsert(_ups).then(function(r){
+            if (r.error){ cloudWarn(r.error); console.warn('[force_ia] cloud write-back failed — the migration will re-run next load (harmless).'); }
+            else console.log('%c[force_ia] migration written back to the cloud for ' + _ups.length + ' SKU(s) — this will not repeat.', 'color:#16a34a');
+          }, function(err){ cloudWarn(err); });
+        } catch(e){ console.warn('[force_ia] cloud write-back skipped', e); }
+      }
     } catch(e){
       console.warn('[Cloud] load failed — continuing with local data', e);
       window.cloudReady = false; setStatus('error');
@@ -729,7 +761,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     var js = JSON.stringify(data || {});
     if (window._owSyncCache[sku] === js) return;
     window._owSyncCache[sku] = js;
-    MANUAL_OW[sku] = upgradeOWRow(data || {});  // season-pivot p4
+    MANUAL_OW[sku] = upgradeOWRecord(data || {});  // season-pivot p4; p7h: full upgrade set, incl. force_ia
     try { localStorage.setItem('isr_manual_ow', JSON.stringify(MANUAL_OW)); } catch(e){}
     var row = (typeof ALL_ROWS !== 'undefined' && ALL_ROWS.find) ? ALL_ROWS.find(function(r){ return r.sku === sku; }) : null;
     if (row){
@@ -1005,7 +1037,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: force-ia-drives-newcf (p7g)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: force-ia-drives-newcf (p7i)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -2204,34 +2236,57 @@ function isForceIA(v){
 
 function upgradeForceIA(mo){
   if (!mo || typeof mo !== 'object') return mo || {};
-  if (mo._fiav >= 1) return mo;
-  var moved = false;
+  var seasons = mo.seasons || {};
+  // STRUCTURAL gate, not a "have we run before?" marker. p7g gated on _fiav,
+  // which was wrong: if a client on an older build wrote a NEW flat force_ia
+  // onto an already-migrated record, the marker blocked the migration and the
+  // flag went silently inert (getOW no longer reads the flat key).
+  //
+  // The real question is whether any season slot already holds a value. If one
+  // does, the flat key is just owLegacyMirror's copy of it — leave it in place
+  // so older clients keep reading something, and don't churn the record. If
+  // none does, the flat key is authoritative and gets filed under the FIXED
+  // legacy season (never the live one).
+  var hasScoped = Object.keys(seasons).some(function(s){ return seasons[s] && seasons[s].force_ia; });
+  if (hasScoped){ mo._fiav = 1; return mo; }
   if (mo.force_ia){
-    var seasons = mo.seasons || {};
     seasons[_FIA_LEGACY_SEASON] = seasons[_FIA_LEGACY_SEASON] || {};
-    if (!seasons[_FIA_LEGACY_SEASON].force_ia) seasons[_FIA_LEGACY_SEASON].force_ia = mo.force_ia;
+    seasons[_FIA_LEGACY_SEASON].force_ia = mo.force_ia;
     mo.seasons = seasons;
     delete mo.force_ia;
-    moved = true;
+    mo._fiaMoved = true;  // transient; consumed by upgradeOWStore
   }
   mo._fiav = 1;
-  mo._fiaMoved = moved || undefined;  // transient marker for the load-time log
   return mo;
 }
+// Full upgrade for a SINGLE record. Both the bulk store path and the realtime
+// per-SKU sync path must run the SAME set of migrations — p7g originally added
+// upgradeForceIA to upgradeOWStore only, which left applyRemoteOverride
+// restoring unmigrated flat force_ia keys on every incoming sync.
+// Strips the transient _fiaMoved marker (only upgradeOWStore consumes it, for
+// the load-time log) so it never gets persisted into localStorage or Supabase.
+function upgradeOWRecord(mo){
+  var r = upgradeForceIA(upgradeOWRow(mo));
+  if (r && r._fiaMoved !== undefined) delete r._fiaMoved;
+  return r;
+}
+// Returns the list of SKUs whose flat force_ia was just re-filed. cloudInit
+// uses it to write the migrated records back so the migration STICKS instead of
+// re-running on every load forever.
 function upgradeOWStore(store){
-  if (!store || typeof store !== 'object') return store;
+  if (!store || typeof store !== 'object') return [];
   var movedSkus = [];
   Object.keys(store).forEach(function(sku){
     store[sku] = upgradeForceIA(upgradeOWRow(store[sku]));
     if (store[sku] && store[sku]._fiaMoved){ movedSkus.push(sku); delete store[sku]._fiaMoved; }
   });
   if (movedSkus.length){
-    console.log('%c[p7g] force_ia is now season-scoped. ' + movedSkus.length +
-      ' pre-existing flat flag(s) filed under ' + _FIA_LEGACY_SEASON +
-      ' (NOT activated under ' + CONFIG_SEASON + '). Re-set them on the current season if you still want them:',
+    console.log('%c[force_ia] season-scoped: ' + movedSkus.length +
+      ' legacy flat flag(s) filed under ' + _FIA_LEGACY_SEASON +
+      ' (NOT active under ' + CONFIG_SEASON + '). Re-set on the current season if still wanted:',
       'color:#d97706;font-weight:bold', movedSkus);
   }
-  return store;
+  return movedSkus;
 }
 
 // One normalized season slice from a row's legacy <prefix>_* fields. Every
