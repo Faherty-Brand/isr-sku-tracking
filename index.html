@@ -1037,7 +1037,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: force-ia-drives-newcf (p7i)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: force-ia-drives-newcf (p7j)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -5294,18 +5294,29 @@ function computeStatus({sku, fp_md, is_md, alloc_date, new_cf, cs_deliv1, ns_del
     return 'N/A: Do Not Allocate';
   }
 
-  // ── Force IA (p7g) — no longer a short-circuit ──
-  // It used to return 'READY - Force IA' from right here, which overwrote the
-  // status and touched nothing else: new_cf stayed CF, calc_start kept the
-  // 1/1/2025 sentinel, and the Configs Generator still emitted replen-shaped
-  // rows. The pill said IA while the upload said replen.
+  // ── Force IA — deliberately absent from computeStatus (p7j) ──
+  // Force IA does ALL of its work upstream: it suppresses the PS tier so new_cf
+  // resolves to Newness, which swaps the CF sentinel dates for real IA config
+  // dates. Status is then left to compute completely naturally.
   //
-  // Force IA now does its work upstream (it suppresses the PS tier so new_cf
-  // resolves to Newness), so status is left to compute naturally and reports
-  // the real drop state — 'Pending Allocation: 08/27/26' rather than a flat
-  // 'READY' for a SKU whose drop is three weeks out. The only thing it still
-  // overrides here is the Allocated gate at step 4, below.
-  const _forceIAOn = isForceIA(force_ia);
+  // Two earlier versions got this wrong and are worth remembering:
+  //   p7f and prior: returned 'READY - Force IA' from right here, overwriting
+  //     status and touching nothing else — new_cf stayed CF and the Configs
+  //     Generator still emitted replen-shaped rows. The pill said IA while the
+  //     upload said replen.
+  //   p7g..p7i: suppressed the step 4 'Allocated for Season' gate, on the theory
+  //     that a stale Newness Log date could re-bury a forced SKU. That scenario
+  //     does not exist: the gate only fires when AH >= AJ, i.e. the allocation
+  //     happened at or after the CURRENT drop date, so it is by definition
+  //     current. When a delivery rolls forward, AJ moves later, AH < AJ, and the
+  //     gate stops firing on its own. The suppression was also permanent, so a
+  //     forced SKU could never report Allocated for Season again and sat at
+  //     'READY TO ALLOCATE' forever after it had shipped (found on MDS2600-BAA,
+  //     allocated 8/13/26 against a 8/13/26 drop date).
+  //
+  // Force IA and PS Tier="None" are therefore synonymous by design. Both do
+  // exactly one thing — suppress the PS tier — and nothing in status special-
+  // cases either of them.
 
   // ── Excel step 2: No CS delivery month → N/A ──
   // Matches $L4="" — if no effective delivery month, SKU is out of season
@@ -5340,13 +5351,9 @@ function computeStatus({sku, fp_md, is_md, alloc_date, new_cf, cs_deliv1, ns_del
   // be re-allocated against the new delivery.
   // Empty AJ ($deliv_alloc_date null) → Excel treats as 0, so AH >= 0 is true.
   //
-  // p7g: Force IA suppresses this gate. A stale Newness Log date at/after the
-  // current drop date otherwise re-buries a forced SKU as 'Allocated for
-  // Season', and computeNewnessProj short-circuits on startsWith('Allocated'),
-  // so it would drop straight back out of IA Volume and NF Review. This is the
-  // one thing Force IA does that the PS Tier="None" sentinel structurally
-  // cannot, and it's why Force IA is a superset rather than a duplicate.
-  if (!_forceIAOn && alloc_date && (!deliv_alloc_date || alloc_date >= deliv_alloc_date)) {
+  // NOT guarded on Force IA — see the note above step 2. A forced SKU that has
+  // actually been allocated must still report Allocated for Season.
+  if (alloc_date && (!deliv_alloc_date || alloc_date >= deliv_alloc_date)) {
     return 'Allocated for Season';
   }
 
