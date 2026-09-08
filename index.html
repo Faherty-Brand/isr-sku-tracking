@@ -1037,7 +1037,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: inv-header-resolution (p7l)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: audit-notes-sku-retrieval (p7m)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1712,11 +1712,12 @@ setTimeout(function(){
     <!-- SKU input -->
     <div style="margin-bottom:14px">
       <label style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">SKUs to audit <span id="auditSkuCount" style="color:var(--text);font-weight:700"></span></label>
-      <textarea class="modal-textarea" id="auditSkus" style="height:80px;font-family:var(--mono);font-size:11px" placeholder="Paste SKUs, one per line or comma/semicolon separated"></textarea>
+      <textarea class="modal-textarea" id="auditSkus" style="height:80px;font-family:var(--mono);font-size:11px" placeholder="Paste SKUs, one per line or comma/semicolon separated" oninput="_auditUniverseMode='custom'"></textarea>
       <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+        <button class="ia-action-btn" type="button" onclick="auditFillFromNoted()" title="Every SKU carrying at least one strategy note this season — gives a complete inventory of note patterns">🗂 Use all noted SKUs</button>
         <button class="ia-action-btn" type="button" onclick="auditFillFromFiltered()">↻ Use current filtered view</button>
         <button class="ia-action-btn" type="button" onclick="auditFillFromOff()">⚠ Use all Off SKUs</button>
-        <button class="ia-action-btn" type="button" onclick="document.getElementById('auditSkus').value='';runAuditNotes();">Clear</button>
+        <button class="ia-action-btn" type="button" onclick="document.getElementById('auditSkus').value='';_auditUniverseMode='custom';runAuditNotes();">Clear</button>
       </div>
     </div>
 
@@ -1736,7 +1737,7 @@ setTimeout(function(){
 
       <!-- Note-pattern coverage table -->
       <div id="auditCoverageWrap" style="margin-bottom:14px">
-        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-bottom:6px">Note coverage by pattern</div>
+        <div id="auditCoverageLabel" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-bottom:6px">Note coverage by pattern</div>
         <div id="auditCoverage" style="border:1px solid var(--border);border-radius:6px;overflow:hidden;max-height:300px;overflow-y:auto"></div>
       </div>
 
@@ -1750,7 +1751,10 @@ setTimeout(function(){
       <div id="auditNoNotesWrap" style="margin-bottom:14px;display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
           <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted)">SKUs with no strategy notes <span id="auditNoNotesCount" style="color:var(--text);font-weight:700">(0)</span></div>
-          <button class="ia-action-btn" type="button" onclick="auditCopySkus('noNotes')">📋 Copy SKUs</button>
+          <span style="display:flex;gap:6px">
+            <button class="ia-action-btn" type="button" onclick="auditCopySkus('noNotes')">📋 Copy SKUs</button>
+            <button class="ia-action-btn" type="button" onclick="auditFilterSkus('noNotes')" title="Filter the main grid to the SKUs with no strategy notes">⧉ Filter</button>
+          </span>
         </div>
         <div id="auditNoNotesList" style="border:1px solid var(--border);border-radius:6px;padding:6px 8px;max-height:120px;overflow-y:auto;font-family:var(--mono);font-size:10px;background:var(--bg);color:var(--text)"></div>
       </div>
@@ -8334,6 +8338,17 @@ function _patternKeyOf(noteText) {
 // read by auditCopySkus and auditSendToBulk.
 let _auditLastResult = null;
 
+// Which universe the audited SKU list represents:
+//   'custom'   — a specific list (filtered view, Off SKUs, hand-pasted).
+//                Missing/coverage are meaningful: "which of MY 70 SKUs lack
+//                this note?"
+//   'allNoted' — every SKU with a note this season. Missing/coverage are NOT
+//                meaningful (missing = every other noted SKU), so those are
+//                suppressed and only the covered-set actions render.
+// Any edit to the textarea drops back to 'custom' — the moment the list stops
+// being exactly the noted universe, the allNoted framing is a lie.
+let _auditUniverseMode = 'custom';
+
 function openAuditNotesModal() {
   document.getElementById('auditNotesModal').classList.add('open');
   // If user already has SKUs from a previous audit, keep them. Otherwise
@@ -8343,6 +8358,7 @@ function openAuditNotesModal() {
     const filtered = (typeof FILTERED !== 'undefined' && Array.isArray(FILTERED)) ? FILTERED : [];
     if (filtered.length > 0 && filtered.length <= 300) {
       taEl.value = filtered.map(r => r.sku).join('\n');
+      _auditUniverseMode = 'custom';
     }
   }
   // Guard against any audit error so the modal still opens cleanly.
@@ -8354,6 +8370,7 @@ function closeAuditNotesModal() {
 }
 
 function auditFillFromFiltered() {
+  _auditUniverseMode = 'custom';
   const filtered = (typeof FILTERED !== 'undefined' && Array.isArray(FILTERED)) ? FILTERED : [];
   if (filtered.length === 0) { showToast('No filtered SKUs to audit'); return; }
   document.getElementById('auditSkus').value = filtered.map(r => r.sku).join('\n');
@@ -8362,6 +8379,7 @@ function auditFillFromFiltered() {
 }
 
 function auditFillFromOff() {
+  _auditUniverseMode = 'custom';
   const skus = ALL_ROWS
     .filter(r => r.config_status === 'Off')
     .map(r => r.sku);
@@ -8369,6 +8387,35 @@ function auditFillFromOff() {
   document.getElementById('auditSkus').value = skus.join('\n');
   runAuditNotes();
   showToast(`Filled with ${skus.length} Off SKU${skus.length===1?'':'s'}`);
+}
+
+// Fill with every SKU carrying ≥1 note in the config season. This makes the
+// coverage table a COMPLETE inventory of strategy-note patterns for the
+// season, so each pattern row's covered set is the exhaustive list of SKUs
+// with that note — which is the point of the copy/filter actions.
+//
+// Reads the cached NOTE_INDEX (already maintained for the grid's Strategy
+// Note column) rather than re-walking localStorage.
+//
+// Sets _auditUniverseMode = 'allNoted', which suppresses the missing-side
+// coverage bar and actions: when the universe IS "everything with a note",
+// "missing" degenerates to "every other noted SKU in the season" and the
+// coverage % is meaningless. See _renderAuditResults.
+function auditFillFromNoted() {
+  const idx = getNoteIndex();
+  // Intersect with the tracker so we only offer SKUs that resolve to rows;
+  // orphaned notes (SKU dropped from PST) are reported via the not-found list.
+  const noted = [...idx.set];
+  if (noted.length === 0) {
+    showToast(`No ${CONFIG_SEASON} strategy notes found`);
+    return;
+  }
+  // Sort for a stable, scannable textarea
+  noted.sort((a, b) => a.localeCompare(b));
+  _auditUniverseMode = 'allNoted';
+  document.getElementById('auditSkus').value = noted.join('\n');
+  runAuditNotes();
+  showToast(`Filled with all ${noted.length} noted SKU${noted.length===1?'':'s'} (${CONFIG_SEASON})`, 3500);
 }
 
 // Main audit. Reads the SKU list + optional free-text from the form,
@@ -8451,6 +8498,7 @@ function runAuditNotes() {
     valid, validSet: new Set(valid),
     notFound, skusWithNoNotes,
     patterns: patternList, freeTextMatches, freeText,
+    universeMode: _auditUniverseMode,
   };
 
   _renderAuditResults();
@@ -8460,14 +8508,29 @@ function _renderAuditResults() {
   const res = _auditLastResult;
   if (!res) return;
   const {valid, notFound, skusWithNoNotes, patterns, freeTextMatches, freeText} = res;
+  // In allNoted mode the universe IS every noted SKU, so "missing this pattern"
+  // just means "has some other note" — not an actionable gap. Suppress the
+  // coverage bar, the missing count, and the missing-side buttons.
+  const allNoted = res.universeMode === 'allNoted';
 
   // Summary
   const sumParts = [];
-  sumParts.push(`${valid.length} SKU${valid.length===1?'':'s'} audited`);
+  sumParts.push(allNoted
+    ? `All ${valid.length} noted SKU${valid.length===1?'':'s'} (${CONFIG_SEASON})`
+    : `${valid.length} SKU${valid.length===1?'':'s'} audited`);
   sumParts.push(`${patterns.length} distinct note pattern${patterns.length===1?'':'s'}`);
   if (skusWithNoNotes.length > 0) sumParts.push(`${skusWithNoNotes.length} with no notes`);
   if (notFound.length > 0) sumParts.push(`${notFound.length} not found in tracker`);
   document.getElementById('auditSummary').textContent = sumParts.join(' · ');
+
+  // Retitle the coverage section — in allNoted mode there is no coverage
+  // metric on display, just an inventory of every pattern in the season.
+  const covLabel = document.getElementById('auditCoverageLabel');
+  if (covLabel) {
+    covLabel.textContent = allNoted
+      ? `All strategy notes by pattern · copy or filter to any pattern's SKUs`
+      : 'Note coverage by pattern';
+  }
 
   // Coverage table
   const covEl = document.getElementById('auditCoverage');
@@ -8496,29 +8559,49 @@ function _renderAuditResults() {
       // Coverage bar
       const barFill = isComplete ? 'var(--green)' : 'var(--orange)';
       const barBg = 'var(--surface2)';
-      return `
-        <div style="padding:10px 12px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:1fr auto auto auto auto;gap:12px;align-items:center;font-size:11px">
-          <div>
-            <div style="margin-bottom:4px">
-              <span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:${pc.bg};color:${pc.color};margin-right:6px">${p.prefix}</span>
-              ${p.descriptor ? `<span>${p.descriptor.replace(/</g, '&lt;')}</span>` : `<span style="color:var(--muted);font-style:italic">(no descriptor)</span>`}
-            </div>
+      // Column template + the two count cells + the missing-side action stack
+      // all collapse in allNoted mode.
+      // Track count must match the cells actually emitted:
+      //   allNoted → label + 1 count + copy/filter + rename/remove       = 4
+      //   custom   → label + 2 counts + missing + copy/filter + rename   = 6
+      const gridCols = allNoted ? '1fr auto auto auto' : '1fr auto auto auto auto auto';
+      const barHtml = allNoted ? '' : `
             <div style="height:5px;background:${barBg};border-radius:3px;overflow:hidden;max-width:300px">
               <div style="width:${fillPct}%;height:100%;background:${barFill}"></div>
-            </div>
-          </div>
-          <div style="font-family:var(--mono);font-size:11px;color:var(--text);text-align:right;min-width:70px">
-            <div style="font-weight:600">${haveCount} / ${valid.length}</div>
-            <div style="font-size:9px;color:var(--muted)">${fillPct}% coverage</div>
-          </div>
-          <div style="font-family:var(--mono);font-size:11px;text-align:right;min-width:70px">
-            <div style="font-weight:600;color:${isComplete ? 'var(--green)' : 'var(--orange)'}">${missingCount}</div>
-            <div style="font-size:9px;color:var(--muted)">missing</div>
-          </div>
+            </div>`;
+      const countCell = allNoted
+        ? `<div style="font-family:var(--mono);font-size:11px;color:var(--text);text-align:right;min-width:70px">
+             <div style="font-weight:600">${haveCount}</div>
+             <div style="font-size:9px;color:var(--muted)">SKU${haveCount===1?'':'s'}</div>
+           </div>`
+        : `<div style="font-family:var(--mono);font-size:11px;color:var(--text);text-align:right;min-width:70px">
+             <div style="font-weight:600">${haveCount} / ${valid.length}</div>
+             <div style="font-size:9px;color:var(--muted)">${fillPct}% coverage</div>
+           </div>
+           <div style="font-family:var(--mono);font-size:11px;text-align:right;min-width:70px">
+             <div style="font-weight:600;color:${isComplete ? 'var(--green)' : 'var(--orange)'}">${missingCount}</div>
+             <div style="font-size:9px;color:var(--muted)">missing</div>
+           </div>`;
+      const missingActions = allNoted ? '' : `
           <!-- Actions on the SKUs that DON'T have this pattern (the complement) -->
           <div style="display:flex;flex-direction:column;gap:4px" title="Actions on the ${missingCount} SKU${missingCount===1?'':'s'} missing this pattern">
             <button class="ia-action-btn" type="button" onclick="auditCopyMissing(${i})" ${isComplete ? 'disabled style="opacity:.4"' : ''} title="${isComplete ? 'No SKUs missing this pattern' : 'Copy SKUs missing this pattern to clipboard'}">📋 Missing</button>
             <button class="ia-action-btn" type="button" onclick="auditSendMissingToBulk(${i})" ${isComplete ? 'disabled style="opacity:.4"' : ''} title="${isComplete ? 'No SKUs missing' : 'Send missing SKUs to Bulk Update modal'}">→ Bulk</button>
+          </div>`;
+      return `
+        <div style="padding:10px 12px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:${gridCols};gap:12px;align-items:center;font-size:11px">
+          <div>
+            <div style="margin-bottom:${allNoted ? '0' : '4px'}">
+              <span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:${pc.bg};color:${pc.color};margin-right:6px">${p.prefix}</span>
+              ${p.descriptor ? `<span>${p.descriptor.replace(/</g, '&lt;')}</span>` : `<span style="color:var(--muted);font-style:italic">(no descriptor)</span>`}
+            </div>${barHtml}
+          </div>
+          ${countCell}
+          ${missingActions}
+          <!-- Actions that RETRIEVE the covered set (copy list / filter grid) -->
+          <div style="display:flex;flex-direction:column;gap:4px" title="Get the ${haveCount} SKU${haveCount===1?'':'s'} that have this pattern">
+            <button class="ia-action-btn" type="button" onclick="auditCopyHave(${i})" title="Copy the ${haveCount} SKU${haveCount===1?'':'s'} carrying this note to the clipboard">📋 Copy ${haveCount}</button>
+            <button class="ia-action-btn" type="button" onclick="auditFilterToPattern(${i})" title="Filter the main grid to the ${haveCount} SKU${haveCount===1?'':'s'} carrying this note">⧉ Filter</button>
           </div>
           <!-- Actions on the SKUs that DO have this pattern (rename / remove existing notes) -->
           <div style="display:flex;flex-direction:column;gap:4px;border-left:1px solid var(--border);padding-left:8px" title="Actions on the ${haveCount} SKU${haveCount===1?'':'s'} that already have this pattern">
@@ -8564,7 +8647,10 @@ function _renderAuditResults() {
       `).join('') + `
         <div style="padding:8px 12px;background:var(--surface2);font-size:10px;color:var(--muted);display:flex;justify-content:space-between;align-items:center">
           <span>${bySku.size} SKU${bySku.size===1?'':'s'} with matching note${freeTextMatches.length===1?'':'s'}</span>
-          <button class="ia-action-btn" type="button" onclick="auditCopySkus('freeText')">📋 Copy ${bySku.size} SKU${bySku.size===1?'':'s'}</button>
+          <span style="display:flex;gap:6px">
+            <button class="ia-action-btn" type="button" onclick="auditCopySkus('freeText')">📋 Copy ${bySku.size} SKU${bySku.size===1?'':'s'}</button>
+            <button class="ia-action-btn" type="button" onclick="auditFilterSkus('freeText')" title="Filter the main grid to these ${bySku.size} SKU${bySku.size===1?'':'s'}">⧉ Filter</button>
+          </span>
         </div>
       `;
     }
@@ -8603,6 +8689,55 @@ function _auditMissingForPattern(patternIdx) {
   if (!p) return [];
   const have = p.skus;
   return _auditLastResult.valid.filter(sku => !have.has(sku));
+}
+
+// Compute the SKUs that HAVE a given pattern — the covered set. Returned in
+// the audit list's own order (not Set insertion order) so the copied list is
+// stable and matches what the user sees elsewhere.
+function _auditHaveForPattern(patternIdx) {
+  if (!_auditLastResult) return [];
+  const p = _auditLastResult.patterns[patternIdx];
+  if (!p) return [];
+  return _auditLastResult.valid.filter(sku => p.skus.has(sku));
+}
+
+// Copy the exact SKU list carrying this note pattern. Plain newline-delimited
+// SKUs — paste-ready into Multi-SKU Lookup or Bulk Update.
+function auditCopyHave(patternIdx) {
+  const have = _auditHaveForPattern(patternIdx);
+  if (have.length === 0) { showToast('No SKUs with this pattern'); return; }
+  const p = _auditLastResult.patterns[patternIdx];
+  const label = `${p.prefix}${p.descriptor ? ' · ' + p.descriptor : ''}`;
+  _copyToClipboard(have.join('\n'), `Copied ${have.length} SKU${have.length===1?'':'s'} — ${label}`);
+}
+
+// Filter the main grid to the SKUs carrying this note pattern. Routes through
+// the existing LOOKUP_SKUS mechanism (highest-priority filter in
+// applyFiltersAndRender), so it stacks correctly with — and visibly overrides
+// — the chip/column filters, and clears via the same "Clear lookup" control.
+function auditFilterToPattern(patternIdx) {
+  const have = _auditHaveForPattern(patternIdx);
+  if (have.length === 0) { showToast('No SKUs with this pattern'); return; }
+  const p = _auditLastResult.patterns[patternIdx];
+  const label = `${p.prefix}${p.descriptor ? ' · ' + p.descriptor : ''}`;
+  _auditApplyLookup(have, label);
+}
+
+// Shared: push a SKU list into the global lookup filter and land the user on
+// the grid. Used by the pattern, free-text, and no-notes filter actions.
+function _auditApplyLookup(skus, label) {
+  LOOKUP_SKUS = new Set(skus.map(s => String(s).toUpperCase()));
+  // Mirror into the Multi-SKU Lookup textarea so that modal reflects what's
+  // actually filtered — otherwise it shows stale content and a stray "Run"
+  // would silently replace the filter with an older list.
+  const lkEl = document.getElementById('lookupInput');
+  if (lkEl) lkEl.value = skus.join('\n');
+  closeAuditNotesModal();
+  PAGE = 1;
+  applyFiltersAndRender();
+  updateLookupIndicator();
+  console.log(`[AuditNotes] Grid filtered to ${skus.length} SKU(s)${label ? ' — ' + label : ''}`);
+  showToast(`Filtered grid to ${skus.length} SKU${skus.length===1?'':'s'}${label ? ' — ' + label : ''}`, 3500);
 }
 
 function auditCopyMissing(patternIdx) {
@@ -8756,21 +8891,38 @@ function auditRemovePattern(patternIdx) {
   runAuditNotes();
 }
 
-function auditCopySkus(which) {
-  if (!_auditLastResult) return;
-  let list, label;
+// Resolve a named section of the last audit to its SKU list + a label.
+// Shared by auditCopySkus and auditFilterSkus so the two can never disagree
+// about what "the free-text set" means.
+function _auditSectionList(which) {
+  if (!_auditLastResult) return null;
   if (which === 'noNotes') {
-    list = _auditLastResult.skusWithNoNotes;
-    label = 'no-notes';
-  } else if (which === 'freeText') {
-    const bySku = new Set(_auditLastResult.freeTextMatches.map(m => m.sku));
-    list = [..._auditLastResult.valid].filter(s => bySku.has(s));
-    label = 'matching';
-  } else {
-    return;
+    return {list: _auditLastResult.skusWithNoNotes, label: 'no-notes'};
   }
+  if (which === 'freeText') {
+    const bySku = new Set(_auditLastResult.freeTextMatches.map(m => m.sku));
+    return {
+      list: [..._auditLastResult.valid].filter(s => bySku.has(s)),
+      label: 'matching',
+    };
+  }
+  return null;
+}
+
+function auditCopySkus(which) {
+  const sec = _auditSectionList(which);
+  if (!sec) return;
+  const {list, label} = sec;
   if (!list || list.length === 0) { showToast('Nothing to copy'); return; }
   _copyToClipboard(list.join('\n'), `Copied ${list.length} ${label} SKU${list.length===1?'':'s'}`);
+}
+
+function auditFilterSkus(which) {
+  const sec = _auditSectionList(which);
+  if (!sec) return;
+  const {list, label} = sec;
+  if (!list || list.length === 0) { showToast('Nothing to filter to'); return; }
+  _auditApplyLookup(list, `${label} SKUs`);
 }
 
 // Shared clipboard helper — extracts the Clipboard API + textarea fallback
