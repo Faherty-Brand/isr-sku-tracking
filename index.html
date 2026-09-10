@@ -1037,7 +1037,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: live-store-matrix (p7n)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: live-store-matrix (p7n1)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -2222,6 +2222,34 @@ async function readCachedMatrix(seasonCode) {
     return { payload: data[0].payload, fetchedAt: data[0].fetched_at };
   } catch (e) { console.warn('[LiveMatrix] cache read threw', e); return null; }
 }
+
+// Console helper: full A/B dump as copy-pasteable text (no console.table,
+// which is invisible to console filters). Safe to call any time after a load.
+window.matrixAB = function matrixAB() {
+  const ab = window._matrixAB;
+  if (!ab) {
+    console.log('[matrixAB] nothing to compare — either the matrix came from the '
+      + 'folder file, or this session rehydrated a published snapshot. '
+      + 'Load from the ISR Data Pulls folder to generate an A/B.');
+    return;
+  }
+  const L = [];
+  L.push('=== Store Matrix A/B · ' + ab.season + ' · ' + ab.generatedAt + ' ===');
+  L.push('file groups=' + ab.fileGroups + '  live groups=' + ab.liveGroups
+    + '  count differs=' + ab.diff.length + '  absent from live=' + ab.absent.length);
+  L.push('');
+  L.push('--- COUNT DIFFERS (in both, different store count) ---');
+  L.push('delta\tfile\tlive\tgroup');
+  ab.diff.forEach(function(r) {
+    L.push((r.delta > 0 ? '+' : '') + r.delta + '\t' + r.file + '\t' + r.live + '\t' + r.group);
+  });
+  L.push('');
+  L.push('--- ABSENT FROM LIVE (file has the label, tool does not) ---');
+  L.push('file\tgroup');
+  ab.absent.forEach(function(r) { L.push(r.file + '\t' + r.group); });
+  console.log(L.join('\n'));
+  return ab;
+};
 
 // Map the tool's with_tiers payload onto the two globals the whole app reads.
 // Shape is byte-identical to parseStoreMatrix's return so no consumer changes.
@@ -4003,22 +4031,43 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
 
   // A/B: where do live and file disagree on store counts? Only groups the file
   // actually has are comparable — the file is missing ~98 labels the tool has.
+  // Parked on window._matrixAB and printed as PLAIN TEXT: console.table output
+  // carries no searchable text, so console filters drop it silently.
+  window._matrixAB = null;
   if (_mSrc !== 'file' && Object.keys(_mFile.tierToStoreCount).length) {
-    const deltas = [];
+    const absent = [], diff = [];
     Object.keys(_mFile.tierToStoreCount).forEach(function(k) {
       const fileN = _mFile.tierToStoreCount[k];
       const liveN = _m.tierToStoreCount[k];
-      if (liveN === undefined) { deltas.push({ group: k, file: fileN, live: 'ABSENT', delta: null }); return; }
-      if (liveN !== fileN) deltas.push({ group: k, file: fileN, live: liveN, delta: liveN - fileN });
+      if (liveN === undefined) { absent.push({ group: k, file: fileN }); return; }
+      if (liveN !== fileN) diff.push({ group: k, file: fileN, live: liveN, delta: liveN - fileN });
     });
-    if (deltas.length) {
-      console.warn('[StoreMatrix A/B] ' + deltas.length + ' of '
-        + Object.keys(_mFile.tierToStoreCount).length + ' file groups differ from live:');
-      console.table(deltas.sort(function(a, b) {
-        return Math.abs(b.delta || 999) - Math.abs(a.delta || 999);
-      }));
+    diff.sort(function(a, b) { return Math.abs(b.delta) - Math.abs(a.delta); });
+    absent.sort(function(a, b) { return b.file - a.file; });
+
+    window._matrixAB = {
+      generatedAt: new Date().toISOString(),
+      season: String(SEASONS.cs || ''),
+      fileGroups: Object.keys(_mFile.tierToStoreCount).length,
+      liveGroups: Object.keys(_m.tierToStoreCount).length,
+      diff: diff, absent: absent,
+      fileCounts: _mFile.tierToStoreCount, liveCounts: _m.tierToStoreCount
+    };
+
+    console.log('[StoreMatrix A/B] file groups=' + window._matrixAB.fileGroups
+      + ' live groups=' + window._matrixAB.liveGroups
+      + ' | count differs=' + diff.length
+      + ' | absent from live=' + absent.length
+      + '   → run matrixAB() for the full dump');
+    if (!diff.length) {
+      console.log('[StoreMatrix A/B] OK every comparable group agrees on store count');
     } else {
-      console.log('[StoreMatrix A/B] ✓ live and file agree on every comparable group');
+      diff.slice(0, 40).forEach(function(r) {
+        console.log('[StoreMatrix A/B] DIFF ' + (r.delta > 0 ? '+' : '') + r.delta
+          + '  ' + r.group + '  (file=' + r.file + ' live=' + r.live + ')');
+      });
+      if (diff.length > 40) console.log('[StoreMatrix A/B] …' + (diff.length - 40)
+        + ' more — run matrixAB()');
     }
   }
 
