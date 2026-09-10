@@ -1037,7 +1037,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: audit-notes-sku-retrieval (p7m)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: live-store-matrix (p7n)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -2047,6 +2047,221 @@ var ALL_SEASONS = '__all__';
 let CONFIG_SEASON = 'FA26';
 let DISPLAY_SEASON = 'FA26';
 
+// ════════════════════════════════════════════════════════
+// LIVE STORE MATRIX  ·  [live-matrix-v1]  (p7n)
+// ════════════════════════════════════════════════════════
+// Replaces the static "Store Matrix - <season>.xlsx" folder pull with a live
+// read from the Faherty Store Matrix Apps Script app.
+//
+// TRANSPORT — why an iframe and not fetch():
+//   The web app is deployed to the fahertybrand.com domain, so its /exec URL
+//   302s to Google SSO. A cross-origin fetch() from GitHub Pages therefore
+//   dies on CORS regardless of whether the user is signed in. The Apps Script
+//   project ships a purpose-built bridge (?bridge=1) that renders Bridge.html
+//   with XFrameOptionsMode.ALLOWALL, calls bridgeApiGet server-side inside the
+//   user's own Google session, and postMessages the payload out. We host that
+//   in a hidden iframe and listen. No secret lives in this file.
+//
+// WHO PAYS THE GOOGLE-AUTH COST — only the publisher:
+//   This runs in the FOLDER LOADER path only. The resolved payload rides into
+//   window._lastParsed, which is what gets gzipped into a published snapshot
+//   (alongside STORE_CODE_MAP in _globals). Readers rehydrate both from
+//   Supabase and never open an iframe, never need a Google session, and never
+//   depend on the Apps Script app being reachable. It also means a snapshot is
+//   reproducible: the matrix it was built on is frozen inside it.
+//
+// STORE UNIVERSE — Store Codes owns it, not the matrix:
+//   The old Excel matrix encoded lifecycle as col A = "OPEN". There is no
+//   equivalent in the payload, and we deliberately do NOT read the tool's
+//   openDate (it is blank for three trading doors). Instead STORE_CODE_MAP is
+//   the universe: parseStoreCodes already drops rows flagged "NO" or coded
+//   "NOT OPEN", so presence in the map == on for config generation. This also
+//   fixes a live inconsistency, where a store could inflate a tier count and
+//   then fail to emit a config row for want of a code.
+//   Verified: 102-store roster - 4 NOT OPEN - 6 absent placeholders = 92, the
+//   same 92 names the FA26 Excel matrix marked OPEN.
+const MATRIX_APP_URL = 'https://script.google.com/a/macros/fahertybrand.com/s/AKfycby8Z67jCeRScKJRxQHJfxd_Hnzw6USsNbTnu0pA9xd5xAEVMV0fIorwaZe0AoCJa0PB/exec';
+const MATRIX_FETCH_TIMEOUT_MS = 20000;
+
+// Tool store name → Store Codes display name. The tool cannot be renamed, so
+// the alias lives here. Keep this list SHORT and explicit — never fuzzy-match
+// store names, or a genuine new-door typo becomes invisible.
+const MATRIX_STORE_ALIAS = Object.freeze({
+  'KOP': 'King of Prussia'   // Store Codes: King of Prussia → KOP98
+});
+
+// Group-label normalization. Case and whitespace only, plus TRAILING periods
+// (PST says "PRINCE ST", both matrix systems say "Prince St."). We do NOT
+// strip other punctuation: "MENS TIER 2+" and "MENS TIER 2" are different
+// groups and merging them would silently mis-allocate.
+function normGroupKey(s) {
+  return String(s == null ? '' : s)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\.+$/, '')
+    .toUpperCase();
+}
+
+function resolveMatrixStoreName(n) {
+  const v = String(n == null ? '' : n).trim();
+  return MATRIX_STORE_ALIAS[v] || v;
+}
+
+// Season code → the tool's quarter/year key. Derived, not tabulated, so HO26
+// and SP27 work without editing this.  Q1=SP Q2=SU Q3=FA Q4=HO.
+const MATRIX_QUARTER_BY_PREFIX = Object.freeze({ SP:'Q1', SU:'Q2', FA:'Q3', HO:'Q4' });
+function seasonToQuarter(seasonCode) {
+  const s = String(seasonCode || '').trim().toUpperCase();
+  const m = s.match(/^([A-Z]{2})(\d{2})$/);
+  if (!m) return null;
+  const quarter = MATRIX_QUARTER_BY_PREFIX[m[1]];
+  if (!quarter) return null;
+  return { quarter: quarter, year: 2000 + parseInt(m[2], 10) };
+}
+
+// Fetch the live matrix through the Apps Script bridge.
+// Resolves with the with_tiers payload, or rejects on timeout / bridge error.
+function fetchLiveMatrix(seasonCode) {
+  return new Promise(function(resolve, reject) {
+    const qy = seasonToQuarter(seasonCode);
+    if (!qy) { reject(new Error('Unmappable season code "' + seasonCode + '"')); return; }
+
+    const reqId = 'isr-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+    const url = MATRIX_APP_URL
+      + '?bridge=1&quarter=' + encodeURIComponent(qy.quarter)
+      + '&year=' + encodeURIComponent(qy.year)
+      + '&requestId=' + encodeURIComponent(reqId);
+
+    let iframe = null, timer = null, done = false;
+
+    function cleanup() {
+      window.removeEventListener('message', onMsg);
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (iframe && iframe.parentNode) iframe.parentNode.removeChild(iframe);
+      iframe = null;
+    }
+    function finish(err, data) {
+      if (done) return;
+      done = true;
+      cleanup();
+      if (err) reject(err); else resolve(data);
+    }
+
+    // Bridge.html posts to window.top with targetOrigin '*', so we validate
+    // here rather than trusting the sender. Apps Script serves user HTML from
+    // a rotating *.googleusercontent.com host, hence the suffix check.
+    function onMsg(e) {
+      let host = '';
+      try { host = new URL(e.origin).hostname; } catch (_) { return; }
+      if (!/(^|\.)googleusercontent\.com$/.test(host)
+          && !/(^|\.)google\.com$/.test(host)) return;
+      const d = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.requestId !== reqId) return;                    // not our request
+      if (d.type === 'matrix-sync-response') {
+        if (!d.data || !Array.isArray(d.data.groups)) {
+          finish(new Error('Bridge returned a payload with no groups array'));
+          return;
+        }
+        finish(null, d.data);
+      } else if (d.type === 'matrix-sync-error') {
+        finish(new Error(String(d.error || 'bridge error')));
+      }
+    }
+
+    window.addEventListener('message', onMsg);
+    timer = setTimeout(function() {
+      // Most common cause is not "app is down" but a browser signed into more
+      // than one Google account, where google.script.run never runs and the
+      // iframe quietly renders a chooser instead.
+      finish(new Error('Timed out after ' + (MATRIX_FETCH_TIMEOUT_MS / 1000)
+        + 's — check you are signed into Google as your Faherty account only'));
+    }, MATRIX_FETCH_TIMEOUT_MS);
+
+    try {
+      iframe = document.createElement('iframe');
+      iframe.setAttribute('aria-hidden', 'true');
+      iframe.style.cssText = 'position:absolute;width:0;height:0;border:0;left:-9999px;top:-9999px';
+      iframe.src = url;
+      document.body.appendChild(iframe);
+    } catch (err) { finish(err); }
+  });
+}
+
+// ── Supabase cache (append-only history) ──────────────────────────────────
+// NOT the distribution channel — snapshots already carry the payload to
+// readers. This exists so a failed bridge fetch has something to fall back to,
+// and so matrix versions can be diffed over time.
+async function cacheLiveMatrix(seasonCode, payload) {
+  if (!window.SB || !payload) return;
+  const qy = seasonToQuarter(seasonCode) || {};
+  try {
+    const { error } = await window.SB.from('store_matrix').insert({
+      season: seasonCode,
+      quarter: qy.quarter || '',
+      year: qy.year || 0,
+      payload: payload,
+      group_count: (payload.groups || []).length,
+      store_count: (payload.stores || []).length
+    });
+    if (error) console.warn('[LiveMatrix] cache write failed', error.message);
+    else console.log('[LiveMatrix] cached to store_matrix for ' + seasonCode);
+  } catch (e) { console.warn('[LiveMatrix] cache write threw', e); }
+}
+
+async function readCachedMatrix(seasonCode) {
+  if (!window.SB) return null;
+  try {
+    const { data, error } = await window.SB.from('store_matrix')
+      .select('payload, fetched_at')
+      .eq('season', seasonCode)
+      .order('fetched_at', { ascending: false })
+      .limit(1);
+    if (error) { console.warn('[LiveMatrix] cache read failed', error.message); return null; }
+    if (!data || !data.length) return null;
+    return { payload: data[0].payload, fetchedAt: data[0].fetched_at };
+  } catch (e) { console.warn('[LiveMatrix] cache read threw', e); return null; }
+}
+
+// Map the tool's with_tiers payload onto the two globals the whole app reads.
+// Shape is byte-identical to parseStoreMatrix's return so no consumer changes.
+function adaptMatrixPayload(payload, codeMap) {
+  const tierToStores = {}, tierToStoreCount = {};
+  const collisions = [], gatedOut = [];
+  const seen = {};
+  const map = codeMap || {};
+
+  (payload.groups || []).forEach(function(g) {
+    const k = normGroupKey(g);
+    if (!k) return;
+    if (seen[k] && seen[k] !== g) collisions.push(seen[k] + ' ~ ' + g);
+    seen[k] = g;
+    if (!tierToStores[k]) { tierToStores[k] = []; tierToStoreCount[k] = 0; }
+  });
+
+  (payload.stores || []).forEach(function(s) {
+    const name = resolveMatrixStoreName(s && s.name);
+    if (!name) return;
+    if (!map[name]) { gatedOut.push(String(s.name)); return; }   // the universe rule
+    (s.groups || []).forEach(function(g) {
+      const k = normGroupKey(g);
+      if (!k) return;
+      if (!tierToStores[k]) { tierToStores[k] = []; tierToStoreCount[k] = 0; }
+      tierToStores[k].push(name);
+      tierToStoreCount[k]++;
+    });
+  });
+
+  console.log('[LiveMatrix] adapted: ' + Object.keys(tierToStores).length + ' groups | '
+    + ((payload.stores || []).length - gatedOut.length) + ' stores in universe | '
+    + gatedOut.length + ' gated out by Store Codes');
+  if (gatedOut.length) console.log('[LiveMatrix] gated out:', gatedOut);
+  if (collisions.length) {
+    console.warn('[LiveMatrix] ⚠ group labels collide after normalization — last wins:', collisions);
+  }
+  return { tierToStoreCount: tierToStoreCount, tierToStores: tierToStores };
+}
+
 // The ONLY place season identity is derived. Given a chosen current season,
 // recompute SEASONS.{ps,cs,ns}, rebuild the 3-entry SEASON_REGISTRY, pin
 // CONFIG_SEASON to it, and relabel the PS/NS grid column groups. DOM-free so
@@ -2654,6 +2869,34 @@ async function loadAllFiles(files) {
     console.warn('[Loader] No Store Matrix found — expected "Store Matrix - ' + _seasonId + '.xlsx". Tier store counts will be 0.');
   }
 
+  // ── Live Store Matrix [live-matrix-v1] ──────────────────────────────────
+  // Preference order: live bridge → Supabase cache → folder .xlsx.
+  // Never blocks the load. A failure downgrades the source and raises a
+  // banner; a half-loaded ISR would be worse than a clearly-labelled stale one.
+  setProgress(66, 'Fetching live Store Matrix…');
+  let matrixPayload = null, matrixSource = 'file', matrixAsOf = null, matrixError = null;
+  try {
+    matrixPayload = await fetchLiveMatrix(_seasonId);
+    matrixSource  = 'live';
+    matrixAsOf    = new Date().toISOString();
+    console.log('[LiveMatrix] live fetch OK for ' + _seasonId
+      + ' — ' + (matrixPayload.groups || []).length + ' groups, '
+      + (matrixPayload.stores || []).length + ' stores');
+    cacheLiveMatrix(_seasonId, matrixPayload);   // fire-and-forget
+  } catch (err) {
+    matrixError = String((err && err.message) || err);
+    console.warn('[LiveMatrix] live fetch failed — ' + matrixError);
+    const cached = await readCachedMatrix(_seasonId);
+    if (cached && cached.payload) {
+      matrixPayload = cached.payload;
+      matrixSource  = 'cache';
+      matrixAsOf    = cached.fetchedAt;
+      console.warn('[LiveMatrix] falling back to cached matrix from ' + matrixAsOf);
+    } else {
+      console.warn('[LiveMatrix] no cache available — falling back to the folder Store Matrix file');
+    }
+  }
+
   setProgress(70, 'Reading Safety Stock…');
   const ssRows = fSS ? await readCSV(fSS) : [];
 
@@ -2665,6 +2908,7 @@ async function loadAllFiles(files) {
   window._lastParsed = {
     pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     wipRows, storeRows, ssRows, syrupIARows, syrupRPRows, syrupCfgRows,
+    matrixPayload, matrixSource, matrixAsOf, matrixError,
     _globals: {
       MASTER_SIZES: window.MASTER_SIZES || {},
       SEASONS: { cs: SEASONS.cs, ns: SEASONS.ns, ps: SEASONS.ps },
@@ -2710,7 +2954,9 @@ async function buildFromParsed(P) {
   setProgress(83, 'Building lookup tables…');
   const lookups = buildLookups({
     pstRows: P.pstRows, invRows: P.invRows, lcwRows: P.lcwRows, newnessRows: P.newnessRows, flowCalRows: P.flowCalRows,
-    wipRows: P.wipRows, storeRows: (P.storeRows || P.storeRowsMay || P.storeRowsJun || []), ssRows: P.ssRows, syrupIARows: P.syrupIARows, syrupRPRows: P.syrupRPRows, syrupCfgRows: P.syrupCfgRows
+    wipRows: P.wipRows, storeRows: (P.storeRows || P.storeRowsMay || P.storeRowsJun || []), ssRows: P.ssRows, syrupIARows: P.syrupIARows, syrupRPRows: P.syrupRPRows, syrupCfgRows: P.syrupCfgRows,
+    matrixPayload: P.matrixPayload || null, matrixSource: P.matrixSource || 'file',
+    matrixAsOf: P.matrixAsOf || null, matrixError: P.matrixError || null
   });
   // Expose flowCalMap globally so computeLateList can resolve alloc dates for any season
   window._flowCalMap = lookups.flowCalMap;
@@ -2847,7 +3093,8 @@ function parseSizeSets(rows) {
 // BUILD ALL LOOKUP TABLES
 // ════════════════════════════════════════════════════════
 function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
-    wipRows, storeRows, storeRowsMay, storeRowsJun, ssRows, syrupIARows, syrupRPRows, syrupCfgRows}) {
+    wipRows, storeRows, storeRowsMay, storeRowsJun, ssRows, syrupIARows, syrupRPRows, syrupCfgRows,
+    matrixPayload, matrixSource, matrixAsOf, matrixError}) {
 
   // ── PST: index by season+SKU and by season ──
   const pstBySeasonSku = {};
@@ -3727,7 +3974,54 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
   // bundles carried storeRowsMay/storeRowsJun instead of storeRows, so accept
   // whichever is present.
   const _srows = storeRows || storeRowsMay || storeRowsJun || [];
-  const _m = parseStoreMatrix(_srows || [], 'MATRIX');
+  const _mFile = parseStoreMatrix(_srows || [], 'MATRIX');
+
+  // [live-matrix-v1] The live payload wins when present. The folder file is
+  // retained through p7n purely as the fallback and as an A/B reference; p7p
+  // removes it once counts have been reconciled for a full season.
+  let _m = _mFile, _mSrc = 'file';
+  if (matrixPayload && Array.isArray(matrixPayload.groups)) {
+    try {
+      _m = adaptMatrixPayload(matrixPayload, STORE_CODE_MAP);
+      _mSrc = matrixSource || 'live';
+    } catch (e) {
+      console.error('[LiveMatrix] adapter threw — staying on the folder matrix', e);
+      _m = _mFile; _mSrc = 'file';
+    }
+  }
+
+  window._matrixProvenance = {
+    source: _mSrc,                 // 'live' | 'cache' | 'file'
+    asOf:   matrixAsOf || null,
+    error:  matrixError || null,
+    season: String(SEASONS.cs || ''),
+    groups: Object.keys(_m.tierToStoreCount || {}).length
+  };
+  console.log('[StoreMatrix] source = ' + _mSrc
+    + (matrixAsOf ? ' (as of ' + matrixAsOf + ')' : '')
+    + ' | groups = ' + window._matrixProvenance.groups);
+
+  // A/B: where do live and file disagree on store counts? Only groups the file
+  // actually has are comparable — the file is missing ~98 labels the tool has.
+  if (_mSrc !== 'file' && Object.keys(_mFile.tierToStoreCount).length) {
+    const deltas = [];
+    Object.keys(_mFile.tierToStoreCount).forEach(function(k) {
+      const fileN = _mFile.tierToStoreCount[k];
+      const liveN = _m.tierToStoreCount[k];
+      if (liveN === undefined) { deltas.push({ group: k, file: fileN, live: 'ABSENT', delta: null }); return; }
+      if (liveN !== fileN) deltas.push({ group: k, file: fileN, live: liveN, delta: liveN - fileN });
+    });
+    if (deltas.length) {
+      console.warn('[StoreMatrix A/B] ' + deltas.length + ' of '
+        + Object.keys(_mFile.tierToStoreCount).length + ' file groups differ from live:');
+      console.table(deltas.sort(function(a, b) {
+        return Math.abs(b.delta || 999) - Math.abs(a.delta || 999);
+      }));
+    } else {
+      console.log('[StoreMatrix A/B] ✓ live and file agree on every comparable group');
+    }
+  }
+
   if (Object.keys(_m.tierToStoreCount).length === 0) {
     console.warn('[StoreMatrix] ⚠ No matrix loaded — tier counts will be 0 for all SKUs.');
   }
@@ -13524,6 +13818,19 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var d = SM_DATA, el = document.getElementById('smWarn');
     if (!el) return;
     var msgs = [];
+    // [live-matrix-v1] provenance first — everything below is read through it.
+    var _prov = window._matrixProvenance || null;
+    if (_prov && _prov.source === 'cache') {
+      msgs.push('<b>Showing a cached matrix</b> from '
+        + smEsc(_prov.asOf ? new Date(_prov.asOf).toLocaleString() : 'an earlier load')
+        + '. The live Store Matrix could not be reached'
+        + (_prov.error ? ' (' + smEsc(_prov.error) + ')' : '')
+        + '. Group membership may be out of date.');
+    } else if (_prov && _prov.source === 'file') {
+      msgs.push('<b>Showing the folder Store Matrix file</b>, not the live Store Matrix app'
+        + (_prov.error ? ' (' + smEsc(_prov.error) + ')' : '')
+        + '. Tier groups maintained only in the app will read as 0 stores.');
+    }
     if (!d.groups.length) {
       msgs.push('<b>No store matrix loaded.</b> Load the season\u2019s Store Matrix file from Data Pulls, then hit Refresh.');
     } else if (!d.namesResolved) {
