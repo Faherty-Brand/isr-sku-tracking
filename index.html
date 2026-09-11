@@ -1037,7 +1037,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: csv-export-sanitation (p7p)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: ss-off-date (p7q)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1933,6 +1933,17 @@ const COLS = [
   // Stock Status
   ['Stock Status','in_stock','In-Stock Status',true,false,false],
   ['Stock Status','ss_on','Safety Stock',true,true,false],
+  // [p7q] SS Off Date — when the Shopify SS units should come off, derived from
+  // the allocation timeline (on-time drop -> +28d, late drop -> +21d). Sits
+  // directly right of the on/off tag so "is it on" and "when does the window
+  // close" read together. Reports a date only; it does NOT assert that a SKU
+  // should be turned off. See computeSSOffDate.
+  ['Stock Status','ss_off_date','SS Off Date',true,false,false],
+  // [p7q] Basis label for the date above (On time / Late (Nd) / Projected).
+  // Hidden by default — the grid carries the basis in the cell styling and
+  // tooltip. Exists so a CSV export can distinguish a projected date from a
+  // logged one, which the exported date string alone can't do.
+  ['Stock Status','ss_off_basis_disp','SS Off Basis',false,false,false],
   ['Stock Status','cs_store_ct','Store Count',true,true,false],
   // Configs Count = number of TRUE rows in Syrup Configs for this SKU. Sits
   // next to Store Count (matrix expected) so the discrepancy that drives
@@ -4652,6 +4663,16 @@ function computeAllRows(lookups) {
     const flow = flowCalMap[deliv_to_use] || null;
     const deliv_alloc_date = flow ? flow.allocDate : null;
 
+    // ── Safety Stock removal date (SS Off Date)  [p7q] ──
+    // Derived from the two alloc drop dates only — see computeSSOffDate for the
+    // rule and its edge cases. MUST stay identical to the recompute in
+    // recomputeRowDerived step 1c (deliv_ow moves the cal date, which can flip
+    // an on-time drop to late and therefore move this date by a week).
+    const _ssOff = computeSSOffDate({
+      newness_ts: (alloc_date instanceof Date && !isNaN(alloc_date)) ? alloc_date.getTime() : null,
+      deliv_alloc_ts: (deliv_alloc_date instanceof Date && !isNaN(deliv_alloc_date)) ? deliv_alloc_date.getTime() : null,
+    });
+
     // ── Newness Proj (AI) — computed after WIP lookups below ──
     let newness_proj = '';
 
@@ -5087,6 +5108,14 @@ function computeAllRows(lookups) {
       cs_rp,
       omni_oh, plg_oh, store_oh, tier_oh, other_oh,
       ss_on,
+      // [p7q] SS Off Date — display string + numeric twin + the basis metadata
+      // the cell renderer and drilldown need to explain the number.
+      ss_off_date: _ssOff.disp,
+      ss_off_ts: _ssOff.ts,
+      ss_off_basis: _ssOff.basis,
+      ss_off_late_days: _ssOff.lateDays,
+      ss_off_basis_disp: _ssOff.basisDisp || '',
+      ss_off_base_disp: _ssOff.baseTs ? fmtDate4(new Date(_ssOff.baseTs)) : '',
       in_stock: '',   // filled below
       size_ct: size_ct || '',
       sku_depth, sku_sz_depth,
@@ -5743,6 +5772,121 @@ function countActiveConfigs(cfgBySku, sku) {
   return 0;
 }
 
+// ── Safety Stock removal date (SS Off Date)  [p7q] ──────────────────────────
+// Companion to the ss_on tag. ss_on answers "does Shopify have SS units on for
+// this SKU"; this answers "when should they come off", derived entirely from
+// the allocation timeline (NOT from Shopify).
+//
+// Rule (per Allocation):
+//   • drop landed on time (true alloc drop <= cal alloc drop) → true drop + 28d
+//   • drop landed late    (true alloc drop >  cal alloc drop) → true drop + 21d
+// The late window is shorter on purpose — a late drop has already burned part
+// of the newness runway, so SS comes off sooner and partially recovers the
+// calendar. In both branches the anchor is the TRUE drop date; only the offset
+// changes (in the on-time branch the two dates are equal anyway).
+//
+// Reads the epoch-ms twins, not the display strings:
+//   newness_ts     — true alloc drop date (Newness Log). Null until logged.
+//   deliv_alloc_ts — cal alloc drop date (Flow Cal, override-aware; kept fresh
+//                    by recomputeRowDerived step 1b).
+// Both survive the snapshot JSON round-trip, so a published-snapshot reader
+// resolves identically to a folder load.
+//
+// Three edge cases, all deliberate:
+//   1. No true drop logged yet (cal present) → PROJECT off the cal date + 28,
+//      basis 'proj'. Rendered with a ~ prefix and muted styling so a projection
+//      can never be read as a logged fact. Without this the column would be
+//      blank for nearly every SKU in a forward season, which is exactly when
+//      the planning value is highest.
+//   2. No cal drop date (Flow Cal miss, or delivery override = "None") but a
+//      true drop exists → treat as on time (+28). Mirrors the existing
+//      convention in computeStatus, where an empty AJ is treated as 0 so the
+//      "AH >= AJ" comparison holds.
+//   3. Neither date → blank. Nothing to anchor to.
+//
+// An EARLY drop (true < cal) is folded into the on-time branch rather than
+// getting its own rule: the 28-day clock runs from the actual drop either way.
+const SS_OFF_DAYS_ONTIME = 28;
+const SS_OFF_DAYS_LATE   = 21;
+
+// Normalize an epoch ms to local midnight so comparisons are day-granular and
+// a stray time component can't flip a same-day equality (on time → late).
+function ssDayTs(ts) {
+  if (typeof ts !== 'number' || !isFinite(ts)) return null;
+  const d = new Date(ts);
+  if (isNaN(d)) return null;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+// Takes {newness_ts, deliv_alloc_ts} — a full row works, so does a literal.
+// Returns { ts, disp, basis, days, lateDays, baseTs }:
+//   basis: 'ontime' | 'late' | 'proj' | ''   ('' only when both dates missing)
+//   days:  the offset applied (28 or 21)
+//   lateDays: how many days late the drop was (0 unless basis === 'late')
+function computeSSOffDate(row) {
+  const trueTs = ssDayTs(row && row.newness_ts);
+  const calTs  = ssDayTs(row && row.deliv_alloc_ts);
+  const none = {ts: null, disp: '', basis: '', days: 0, lateDays: 0, baseTs: null};
+  if (trueTs === null && calTs === null) return none;
+
+  let baseTs, offset, basis, lateDays = 0;
+  if (trueTs === null) {
+    baseTs = calTs;  offset = SS_OFF_DAYS_ONTIME; basis = 'proj';
+  } else if (calTs === null || trueTs <= calTs) {
+    baseTs = trueTs; offset = SS_OFF_DAYS_ONTIME; basis = 'ontime';
+  } else {
+    baseTs = trueTs; offset = SS_OFF_DAYS_LATE;   basis = 'late';
+    lateDays = Math.round((trueTs - calTs) / 86400000);
+  }
+  // Add days via date components (not ms arithmetic) so a DST boundary inside
+  // the window can't shift the result by a day.
+  const b = new Date(baseTs);
+  const off = new Date(b.getFullYear(), b.getMonth(), b.getDate() + offset);
+  // basisDisp is the export-facing label. The grid marks a projection with a ~
+  // prefix and styling, but a CSV loses both — without this column a projected
+  // date is indistinguishable from a logged one in Excel.
+  const basisDisp = basis === 'proj' ? 'Projected'
+                  : basis === 'late' ? `Late (${lateDays}d)`
+                  : 'On time';
+  return {ts: off.getTime(), disp: fmtDate4(off), basis, basisDisp, days: offset, lateDays, baseTs};
+}
+
+// Human-readable basis line, shared by the grid tooltip and the drilldown so
+// the two can't describe the same number differently.
+function ssOffBasisText(row) {
+  const basis = row.ss_off_basis || '';
+  if (!basis) return 'No alloc drop date — nothing to anchor the SS window to';
+  const base = row.ss_off_base_disp || '—';
+  if (basis === 'proj')   return `Projected · no logged drop yet — assumes on time (cal drop ${base} + ${SS_OFF_DAYS_ONTIME}d)`;
+  if (basis === 'late')   return `Late by ${row.ss_off_late_days || 0}d — true drop ${base} + ${SS_OFF_DAYS_LATE}d`;
+  return `On time — true drop ${base} + ${SS_OFF_DAYS_ONTIME}d`;
+}
+
+// Grid cell inner HTML for SS Off Date. Extracted so renderTable and
+// refreshDependentCells share one renderer (same pattern as
+// renderConfigStatusPill) and can't drift.
+//
+// Deliberately NON-directive. This column reports a date off the allocation
+// timeline; it does NOT assert that a SKU should come off safety stock. A SKU
+// still On past its listed date is not by itself wrong — that call depends on
+// signals that live outside this app. So: no colour, no warning glyph, no
+// cross-reference against ss_on, no due/overdue framing in the tooltip.
+//
+// The ONE visual distinction that remains is provenance, not action: a
+// projected date (no logged drop yet) gets a ~ prefix and muted italic so it
+// can't be read as a logged fact. Everything else renders as plain mono.
+function renderSSOffCell(row) {
+  const disp = row.ss_off_date || '';
+  if (!disp) return '<span class="muted-cell">—</span>';
+  const ttl = ssOffBasisText(row).replace(/"/g, '&quot;');
+  const mono = 'font-family:var(--mono);font-size:11px';
+
+  if (row.ss_off_basis === 'proj') {
+    return `<span title="${ttl}" style="${mono};color:var(--muted);font-style:italic">~${disp}</span>`;
+  }
+  return `<span title="${ttl}" style="${mono}">${disp}</span>`;
+}
+
 function computeOnTime(wip_recv, wip_pend, allocDate) {
   if (wip_recv.inDCDate) {
     if (!allocDate) return 'In DC';
@@ -6118,6 +6262,22 @@ function recomputeRowDerived(row) {
   // shifting the NF auto-Release guard for every retiered SKU.
   row.deliv_alloc_ts = (newAllocDate instanceof Date && !isNaN(newAllocDate))
     ? newAllocDate.getTime() : null;
+
+  // 1c. SS Off Date  [p7q] — depends on the freshly-resolved cal drop date, so
+  // it has to run AFTER deliv_alloc_ts above. A delivery override can flip a
+  // drop from on time to late (or the reverse), which swings this date by a
+  // week; it can also introduce/remove the cal date entirely (the "None"
+  // sentinel), which switches the row between the projected and logged basis.
+  // Must stay identical to the build-time block in computeAllRows.
+  {
+    const _ssOff = computeSSOffDate(row);
+    row.ss_off_date = _ssOff.disp;
+    row.ss_off_ts = _ssOff.ts;
+    row.ss_off_basis = _ssOff.basis;
+    row.ss_off_late_days = _ssOff.lateDays;
+    row.ss_off_basis_disp = _ssOff.basisDisp || '';
+    row.ss_off_base_disp = _ssOff.baseTs ? fmtDate4(new Date(_ssOff.baseTs)) : '';
+  }
 
   // 1b. Matrix-routed store count (delivery-aware).
   // Re-resolve cs_store_ct against whichever matrix the effective delivery
@@ -7451,6 +7611,9 @@ function renderPage() {
           v === 'N/A — Online/Partner' ? 'pill-muted'  : 'pill-muted';
         return `<td><span class="pill ${cls}">${v}</span></td>`;
       }
+      // [p7q] SS Off Date — delegates to the shared renderer so the partial
+      // repaint path (refreshDependentCells) can't drift from this one.
+      if (id === 'ss_off_date') return `<td>${renderSSOffCell(row)}</td>`;
       if (id === 'cs_ontime' || id === 'ns_ontime' || id === 'v_ontime') {
         const cls = v==='On Time'?'pill-green':v==='Late'?'pill-red':v==='In DC'?'pill-blue':'pill-muted';
         return `<td><span class="pill ${cls}">${v}</span></td>`;
@@ -7589,6 +7752,14 @@ function openDrilldown(sku) {
       })()],
       ['Cal Alloc Drop Date', row.deliv_alloc_date || '—'],
       ['True Alloc Drop Date', row.alloc_date || '—'],
+      // [p7q] Safety stock pair: current Shopify state, then the derived
+      // window-close date with the basis spelled out (on time / late / projected).
+      ['Safety Stock', row.ss_on === 'On'
+        ? '<span class="pill pill-green">On</span>'
+        : '<span class="pill pill-muted">Off</span>'],
+      ['SS Off Date', row.ss_off_date
+        ? `${renderSSOffCell(row)}<span style="color:var(--muted);font-size:10px;margin-left:6px">${ssOffBasisText(row)}</span>`
+        : '—'],
       ['Newness Proj', row.newness_proj ? `<span class="pill ${
         row.newness_proj === 'Allocated' ? 'pill-green' :
         row.newness_proj.startsWith('Here - Allocate This') ? 'pill-orange' :
@@ -8436,6 +8607,12 @@ function refreshDependentCells(tr, row) {
     }
     if (id === 'deliv_alloc_date') {
       cell.innerHTML = row.deliv_alloc_date || '<span class="muted-cell">—</span>';
+    }
+    // [p7q] Moves with deliv_ow: a delivery change can flip the on-time test
+    // and swing this date by a week, so it repaints alongside the cal drop
+    // date it derives from.
+    if (id === 'ss_off_date') {
+      cell.innerHTML = renderSSOffCell(row);
     }
     if (id === 'new_cf') {
       cell.innerHTML = newCfPillHtml(row);
