@@ -1037,7 +1037,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: live-store-matrix (p7n1)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: tier-coverage (p7o)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1146,7 +1146,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
   <div class="load-status" id="loadStatus">Loading shared data…</div>
   <button class="load-btn" id="loadFolderBtn" style="display:none" onclick="document.getElementById('fileInput').click()">📂 Open ISR Data Pulls Folder</button>
   <input type="file" id="fileInput" webkitdirectory multiple accept="">
-  <div id="loadFolderHint" style="display:none;font-family:var(--mono);font-size:10px;color:rgba(255,255,255,.2);text-align:center;max-width:380px">Reads: PST.xlsx · ISR INV Pull.csv · ISR LCW Sales.csv · Size Sets.xlsx<br>Newness Log.xlsx · Flow Cal.xlsx · WIP.xlsx · Store Matrix.xlsx<br>Store Codes.xlsx · Safety Stock.csv · syrup IA.csv · syrup RP.csv · syrup configs.csv</div>
+  <div id="loadFolderHint" style="display:none;font-family:var(--mono);font-size:10px;color:rgba(255,255,255,.2);text-align:center;max-width:380px">Reads: PST.xlsx · ISR INV Pull.csv · ISR LCW Sales.csv · Size Sets.xlsx<br>Newness Log.xlsx · Flow Cal.xlsx · WIP.xlsx<br>Store Codes.xlsx · Safety Stock.csv · syrup IA.csv · syrup RP.csv · syrup configs.csv</div>
 </div>
 
 <!-- MAIN APP -->
@@ -1491,6 +1491,7 @@ setTimeout(function(){
 
   <div class="sm-stats" id="smStats"></div>
   <div class="sm-warn" id="smWarn" style="display:none"></div>
+  <div class="sm-coverage" id="smCoverage"></div>
 
   <div class="sm-explorer">
     <div class="sm-rail">
@@ -2886,15 +2887,13 @@ async function loadAllFiles(files) {
   setProgress(63, 'Reading Store Matrix…');
   // Single seasonal matrix — one footprint for the whole current season.
   const storeRows = fStoreMatrix ? await readXLSX(fStoreMatrix) : [];
+  // [p7p] The folder Store Matrix no longer feeds tier counts — the live app is
+  // the only source. The file is read ONLY when it happens to be present, purely
+  // to generate the A/B diff for manual reconciliation. Its absence is normal
+  // and silent; delete it from the folder whenever you're done comparing.
   if (fStoreMatrix) {
-    console.log('[Loader] Store Matrix loaded from "' + fStoreMatrix.name + '" (' + _matrixNote + ').');
-    // Convention check: warn if the file's season suffix != current season.
-    const _mm = fStoreMatrix.name.match(/store matrix - (.+)\.xlsx$/i);
-    if (_mm && _seasonId && _mm[1].trim().toUpperCase() !== _seasonId.toUpperCase()) {
-      console.warn('[Loader] ⚠ Store Matrix season "' + _mm[1].trim() + '" does not match the current season "' + _seasonId + '". Expected "Store Matrix - ' + _seasonId + '.xlsx" — tier counts may reflect the wrong season.');
-    }
-  } else {
-    console.warn('[Loader] No Store Matrix found — expected "Store Matrix - ' + _seasonId + '.xlsx". Tier store counts will be 0.');
+    console.log('[Loader] Store Matrix file found ("' + fStoreMatrix.name
+      + '") — used for the A/B diff only, NOT for tier counts.');
   }
 
   // ── Live Store Matrix [live-matrix-v1] ──────────────────────────────────
@@ -2902,10 +2901,12 @@ async function loadAllFiles(files) {
   // Never blocks the load. A failure downgrades the source and raises a
   // banner; a half-loaded ISR would be worse than a clearly-labelled stale one.
   setProgress(66, 'Fetching live Store Matrix…');
-  let matrixPayload = null, matrixSource = 'file', matrixAsOf = null, matrixError = null;
+  let matrixPayload = null, matrixSource = 'none', matrixAsOf = null, matrixError = null;
+  let matrixFresh = false;
   try {
     matrixPayload = await fetchLiveMatrix(_seasonId);
     matrixSource  = 'live';
+    matrixFresh   = true;
     matrixAsOf    = new Date().toISOString();
     console.log('[LiveMatrix] live fetch OK for ' + _seasonId
       + ' — ' + (matrixPayload.groups || []).length + ' groups, '
@@ -2918,10 +2919,15 @@ async function loadAllFiles(files) {
     if (cached && cached.payload) {
       matrixPayload = cached.payload;
       matrixSource  = 'cache';
+      matrixFresh   = true;
       matrixAsOf    = cached.fetchedAt;
       console.warn('[LiveMatrix] falling back to cached matrix from ' + matrixAsOf);
     } else {
-      console.warn('[LiveMatrix] no cache available — falling back to the folder Store Matrix file');
+      // No file fallback as of p7p. Tier counts will be empty. The Configs
+      // Generator skips zero-store tiers, so this degrades to emitting NOTHING
+      // rather than emitting wrong rows — loud, but not silently corrupting.
+      console.error('[LiveMatrix] ✖ no live matrix and no cache — tier counts will be EMPTY. '
+        + 'Configs will emit nothing until this resolves.');
     }
   }
 
@@ -2936,7 +2942,7 @@ async function loadAllFiles(files) {
   window._lastParsed = {
     pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     wipRows, storeRows, ssRows, syrupIARows, syrupRPRows, syrupCfgRows,
-    matrixPayload, matrixSource, matrixAsOf, matrixError,
+    matrixPayload, matrixSource, matrixAsOf, matrixError, matrixFresh,
     _globals: {
       MASTER_SIZES: window.MASTER_SIZES || {},
       SEASONS: { cs: SEASONS.cs, ns: SEASONS.ns, ps: SEASONS.ps },
@@ -2983,8 +2989,9 @@ async function buildFromParsed(P) {
   const lookups = buildLookups({
     pstRows: P.pstRows, invRows: P.invRows, lcwRows: P.lcwRows, newnessRows: P.newnessRows, flowCalRows: P.flowCalRows,
     wipRows: P.wipRows, storeRows: (P.storeRows || P.storeRowsMay || P.storeRowsJun || []), ssRows: P.ssRows, syrupIARows: P.syrupIARows, syrupRPRows: P.syrupRPRows, syrupCfgRows: P.syrupCfgRows,
-    matrixPayload: P.matrixPayload || null, matrixSource: P.matrixSource || 'file',
-    matrixAsOf: P.matrixAsOf || null, matrixError: P.matrixError || null
+    matrixPayload: P.matrixPayload || null, matrixSource: P.matrixSource || 'none',
+    matrixAsOf: P.matrixAsOf || null, matrixError: P.matrixError || null,
+    matrixFresh: !!P.matrixFresh
   });
   // Expose flowCalMap globally so computeLateList can resolve alloc dates for any season
   window._flowCalMap = lookups.flowCalMap;
@@ -3122,7 +3129,7 @@ function parseSizeSets(rows) {
 // ════════════════════════════════════════════════════════
 function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     wipRows, storeRows, storeRowsMay, storeRowsJun, ssRows, syrupIARows, syrupRPRows, syrupCfgRows,
-    matrixPayload, matrixSource, matrixAsOf, matrixError}) {
+    matrixPayload, matrixSource, matrixAsOf, matrixError, matrixFresh}) {
 
   // ── PST: index by season+SKU and by season ──
   const pstBySeasonSku = {};
@@ -4007,17 +4014,22 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
   // [live-matrix-v1] The live payload wins when present. The folder file is
   // retained through p7n purely as the fallback and as an A/B reference; p7p
   // removes it once counts have been reconciled for a full season.
-  let _m = _mFile, _mSrc = 'file';
+  // [p7p] The file NEVER feeds tier counts now. _mFile exists only as the A/B
+  // reference. If the live payload is missing or unusable, counts stay empty —
+  // a visible nothing beats a silent wrong-season number.
+  let _m = { tierToStoreCount: {}, tierToStores: {} };
+  let _mSrc = 'none';
   if (matrixPayload && Array.isArray(matrixPayload.groups)) {
     try {
       _m = adaptMatrixPayload(matrixPayload, STORE_CODE_MAP);
-      _mSrc = matrixSource || 'live';
+      _mSrc = matrixFresh ? (matrixSource || 'live') : 'snapshot';
     } catch (e) {
-      console.error('[LiveMatrix] adapter threw — staying on the folder matrix', e);
-      _m = _mFile; _mSrc = 'file';
+      console.error('[LiveMatrix] ✖ adapter threw — tier counts will be EMPTY', e);
+      _m = { tierToStoreCount: {}, tierToStores: {} }; _mSrc = 'none';
     }
   }
 
+  window._matrixPayload = matrixPayload || null;
   window._matrixProvenance = {
     source: _mSrc,                 // 'live' | 'cache' | 'file'
     asOf:   matrixAsOf || null,
@@ -4034,7 +4046,7 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
   // Parked on window._matrixAB and printed as PLAIN TEXT: console.table output
   // carries no searchable text, so console filters drop it silently.
   window._matrixAB = null;
-  if (_mSrc !== 'file' && Object.keys(_mFile.tierToStoreCount).length) {
+  if (_mSrc !== 'none' && Object.keys(_mFile.tierToStoreCount).length) {
     const absent = [], diff = [];
     Object.keys(_mFile.tierToStoreCount).forEach(function(k) {
       const fileN = _mFile.tierToStoreCount[k];
@@ -4602,15 +4614,14 @@ function computeAllRows(lookups) {
     // Console log first few SKUs so the user can verify in F12
     if (!window._tierLogCount) window._tierLogCount = 0;
     if (window._tierLogCount < 5) {
+      // [p7o] The MAY / JUN_JUL routing label was dead text — resolveMatrixKey has
+      // been a constant stub since the two-matrix era ended. Non-alloc tiers are
+      // now named as such instead of reading as "NO MATCH", which they aren't.
       const _t2sc = _matrixFor(deliv_ow || cs_deliv1);
-      const _mkey = (() => {
-        const s = String(deliv_ow || cs_deliv1 || '').trim().toUpperCase().replace(/_\d+$/, '');
-        return (s === 'JUN' || s === 'JUNE' || s === 'JUL' || s === 'JULY'
-                || s === 'AUG' || s === 'AUGUST' || s === 'SEP' || s === 'SEPTEMBER'
-                || s === 'OCT' || s === 'OCTOBER' || s === 'NOV' || s === 'NOVEMBER'
-                || s === 'DEC' || s === 'DECEMBER') ? 'JUN_JUL' : 'MAY';
-      })();
-      console.log(`[Tier] ${sku} | storeTier(V)="${cs_tier_raw}" | override="${tier_ow}" | effective="${(tier_ow||cs_tier_raw).toUpperCase()}" | deliv="${deliv_ow||cs_deliv1}" → matrix=${_mkey} | storeCount=${_t2sc[(tier_ow||cs_tier_raw||'').trim().toUpperCase()]??'NO MATCH'}`);
+      const _eff  = (tier_ow || cs_tier_raw || '').trim().toUpperCase();
+      const _ct   = NON_ALLOC_TIERS.has(_eff) ? 'n/a (non-allocating tier)'
+                  : (_t2sc[_eff] ?? 'NO MATCH — not a group in the Store Matrix');
+      console.log(`[Tier] ${sku} | storeTier(V)="${cs_tier_raw}" | override="${tier_ow}" | effective="${_eff}" | deliv="${deliv_ow||cs_deliv1}" | storeCount=${_ct}`);
       window._tierLogCount++;
     }
 
@@ -12097,6 +12108,20 @@ ${'</' + 'script>'}
 <style>
 #nfPanel{display:none;flex-direction:column;flex:1;overflow:hidden;background:var(--bg)}
 /* ══════════ STORE MATRIX ══════════ */
+.sm-coverage{margin:0 0 10px}
+.sm-coverage:empty{display:none}
+.sm-cov-head{font-family:var(--mono);font-size:10px;letter-spacing:.04em;
+  text-transform:uppercase;opacity:.72;margin:0 0 6px}
+.sm-cov-bad{color:#f87171;font-weight:700;opacity:1}
+.sm-cov-sec{border:1px solid rgba(255,255,255,.08);border-radius:6px;padding:8px 10px;
+  background:rgba(255,255,255,.02)}
+.sm-cov-sec-t{font-size:11px;font-weight:600;margin:0 0 6px;opacity:.85}
+.sm-cov-tbl{border-collapse:collapse;font-family:var(--mono);font-size:10px;width:auto}
+.sm-cov-tbl th{text-align:left;font-weight:600;opacity:.5;padding:2px 14px 4px 0;
+  text-transform:uppercase;letter-spacing:.04em}
+.sm-cov-tbl td{padding:2px 14px 2px 0;white-space:nowrap}
+.sm-cov-tbl td:first-child{text-align:right;font-weight:700}
+.sm-cov-note{font-size:10px;opacity:.55;margin-top:6px;max-width:640px;line-height:1.45}
 #smPanel{display:none;flex-direction:column;flex:1;overflow:hidden;background:var(--bg)}
 .sm-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:18px 24px 12px;flex-wrap:wrap}
 .sm-title{font-family:var(--head);font-size:17px;font-weight:700;color:var(--text)}
@@ -13869,16 +13894,23 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var msgs = [];
     // [live-matrix-v1] provenance first — everything below is read through it.
     var _prov = window._matrixProvenance || null;
-    if (_prov && _prov.source === 'cache') {
+    if (_prov && _prov.source === 'none') {
+      msgs.push('<b>No store matrix could be loaded.</b> The live Store Matrix app was '
+        + 'unreachable and no cached copy exists'
+        + (_prov.error ? ' (' + smEsc(_prov.error) + ')' : '')
+        + '. Every tier reads 0 stores, and the Configs Generator will emit nothing '
+        + 'until this resolves. Re-load from the ISR Data Pulls folder.');
+    } else if (_prov && _prov.source === 'cache') {
       msgs.push('<b>Showing a cached matrix</b> from '
         + smEsc(_prov.asOf ? new Date(_prov.asOf).toLocaleString() : 'an earlier load')
         + '. The live Store Matrix could not be reached'
         + (_prov.error ? ' (' + smEsc(_prov.error) + ')' : '')
         + '. Group membership may be out of date.');
-    } else if (_prov && _prov.source === 'file') {
-      msgs.push('<b>Showing the folder Store Matrix file</b>, not the live Store Matrix app'
-        + (_prov.error ? ' (' + smEsc(_prov.error) + ')' : '')
-        + '. Tier groups maintained only in the app will read as 0 stores.');
+    } else if (_prov && _prov.source === 'snapshot') {
+      msgs.push('Showing the store matrix <b>as published in this snapshot</b>'
+        + (_prov.asOf ? ', captured ' + smEsc(new Date(_prov.asOf).toLocaleString()) : '')
+        + '. This is the matrix the snapshot was built on, so tier counts match its '
+        + 'numbers exactly. Load from the folder for the current live matrix.');
     }
     if (!d.groups.length) {
       msgs.push('<b>No store matrix loaded.</b> Load the season\u2019s Store Matrix file from Data Pulls, then hit Refresh.');
@@ -14179,8 +14211,64 @@ tr.nf-strow-shifted {background:#DBEAFE}
     return rows.length ? rows[0].key : null;
   }
 
+  function smRenderCoverage(){
+    var el = document.getElementById('smCoverage');
+    if (!el) return;
+    // [p7o] Tier coverage. Computed from each row's ACTUAL cs_store_ct rather
+    // than by re-running the lookup, so this panel can never disagree with what
+    // the app really resolved. Non-alloc is classified FIRST — otherwise the
+    // ~40% of SKUs that are intentionally 0-store drown out the few that are
+    // genuinely broken, which is exactly what happened during the FA26 cutover.
+    var rows = (typeof ALL_ROWS !== 'undefined' && ALL_ROWS) ? ALL_ROWS : [];
+    if (!rows.length) { el.innerHTML = ''; return; }
+
+    var byTier = {};
+    rows.forEach(function(r){
+      if (!r) return;
+      var eff = String(r.tier_ow || r.cs_tier || '').trim().toUpperCase();
+      if (!eff) return;
+      if (!byTier[eff]) byTier[eff] = { tier: eff, skus: 0, ct: 0, viaOw: 0 };
+      byTier[eff].skus++;
+      if (r.tier_ow) byTier[eff].viaOw++;
+      var c = Number(r.cs_store_ct || 0);
+      if (c > byTier[eff].ct) byTier[eff].ct = c;
+    });
+
+    var missing = [], nonAlloc = [], ok = [];
+    Object.keys(byTier).forEach(function(k){
+      var t = byTier[k];
+      if (NON_ALLOC_TIERS.has(k)) nonAlloc.push(t);
+      else if (!t.ct) missing.push(t);
+      else ok.push(t);
+    });
+    var bySkus = function(a,b){ return b.skus - a.skus; };
+    missing.sort(bySkus); nonAlloc.sort(bySkus); ok.sort(bySkus);
+
+    var sum = function(a){ return a.reduce(function(n,t){ return n + t.skus; }, 0); };
+    var head = '<div class="sm-cov-head"><b>Tier coverage</b> · ' + smEsc(String(CONFIG_SEASON))
+      + ' · ' + ok.length + ' resolving (' + sum(ok) + ' SKUs) · '
+      + nonAlloc.length + ' non-allocating (' + sum(nonAlloc) + ' SKUs) · '
+      + '<span class="' + (missing.length ? 'sm-cov-bad' : '') + '">'
+      + missing.length + ' unresolved (' + sum(missing) + ' SKUs)</span></div>';
+
+    var body = '';
+    if (missing.length) {
+      body += '<div class="sm-cov-sec"><div class="sm-cov-sec-t">Unresolved — no such group in the Store Matrix</div>'
+        + '<table class="sm-cov-tbl"><tr><th>SKUs</th><th>via override</th><th>tier</th></tr>'
+        + missing.map(function(t){
+            return '<tr><td>' + t.skus + '</td><td>' + (t.viaOw || '') + '</td><td>'
+                 + smEsc(t.tier) + '</td></tr>'; }).join('')
+        + '</table><div class="sm-cov-note">These SKUs allocate to zero stores and the '
+        + 'Configs Generator emits nothing for them. Either the group needs creating in the '
+        + 'Store Matrix app, or the tier value is a typo.</div></div>';
+    } else {
+      body += '<div class="sm-cov-sec"><div class="sm-cov-sec-t">Every tier in use resolves to a store group.</div></div>';
+    }
+    el.innerHTML = head + body;
+  }
+
   function smRenderAll(){
-    smRenderSubtitle(); smRenderStats(); smRenderWarn(); smRenderRail(); smRenderDetail();
+    smRenderSubtitle(); smRenderStats(); smRenderWarn(); smRenderCoverage(); smRenderRail(); smRenderDetail();
   }
 
   // ── Public handlers ───────────────────────────────────────────────────────
