@@ -1037,7 +1037,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: tier-coverage (p7o)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: csv-export-sanitation (p7p)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -4568,6 +4568,10 @@ function computeAllRows(lookups) {
     // newest in-DC date; next in-DC = pending shipment with the earliest in-DC
     // date. Displayed as "M/D/YY · qty · SEASON" so a season-shift is visible.
     let xs_recv_disp = '', xs_pend_disp = '', xs_recv_full = '', xs_pend_full = '';
+    // p7p: raw parts retained alongside the display composite so CSV export can
+    // emit a real date and a real number instead of the "M/D/YY · qty" string.
+    // The grid keeps using *_disp — these are export-only and never rendered.
+    let xs_recv_date = '', xs_recv_qty = '', xs_pend_date = '', xs_pend_qty = '';
     {
       const _xs = wipXSBySku[sku];
       if (_xs) {
@@ -4576,11 +4580,20 @@ function computeAllRows(lookups) {
           const d = o.date;
           return (d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(2) + ' · ' + (o.qty||0).toLocaleString();
         };
+        // Export date: M/D/YYYY (4-digit year, no separator glyph) so Excel parses
+        // it as a date rather than guessing at the 2-digit year.
+        const _fmtDateOnly = (o) => {
+          if (!o || !o.date) return '';
+          const d = o.date;
+          return (d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear();
+        };
         const _fmtFull = (o) => { const b = _fmtDQ(o); return b ? (b + ' · ' + o.szn) : ''; };  // side panel: + season
         let _last = null; for (const k in _xs.recv) { const s = _xs.recv[k]; if (!_last || s.date > _last.date) _last = s; }
         let _next = null; for (const k in _xs.pend) { const s = _xs.pend[k]; if (!_next || s.date < _next.date) _next = s; }
         xs_recv_disp = _fmtDQ(_last);  xs_recv_full = _fmtFull(_last);
         xs_pend_disp = _fmtDQ(_next);  xs_pend_full = _fmtFull(_next);
+        xs_recv_date = _fmtDateOnly(_last);  xs_recv_qty = _last ? (_last.qty || 0) : '';
+        xs_pend_date = _fmtDateOnly(_next);  xs_pend_qty = _next ? (_next.qty || 0) : '';
       }
     }
     const syrup_rp = syrupRPByProduct[sku] || 0;
@@ -5102,6 +5115,11 @@ function computeAllRows(lookups) {
       xs_pend_disp: xs_pend_disp || '',
       xs_recv_full: xs_recv_full || '',
       xs_pend_full: xs_pend_full || '',
+      // p7p: export-only raw parts (see the composite builder above)
+      xs_recv_date: xs_recv_date || '',
+      xs_recv_qty:  xs_recv_qty  === '' ? '' : xs_recv_qty,
+      xs_pend_date: xs_pend_date || '',
+      xs_pend_qty:  xs_pend_qty  === '' ? '' : xs_pend_qty,
       syrup_rp: syrup_rp || '',
       cs_ontime,
       cs_dc_recd: wip_cs_recv.inDCDate ? fmtDate4(wip_cs_recv.inDCDate) : '',
@@ -9799,14 +9817,112 @@ function updateLookupIndicator() {
 // ════════════════════════════════════════════════════════
 // EXPORT
 // ════════════════════════════════════════════════════════
+// ── CSV sanitation (p7n) ──────────────────────────────────────────────────
+// The grid uses typographic glyphs (em dash, middot, division sign) that read
+// fine in the browser but are noise — or outright ambiguous — in a spreadsheet.
+// Everything below is EXPORT-ONLY. The internal values are deliberately left
+// alone: `config_status === '—'` and `in_stock === 'N/A — Do Not Allocate'` are
+// compared by string equality in the Late List builder, the config audit, and
+// the grid's pill painter. Rewriting them at the source would break all three.
+
+// Header glyph fixes — keyed by column id so a label edit can't silently
+// orphan the mapping.
+const CSV_HEADER_OVERRIDE = {
+  sku_depth:    'SKU Depth (OH per Store)',
+  sku_sz_depth: 'SKU-Sz Depth (Depth per Size)',
+};
+
+// Per-column value rewrites. Exact-match only — anything unlisted passes through
+// to the generic glyph sweep below.
+const CSV_VALUE_OVERRIDE = {
+  in_stock: {
+    'N/A — Do Not Allocate': 'N/A: Do Not Allocate',
+    'N/A — Online/Partner':  'N/A: Online/Partner',
+  },
+  config_status: {
+    '—':          'Not Configured',
+    'Markdown!':  'Markdown - Action Needed',
+  },
+  config_ct_status: {
+    '—':          'Not Configured',
+    'Markdown!':  'Markdown - Action Needed',
+  },
+};
+
+// Generic sweep — the safety net for any glyph that shows up in a value we
+// haven't explicitly mapped (new status strings, note text pasted in by a user,
+// smart quotes from Excel source files, and so on).
+const CSV_GLYPH_MAP = [
+  [/[\u2014\u2013]/g, '-'],      // em dash, en dash
+  [/[\u00B7\u2022]/g, '-'],      // middot, bullet
+  [/[\u2018\u2019]/g, "'"],      // curly single quotes
+  [/[\u201C\u201D]/g, '"'],      // curly double quotes
+  [/\u00F7/g, '/'],              // division sign
+  [/\u00D7/g, 'x'],              // multiplication sign
+  [/\u2192/g, '->'], [/\u2190/g, '<-'],
+  [/\u2265/g, '>='], [/\u2264/g, '<='], [/\u2260/g, '!='],
+  [/\u2026/g, '...'],            // ellipsis
+  [/[\u2713\u2714]/g, 'Yes'], [/[\u2715\u2717\u2718]/g, 'No'],
+  [/\u26A0/g, '!'],              // warning sign
+];
+
+function csvSanitize(v) {
+  let s = String(v);
+  for (const [re, sub] of CSV_GLYPH_MAP) s = s.replace(re, sub);
+  // Collapse newlines/tabs — a note with a line break would otherwise split the
+  // record across rows in some spreadsheet importers.
+  s = s.replace(/[\r\n\t]+/g, '; ');
+  // Fold accents to their base letter (é -> e) BEFORE the ASCII strip, so a
+  // legitimate style/color description like "Café Sand" exports as "Cafe Sand"
+  // rather than losing the character outright.
+  try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch (e) {}
+  // Anything still outside printable ASCII is noise — drop it rather than
+  // shipping mojibake into the spreadsheet.
+  s = s.replace(/[^\x20-\x7E]/g, '');
+  return s.replace(/\s{2,}/g, ' ').trim();
+}
+
+// Resolves the exported value for one column. Returns an array because a couple
+// of columns fan out into more than one CSV field.
+function csvCellsFor(row, id) {
+  // Last Receipt / Next In-DC: the grid packs "M/D/YY · qty" into one cell.
+  // Split it so the date sorts as a date and the qty sums as a number.
+  if (id === 'xs_recv_disp') return [row.xs_recv_date ?? '', row.xs_recv_qty ?? ''];
+  if (id === 'xs_pend_disp') return [row.xs_pend_date ?? '', row.xs_pend_qty ?? ''];
+
+  // has_note is a render-only pseudo-field — the grid intercepts it to draw the
+  // red box, so row.has_note is undefined and this column exported blank on
+  // every row before p7p. Resolve it against the live note index instead.
+  if (id === 'has_note') {
+    try {
+      const idx = (typeof getNoteIndex === 'function') ? getNoteIndex() : null;
+      return [idx && idx.set.has(row.sku) ? 'Yes' : 'No'];
+    } catch (e) { return ['']; }
+  }
+
+  const map = CSV_VALUE_OVERRIDE[id];
+  const raw = row[id] ?? '';
+  if (map && Object.prototype.hasOwnProperty.call(map, raw)) return [map[raw]];
+  return [raw];
+}
+
+// Column ids that fan out, and the header labels they fan out into.
+const CSV_SPLIT_HEADERS = {
+  xs_recv_disp: ['Last Receipt Date', 'Last Receipt Units'],
+  xs_pend_disp: ['Next In-DC Date',  'Next In-DC Units'],
+};
+
 function exportCSV() {
   const visibleCols = COLS.filter(([,id]) => COL_VIS[id]);
-  const headers = visibleCols.map(([,,lbl]) => lbl).join(',');
+
+  const headers = visibleCols.flatMap(([,id,lbl]) =>
+    CSV_SPLIT_HEADERS[id] || [CSV_HEADER_OVERRIDE[id] || lbl]
+  ).map(h => `"${csvSanitize(h).replace(/"/g,'""')}"`).join(',');
+
   const rows = FILTERED.map(row =>
-    visibleCols.map(([,id]) => {
-      const v = row[id] ?? '';
-      return `"${String(v).replace(/"/g,'""')}"`;
-    }).join(',')
+    visibleCols.flatMap(([,id]) => csvCellsFor(row, id))
+      .map(v => `"${csvSanitize(v).replace(/"/g,'""')}"`)
+      .join(',')
   );
   const csv = [headers, ...rows].join('\n');
   const blob = new Blob([csv], {type:'text/csv'});
