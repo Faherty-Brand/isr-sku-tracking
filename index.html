@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ISR — SKU Tracking SP26</title>
+<title>ISR — SKU Tracking</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script>/* SheetJS xlsx 0.18.5 */
 /*! xlsx.js (C) 2013-present SheetJS -- http://sheetjs.com */
@@ -1054,7 +1054,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: sm-used-only-filter (p7q3)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: season-neutral-copy + tier-coverage-restyle (p7r)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1157,7 +1157,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <div id="loadScreen">
   <div>
     <div class="load-title">ISR — SKU Tracking</div>
-    <div style="font-family:var(--mono);font-size:12px;color:rgba(255,255,255,.3);text-align:center;margin-top:4px;margin-bottom:32px">SP26 · Live from ISR Data Pulls folder</div>
+    <div style="font-family:var(--mono);font-size:12px;color:rgba(255,255,255,.3);text-align:center;margin-top:4px;margin-bottom:32px">Live from ISR Data Pulls folder</div>
   </div>
   <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
   <div class="load-status" id="loadStatus">Loading shared data…</div>
@@ -1190,7 +1190,7 @@ setTimeout(function(){
       <div class="logo">ISR</div>
       <div>
         <div class="topbar-title">SKU Tracking</div>
-        <div class="topbar-sub" id="topbarSub">SP26 — Loading…</div>
+        <div class="topbar-sub" id="topbarSub">Loading…</div>
       </div>
     </div>
     <div class="topbar-right">
@@ -1622,7 +1622,7 @@ setTimeout(function(){
     <!-- Note section (optional) -->
     <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:6px">
       <label style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Note text <span style="font-style:italic;text-transform:none;letter-spacing:0">(optional)</span></label>
-      <textarea class="modal-textarea" id="bulkNotesText" style="height:60px" placeholder="SR2 - removed MV and Cape Cod 4/10"></textarea>
+      <textarea class="modal-textarea" id="bulkNotesText" style="height:60px" placeholder="SR2 - Prince St., Vero Beach"></textarea>
     </div>
 
     <!-- CS Tier override section (optional) -->
@@ -6506,6 +6506,11 @@ function initApp() {
   // Update season labels
   document.getElementById('topbarSub').textContent =
     `${SEASONS.cs} / ${SEASONS.ns} · ${ALL_ROWS.length.toLocaleString()} SKUs · Updated ${new Date().toLocaleDateString()}`;
+
+  // [p7r] Browser tab title is derived, not hardcoded. The static <title> ships
+  // season-free so a stale code never flashes before data resolves; once SEASONS
+  // is populated the tab reflects whatever season actually loaded.
+  if (SEASONS.cs) document.title = `ISR — SKU Tracking ${SEASONS.cs}`;
 
   // Set Late List season button labels from SEASONS
   const csBtn = document.getElementById('llSeasonCS');
@@ -12388,20 +12393,35 @@ ${'</' + 'script>'}
 <style>
 #nfPanel{display:none;flex-direction:column;flex:1;overflow:hidden;background:var(--bg)}
 /* ══════════ STORE MATRIX ══════════ */
-.sm-coverage{margin:0 0 10px}
+/* [p7r] Tier coverage. Previously styled for a dark surface (white-alpha
+   borders, #f87171 red) on what is actually a light theme, and flush to x=0
+   while every sibling block is inset 24px. Rebuilt on the same tokens the
+   stat tiles and warn banner use. */
+.sm-coverage{margin:0 24px 12px}
 .sm-coverage:empty{display:none}
-.sm-cov-head{font-family:var(--mono);font-size:10px;letter-spacing:.04em;
-  text-transform:uppercase;opacity:.72;margin:0 0 6px}
-.sm-cov-bad{color:#f87171;font-weight:700;opacity:1}
-.sm-cov-sec{border:1px solid rgba(255,255,255,.08);border-radius:6px;padding:8px 10px;
-  background:rgba(255,255,255,.02)}
-.sm-cov-sec-t{font-size:11px;font-weight:600;margin:0 0 6px;opacity:.85}
-.sm-cov-tbl{border-collapse:collapse;font-family:var(--mono);font-size:10px;width:auto}
-.sm-cov-tbl th{text-align:left;font-weight:600;opacity:.5;padding:2px 14px 4px 0;
-  text-transform:uppercase;letter-spacing:.04em}
-.sm-cov-tbl td{padding:2px 14px 2px 0;white-space:nowrap}
-.sm-cov-tbl td:first-child{text-align:right;font-weight:700}
-.sm-cov-note{font-size:10px;opacity:.55;margin-top:6px;max-width:640px;line-height:1.45}
+.sm-cov-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;margin:0 0 7px}
+.sm-cov-h-t{font-family:var(--mono);font-size:9px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--muted)}
+.sm-cov-szn{font-family:var(--mono);font-size:9px;letter-spacing:.06em;color:var(--dim);
+  border:1px solid var(--border);border-radius:4px;padding:1px 5px}
+.sm-cov-chip{font-size:11px;color:var(--muted);background:var(--surface);
+  border:1px solid var(--border);border-radius:999px;padding:2px 10px;white-space:nowrap}
+.sm-cov-chip b{font-family:var(--mono);font-weight:700;color:var(--text)}
+.sm-cov-chip i{font-style:normal;color:var(--dim)}
+.sm-cov-chip.bad{background:var(--red-bg);border-color:rgba(192,57,43,.32);color:var(--red)}
+.sm-cov-chip.bad b,.sm-cov-chip.bad i{color:var(--red)}
+.sm-cov-ok{font-size:11.5px;color:var(--muted);line-height:1.45}
+.sm-cov-sec{border:1px solid rgba(192,57,43,.28);border-left:3px solid var(--red);
+  border-radius:9px;padding:10px 13px;background:var(--red-bg)}
+.sm-cov-sec-t{font-size:11.5px;font-weight:700;color:var(--red);margin:0 0 7px}
+.sm-cov-tbl{border-collapse:collapse;font-family:var(--mono);font-size:10.5px;width:auto}
+.sm-cov-tbl th{text-align:left;font-weight:600;color:var(--muted);padding:0 18px 4px 0;
+  text-transform:uppercase;letter-spacing:.08em;font-size:9px;
+  border-bottom:1px solid rgba(192,57,43,.22)}
+.sm-cov-tbl td{padding:3px 18px 3px 0;white-space:nowrap;color:var(--text)}
+.sm-cov-tbl td:first-child,.sm-cov-tbl th:first-child{text-align:right;padding-right:14px}
+.sm-cov-tbl td:first-child{font-weight:700}
+.sm-cov-note{font-size:11px;color:var(--muted);margin-top:8px;max-width:640px;line-height:1.5}
 #smPanel{display:none;flex-direction:column;flex:1;overflow:hidden;background:var(--bg)}
 .sm-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:18px 24px 12px;flex-wrap:wrap}
 .sm-title{font-family:var(--head);font-size:17px;font-weight:700;color:var(--text)}
@@ -14543,24 +14563,35 @@ tr.nf-strow-shifted {background:#DBEAFE}
     missing.sort(bySkus); nonAlloc.sort(bySkus); ok.sort(bySkus);
 
     var sum = function(a){ return a.reduce(function(n,t){ return n + t.skus; }, 0); };
-    var head = '<div class="sm-cov-head"><b>Tier coverage</b> · ' + smEsc(String(CONFIG_SEASON))
-      + ' · ' + ok.length + ' resolving (' + sum(ok) + ' SKUs) · '
-      + nonAlloc.length + ' non-allocating (' + sum(nonAlloc) + ' SKUs) · '
-      + '<span class="' + (missing.length ? 'sm-cov-bad' : '') + '">'
-      + missing.length + ' unresolved (' + sum(missing) + ' SKUs)</span></div>';
+    var num = function(n){ return Number(n || 0).toLocaleString(); };
+    // [p7r] One chip per bucket instead of a single dot-separated mono run, so
+    // the counts stay legible and wrap cleanly at narrow widths.
+    var chip = function(n, label, skus, bad){
+      return '<span class="sm-cov-chip' + (bad ? ' bad' : '') + '"><b>' + num(n) + '</b> '
+           + label + ' <i>· ' + num(skus) + ' SKUs</i></span>';
+    };
+    var head = '<div class="sm-cov-head">'
+      + '<span class="sm-cov-h-t">Tier coverage</span>'
+      + '<span class="sm-cov-szn">' + smEsc(String(CONFIG_SEASON)) + '</span>'
+      + chip(ok.length, ok.length === 1 ? 'tier resolving' : 'tiers resolving', sum(ok), false)
+      + chip(nonAlloc.length, 'non-allocating', sum(nonAlloc), false)
+      + (missing.length ? chip(missing.length, 'unresolved', sum(missing), true) : '')
+      + '</div>';
 
     var body = '';
     if (missing.length) {
-      body += '<div class="sm-cov-sec"><div class="sm-cov-sec-t">Unresolved — no such group in the Store Matrix</div>'
-        + '<table class="sm-cov-tbl"><tr><th>SKUs</th><th>via override</th><th>tier</th></tr>'
+      body += '<div class="sm-cov-sec"><div class="sm-cov-sec-t">'
+        + (missing.length === 1 ? 'This tier has' : 'These tiers have')
+        + ' no matching group in the Store Matrix</div>'
+        + '<table class="sm-cov-tbl"><tr><th>SKUs</th><th>Via override</th><th>Tier</th></tr>'
         + missing.map(function(t){
-            return '<tr><td>' + t.skus + '</td><td>' + (t.viaOw || '') + '</td><td>'
+            return '<tr><td>' + num(t.skus) + '</td><td>' + (t.viaOw ? num(t.viaOw) : '—') + '</td><td>'
                  + smEsc(t.tier) + '</td></tr>'; }).join('')
-        + '</table><div class="sm-cov-note">These SKUs allocate to zero stores and the '
-        + 'Configs Generator emits nothing for them. Either the group needs creating in the '
+        + '</table><div class="sm-cov-note">These SKUs allocate to zero stores, and the '
+        + 'Configs Generator emits nothing for them. Either the group needs to be created in the '
         + 'Store Matrix app, or the tier value is a typo.</div></div>';
     } else {
-      body += '<div class="sm-cov-sec"><div class="sm-cov-sec-t">Every tier in use resolves to a store group.</div></div>';
+      body += '<div class="sm-cov-ok">Every tier in use resolves to a store group.</div>';
     }
     el.innerHTML = head + body;
   }
