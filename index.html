@@ -778,8 +778,25 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
       } catch(e){}
       try { recomputeRowDerived(row); } catch(e){}
     }
-    scheduleRender(); flashIncoming();
+    scheduleRender(); flashIncoming(); scheduleSmRebuild();
   }
+  // [p7q1] A teammate's tier override recomputes the row but never touched the
+  // Store Matrix tab, so group→SKU usage counts silently went stale while you
+  // sat on it. This used to be the sole job of the manual "Redraw" button,
+  // which required you to notice an invisible problem. Now it self-heals.
+  // Debounced because smSkuIndex walks every row and realtime is capped at
+  // 5 events/sec — a bulk override save would otherwise thrash it.
+  var _smRebuildTimer = null;
+  function scheduleSmRebuild(){
+    var panel = document.getElementById('smPanel');
+    if (!panel || panel.style.display === 'none') return;   // tab not visible — switching to it rebuilds anyway
+    if (_smRebuildTimer) clearTimeout(_smRebuildTimer);
+    _smRebuildTimer = setTimeout(function(){
+      _smRebuildTimer = null;
+      try { if (typeof window.smRefresh === 'function') window.smRefresh(); } catch(e){}
+    }, 600);
+  }
+
   function applyRemoteNotes(sku, data){
     var d = (typeof upgradeNotesRow === 'function') ? upgradeNotesRow(data) : (data && typeof data === 'object' ? data : {});
     var js = JSON.stringify(d || {});
@@ -1037,7 +1054,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: live-refresh + membership-diff (p7q)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: live-refresh + membership-diff (p7q1)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1486,7 +1503,6 @@ setTimeout(function(){
       </div>
       <button class="sm-action-btn" onclick="smCopyMembers()">⎘ Copy members</button>
       <button class="sm-action-btn" onclick="smRefreshLive(this)" title="Re-pull group membership from the live Store Matrix app and recompute every row">↻ Live matrix</button>
-      <button class="sm-action-btn" onclick="smRefresh()" title="Redraw this tab from data already loaded">↻ Redraw</button>
     </div>
   </div>
 
