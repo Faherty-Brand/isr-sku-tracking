@@ -225,6 +225,21 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .dd-desc{font-size:12px;color:var(--muted);margin-top:2px}
 .dd-close{background:none;border:none;font-size:18px;cursor:pointer;color:var(--muted);padding:0 4px;line-height:1}
 .dd-close:hover{color:var(--text)}
+/* [p7t] Panel-local season selector */
+.dd-seasonbar{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:8px 20px;
+  border-bottom:1px solid var(--border);background:var(--bg)}
+.dd-seasonbar:empty{display:none}
+.dd-szn-lbl{font-family:var(--mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);margin-right:2px}
+.dd-szn{font-family:var(--mono);font-size:10px;padding:2px 8px;border:1px solid var(--border);
+  border-radius:999px;background:var(--surface);color:var(--muted);cursor:pointer;white-space:nowrap}
+.dd-szn:hover{border-color:var(--accent);color:var(--accent)}
+.dd-szn.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
+.dd-szn .dd-szn-dot{opacity:.7;margin-left:3px}
+.dd-szn-pin{font-family:var(--mono);font-size:9px;color:var(--orange);margin-left:2px;
+  border:1px solid rgba(211,84,0,.35);background:var(--orange-bg);border-radius:999px;
+  padding:1px 7px;cursor:pointer}
+.dd-szn-pin:hover{background:var(--orange);color:#fff}
 .dd-body{padding:16px 20px;overflow-y:auto;flex:1}
 .dd-section{margin-bottom:20px}
 .dd-section-title{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#fff;font-family:var(--mono);margin-bottom:8px;padding:5px 10px;border-radius:4px;font-weight:600}
@@ -1054,7 +1069,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: season-neutral-copy + tier-coverage-restyle (p7r)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown (p7t)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1563,6 +1578,9 @@ setTimeout(function(){
     </div>
     <button class="dd-close" onclick="closeDrilldown()">✕</button>
   </div>
+  <!-- [p7t] Panel-local season selector. Follows the top-bar toggle until the
+       user picks here, at which point only this panel moves. -->
+  <div class="dd-seasonbar" id="ddSeasonBar"></div>
   <div class="dd-body" id="ddBody"></div>
 </div>
 
@@ -2507,37 +2525,53 @@ function seasonViewKey(){ return DISPLAY_SEASON === ALL_SEASONS ? CONFIG_SEASON 
 // (override-aware) value so behavior matches the legacy CS columns exactly.
 // For any other season, raw PST values are shown (overrides are CS-scoped in
 // Phase 2; Phase 3 re-keys them per season).
-function projectSeasonView(row){
-  var key = seasonViewKey();
+// [p7t] Split in two. `seasonProjection` is PURE — it returns a detached bag of
+// v_* values for an arbitrary season and mutates nothing. `projectSeasonView`
+// is the original mutating wrapper the grid and filters still rely on.
+//
+// The split exists because the SKU side panel now carries its own season
+// selector. If the panel reprojected onto the row to render a different season,
+// every v_* field the grid reads would silently flip to the panel's season —
+// the grid would show one season's data under another season's header. Keeping
+// one implementation (rather than a parallel copy in the panel) also preserves
+// two-site parity: there is still exactly one place this logic lives.
+function seasonProjection(row, key){
   var s = (row.seasons && row.seasons[key]) || {};
   var isConfig = (key === CONFIG_SEASON);
   var g = function(k){ return (s[k] != null) ? s[k] : ''; };
   var pstTier = g('tier'), pstDeliv = g('deliv1');
-  row.v_tier_pst   = pstTier;
-  row.v_deliv1_pst = pstDeliv;
-  row.v_tier_ovr   = !!(isConfig && row.tier_ow && String(row.tier_ow).trim() && String(row.tier_ow).trim() !== String(pstTier).trim());
-  row.v_deliv1_ovr = !!(isConfig && row.deliv_ow && String(row.deliv_ow).trim() && String(row.deliv_ow).trim() !== String(pstDeliv).trim());
-  row.v_tier   = row.v_tier_ovr   ? String(row.tier_ow).trim()  : pstTier;
-  row.v_deliv1 = row.v_deliv1_ovr ? String(row.deliv_ow).trim() : pstDeliv;
+  var v = {};
+  v.v_tier_pst   = pstTier;
+  v.v_deliv1_pst = pstDeliv;
+  v.v_tier_ovr   = !!(isConfig && row.tier_ow && String(row.tier_ow).trim() && String(row.tier_ow).trim() !== String(pstTier).trim());
+  v.v_deliv1_ovr = !!(isConfig && row.deliv_ow && String(row.deliv_ow).trim() && String(row.deliv_ow).trim() !== String(pstDeliv).trim());
+  v.v_tier   = v.v_tier_ovr   ? String(row.tier_ow).trim()  : pstTier;
+  v.v_deliv1 = v.v_deliv1_ovr ? String(row.deliv_ow).trim() : pstDeliv;
   // Pre-override ("was") values — populated ONLY when an override is active, so
   // the dedicated Prev. columns stay blank/scannable for the untouched majority
   // and clearly surface the original PST value for the rows that changed.
-  row.v_tier_prev   = row.v_tier_ovr   ? (pstTier  || '') : '';
-  row.v_deliv1_prev = row.v_deliv1_ovr ? (pstDeliv || '') : '';
-  row.v_deliv2       = g('deliv2');
-  row.v_corr_tier    = g('corr_tier');
-  row.v_rp           = g('rp');
-  row.v_ontime       = g('ontime');
-  row.v_dc_recd      = g('dc_recd');
-  row.v_po_recd      = g('po_recd');
-  row.v_dc_pend      = g('dc_pend');
-  row.v_po_pend      = g('po_pend');
-  row.v_store_ct     = g('store_ct');
-  row.v_size_scale   = g('size_scale');
-  row.v_lifecycle    = g('lifecycle');
-  row.v_md_exit      = g('md_exit');
-  row.v_final_buy    = g('final_buy');
-  row.v_weeks_bought = g('weeks_bought');
+  v.v_tier_prev   = v.v_tier_ovr   ? (pstTier  || '') : '';
+  v.v_deliv1_prev = v.v_deliv1_ovr ? (pstDeliv || '') : '';
+  v.v_deliv2       = g('deliv2');
+  v.v_corr_tier    = g('corr_tier');
+  v.v_rp           = g('rp');
+  v.v_ontime       = g('ontime');
+  v.v_dc_recd      = g('dc_recd');
+  v.v_po_recd      = g('po_recd');
+  v.v_dc_pend      = g('dc_pend');
+  v.v_po_pend      = g('po_pend');
+  v.v_store_ct     = g('store_ct');
+  v.v_size_scale   = g('size_scale');
+  v.v_lifecycle    = g('lifecycle');
+  v.v_md_exit      = g('md_exit');
+  v.v_final_buy    = g('final_buy');
+  v.v_weeks_bought = g('weeks_bought');
+  v.v_hasPST       = !!s.hasPST;   // namespaced so it can't shadow a season slice's own hasPST
+  return v;
+}
+function projectSeasonView(row){
+  var v = seasonProjection(row, seasonViewKey());
+  for (var k in v) row[k] = v[k];
 }
 function projectAllSeasonViews(){ (ALL_ROWS||[]).forEach(projectSeasonView); }
 
@@ -6629,6 +6663,11 @@ function setFilter(type, val) {
   }
   PAGE = 1;
   applyFiltersAndRender();
+  // [p7t] An open SKU panel used to keep showing the season it was opened on —
+  // you had to close and reopen it to see the season you just switched to.
+  // Re-render it in place instead. Done after applyFiltersAndRender so the
+  // panel reads rows whose v_* have already been reprojected.
+  if (type === 'season') ddSyncToDisplaySeason();
 }
 
 // ── Change the CURRENT season (season-source p4k) ────────────────────────────
@@ -7702,9 +7741,66 @@ function toggleColPanel() {
 // ════════════════════════════════════════════════════════
 // DRILLDOWN
 // ════════════════════════════════════════════════════════
+// ── Panel season state  [p7t] ───────────────────────────────────────────────
+// DD_SKU    = which SKU the panel is showing (null when closed)
+// DD_SEASON = which season the panel is showing. Defaults to the global view
+//             and follows it whenever the top-bar toggle changes, but can be
+//             pointed elsewhere from inside the panel WITHOUT disturbing the
+//             grid — the panel reads a detached projection, never row.v_*.
+let DD_SKU    = null;
+let DD_SEASON = null;
+
+// Global season toggle changed → pull an open panel along with it.
+function ddSyncToDisplaySeason(){
+  DD_SEASON = null;                       // drop any panel-local override
+  if (DD_SKU) openDrilldown(DD_SKU);
+}
+// User picked a season inside the panel.
+function ddSetSeason(code){
+  if (!DD_SKU) return;
+  DD_SEASON = code;
+  openDrilldown(DD_SKU);
+}
+function ddSeasonNow(){
+  if (DD_SEASON) return DD_SEASON;
+  return (DISPLAY_SEASON === ALL_SEASONS) ? CONFIG_SEASON : DISPLAY_SEASON;
+}
+
+// Season chips inside the panel. Order and membership mirror the top-bar
+// toggle (extra display-only seasons first, then PS / CS / NS), minus
+// "All Seasons" — a single SKU panel has no meaningful all-seasons view.
+// The working season carries the same • marker used in the top bar.
+function ddRenderSeasonSeg(activeKey){
+  const el = document.getElementById('ddSeasonBar');
+  if (!el) return;
+  const ids = EXTRA_DISPLAY_SEASONS.concat(SEASON_REGISTRY.map(sn => sn.id))
+    .filter((v, i, a) => a.indexOf(v) === i);
+  if (!ids.length) { el.innerHTML = ''; return; }
+  let h = '<span class="dd-szn-lbl">Season</span>';
+  h += ids.map(id =>
+    `<button class="dd-szn${id===activeKey?' on':''}" onclick="ddSetSeason('${id}')" `
+    + `title="Show this panel in ${id}">${id}`
+    + (id===CONFIG_SEASON ? '<span class="dd-szn-dot">\u2022</span>' : '')
+    + '</button>').join('');
+  // Only offered while the panel is off the global view — clicking it snaps
+  // back, so the user never has to remember what the grid is set to.
+  const globalKey = (DISPLAY_SEASON === ALL_SEASONS) ? CONFIG_SEASON : DISPLAY_SEASON;
+  if (DD_SEASON && DD_SEASON !== globalKey) {
+    h += `<button class="dd-szn-pin" onclick="ddSyncToDisplaySeason()" `
+       + `title="This panel is pinned to ${DD_SEASON} while the app is showing ${globalKey}. Click to follow the app again.">`
+       + `\u21BA ${globalKey}</button>`;
+  }
+  el.innerHTML = h;
+}
+
 function openDrilldown(sku) {
   const row = ALL_ROWS.find(r => r.sku === sku);
   if (!row) return;
+
+  // Switching SKUs clears any panel-local season override — the new SKU opens
+  // on whatever season the app is showing, which is the least surprising default.
+  if (DD_SKU !== sku) DD_SEASON = null;
+  DD_SKU = sku;
 
   document.getElementById('ddSku').textContent = sku;
   document.getElementById('ddDesc').textContent = `${row.style_desc} — ${row.color_desc} | ${row.division} ${row.category}`;
@@ -7712,15 +7808,17 @@ function openDrilldown(sku) {
 
   const mo = MANUAL_OW[sku] || {};
 
-  // Keep the season-projected (v_*) fields in sync with the current season
-  // toggle, then resolve which season the panel's TOP section should describe.
-  // The top attributes (delivery, store group, store count, lifecycle, end week)
-  // follow the toggle; the allocation-machinery rows (status, alloc dates,
-  // Newness Proj) stay on the working/config season since they only exist there.
-  projectSeasonView(row);
-  const ddSeasonKey = (DISPLAY_SEASON === ALL_SEASONS) ? CONFIG_SEASON : DISPLAY_SEASON;
+  // Resolve the season this panel describes. The top attributes (delivery,
+  // store group, store count, lifecycle, end week) follow it; the allocation
+  // machinery rows (status, alloc dates, Newness Proj) stay on the working/
+  // config season since they only exist there.
+  const ddSeasonKey = ddSeasonNow();
   const ddIsConfig  = (ddSeasonKey === CONFIG_SEASON);
   const allocTitle  = 'STATUS & ALLOCATION' + (ddIsConfig ? '' : ' — ' + ddSeasonKey);
+  // Detached projection — reading `V` instead of `row.v_*` is what lets the
+  // panel show FA26 while the grid behind it stays on SU26.
+  const V = seasonProjection(row, ddSeasonKey);
+  ddRenderSeasonSeg(ddSeasonKey);
 
   // ── Conditionals: only show NS / PS groups if there's actual data ─────────
   // Per spec: "is there NS/PS tier or delivery month? If no, just don't include"
@@ -7735,26 +7833,36 @@ function openDrilldown(sku) {
       ['Status', `<span class="pill ${statusClass(row.status)}">${row.status||'—'}</span>`],
       ['New/CF', newCfPillHtml(row)],
       ['FP/MD', row.fp_md ? `<span class="pill ${row.fp_md==='Markdown'?'pill-yellow':'pill-blue'}">${row.fp_md}</span>` : '—'],
-      ['Lifecycle', row.v_lifecycle || '—'],
-      ['End Week (MD Exit)', row.v_md_exit || '—'],
+      ['Lifecycle', V.v_lifecycle || '—'],
+      ['End Week (MD Exit)', V.v_md_exit || '—'],
       ['Effective Delivery', (function(){
-        const eff = row.v_deliv1 || '—';
-        const wasHtml = row.v_deliv1_ovr ? ` <span style="color:var(--orange);font-weight:500">(override)</span>`
-          + sgWasLine(row.v_deliv1_prev) : '';
+        const eff = V.v_deliv1 || '—';
+        const wasHtml = V.v_deliv1_ovr ? ` <span style="color:var(--orange);font-weight:500">(override)</span>`
+          + sgWasLine(V.v_deliv1_prev) : '';
         return `${sgEsc(eff)}${wasHtml}`;
       })()],
       ['Store Group', (function(){
-        const eff  = (row.v_tier || '').trim();
-        const disp = eff ? sgValueSpan(sgEsc(eff), eff, row.v_deliv1, row.v_tier_ovr?'color:var(--orange);font-weight:500':'') : '—';
-        const wasHtml = row.v_tier_ovr ? ` <span style="color:var(--orange);font-weight:500">(override)</span>`
-          + sgWasLine(row.v_tier_prev) : '';
+        const eff  = (V.v_tier || '').trim();
+        const disp = eff ? sgValueSpan(sgEsc(eff), eff, V.v_deliv1, V.v_tier_ovr?'color:var(--orange);font-weight:500':'') : '—';
+        const wasHtml = V.v_tier_ovr ? ` <span style="color:var(--orange);font-weight:500">(override)</span>`
+          + sgWasLine(V.v_tier_prev) : '';
         return `${disp}${wasHtml}`;
       })()],
+      // [p7t] Matrix count and PST count merged into one row. They were two rows
+      // in two different sections, which buried the only interesting case — when
+      // they disagree. Side by side, a mismatch is immediately legible.
       ['Store Count', (function(){
-        const t = (row.v_tier || '').trim().toUpperCase();
-        if (!t) return '—';
-        const cnt = (window.getTierToStoreCount(row.v_deliv1) || {})[t];
-        return (cnt || cnt === 0) ? String(cnt) : '—';
+        const t = (V.v_tier || '').trim().toUpperCase();
+        const cnt = t ? (window.getTierToStoreCount(V.v_deliv1) || {})[t] : null;
+        const mtx = (cnt || cnt === 0) ? String(cnt) : '—';
+        const pst = (V.v_store_ct || V.v_store_ct === 0) ? String(V.v_store_ct) : '';
+        if (pst === '' || pst === mtx) {
+          return `${mtx} <span style="color:var(--dim);font-size:10px">matrix</span>`;
+        }
+        return `${mtx} <span style="color:var(--dim);font-size:10px">matrix</span>`
+             + ` <span style="color:var(--dim)">·</span> `
+             + `<span style="color:var(--orange);font-weight:500">${sgEsc(pst)}</span>`
+             + ` <span style="color:var(--dim);font-size:10px">PST</span>`;
       })()],
       ['Cal Alloc Drop Date', row.deliv_alloc_date || '—'],
       ['True Alloc Drop Date', row.alloc_date || '—'],
@@ -7869,19 +7977,66 @@ function openDrilldown(sku) {
   const ddSeasonTitle = 'SEASON — ' + ddSeasonKey + (ddSeasonKey === CONFIG_SEASON ? ' (working)' : '');
   const ddNum = v => (v || v === 0) ? String(v) : '—';
   if (ddS.hasPST) {
-    sections.push({title: ddSeasonTitle, rows: [
-      ['Delivery', ddS.deliv1 || '—'],
-      ['Delivery 2', ddS.deliv2 || '—'],
-      ['Store Group (Tier)', ddS.tier ? sgValueSpan(sgEsc(ddS.tier), ddS.tier, (ddS.deliv1 || row.deliv_ow || row.cs_deliv1)) : '—'],
-      ['On-Time', ddS.ontime || '—'],
-      ['Rcvd In-DC Date', ddS.dc_recd || '—'],
-      ['Rcvd Qty', ddNum(ddS.po_recd)],
-      ['Pend In-DC Date', ddS.dc_pend || '—'],
-      ['Pend Qty', ddNum(ddS.po_pend)],
-      ['PST Store Count', ddNum(ddS.store_ct)],
-      ['Lifecycle', ddS.lifecycle || '—'],
-      ['End Week (MD Exit)', ddS.md_exit || '—'],
-    ]});
+    // [p7t] This section used to restate Delivery / Store Group / Lifecycle /
+    // End Week / On-Time verbatim from the sections above it — those are the
+    // SAME source fields (seasonProjection reads this very slice), except the
+    // copies upstairs are override-aware and these were not. When the panel is
+    // on the working season they're pure duplication, so they're suppressed.
+    // On any other season the rows above still describe the working season, so
+    // these ARE the only source and stay.
+    //
+    // 'Delivery 2' is gone entirely: it only ever populated when one SKU
+    // appeared twice under one season in the PST with two different delivery
+    // months, which the PST's own uniqueness guarantees never happens. Split
+    // drops are expressed as September / September_2 in the delivery column.
+    const ddRows = [];
+    if (!ddIsConfig) {
+      ddRows.push(['Delivery', ddS.deliv1 || '—']);
+      ddRows.push(['Store Group (Tier)', ddS.tier ? sgValueSpan(sgEsc(ddS.tier), ddS.tier, (ddS.deliv1 || row.deliv_ow || row.cs_deliv1)) : '—']);
+      ddRows.push(['On-Time', ddS.ontime || '—']);
+    }
+
+    // In-DC: four rows collapsed to two "date · qty" composites matching the
+    // SYRUP & WIP format. Each is dropped when it already agrees with the
+    // cross-season figure above — so what survives is precisely the case worth
+    // seeing: this season's shipment differs from the newest/next overall,
+    // i.e. the SKU's receipts have shifted across a season boundary.
+    const ddDQ = (d, q) => {
+      const ds = String(d || '').trim();
+      if (!ds) return '';
+      const qn = (q || q === 0) ? Number(q) : null;
+      return ds + (isFinite(qn) && qn !== null ? ' \u00B7 ' + qn.toLocaleString() : '');
+    };
+    // Compare against the RAW xs_* date/qty fields, not the xs_*_full display
+    // composite: the composite renders a 2-digit year ("8/14/26") while the
+    // season slice carries 4 ("8/14/2026"), so a string match on the composite
+    // would never fire and the "same as above" rows would never be suppressed.
+    const ddSameDQ = (d, q, xd, xq) => {
+      const a = String(d || '').trim(), b = String(xd || '').trim();
+      if (!a || a !== b) return false;
+      const qa = (q === '' || q == null) ? null : Number(q);
+      const qb = (xq === '' || xq == null) ? null : Number(xq);
+      return qa === qb;
+    };
+    const recvSzn = ddDQ(ddS.dc_recd, ddS.po_recd);
+    const pendSzn = ddDQ(ddS.dc_pend, ddS.po_pend);
+    if (recvSzn && !ddSameDQ(ddS.dc_recd, ddS.po_recd, row.xs_recv_date, row.xs_recv_qty))
+      ddRows.push(['Receipt (this season)', recvSzn]);
+    if (pendSzn && !ddSameDQ(ddS.dc_pend, ddS.po_pend, row.xs_pend_date, row.xs_pend_qty))
+      ddRows.push(['Pending (this season)', pendSzn]);
+
+    if (!ddIsConfig) {
+      ddRows.push(['PST Store Count', ddNum(ddS.store_ct)]);
+      ddRows.push(['Lifecycle', ddS.lifecycle || '—']);
+      ddRows.push(['End Week (MD Exit)', ddS.md_exit || '—']);
+    }
+
+    // Everything matched what's already shown above — say so rather than
+    // rendering an empty box, which would read as missing data.
+    if (!ddRows.length) {
+      ddRows.push(['\u2713', '<span style="color:var(--muted)">Nothing here differs from what\u2019s shown above.</span>']);
+    }
+    sections.push({title: ddSeasonTitle, rows: ddRows});
   } else {
     sections.push({title: ddSeasonTitle, rows: [
       ['—', '<span style="color:var(--muted)">No PST data for this SKU in ' + ddSeasonKey + '</span>'],
@@ -8072,6 +8227,7 @@ function addNote(sku) {
   // Adding/removing an ISS-prefixed note flips config_status between Off ↔ Adjusted.
   // Recompute the affected row so the table pill stays in sync.
   recomputeConfigFlagForSku(sku);
+  ddRefreshActiveTab();
   openDrilldown(sku);
 }
 function deleteNote(sku, idx) {
@@ -8086,6 +8242,7 @@ function deleteNote(sku, idx) {
   }
   saveNotesStore(store);
   recomputeConfigFlagForSku(sku);
+  ddRefreshActiveTab();
   openDrilldown(sku);
 }
 
@@ -8186,6 +8343,10 @@ function recomputeConfigFlagForSku(sku) {
 
 function closeDrilldown() {
   document.getElementById('drilldown').classList.remove('open');
+  // [p7t] Drop the panel's SKU + any season override, so the next open starts
+  // from the app's current season rather than resurrecting a stale pin.
+  DD_SKU = null;
+  DD_SEASON = null;
 }
 
 // Drilldown save for all override fields (deliv_ow, tier_ow, ps_tier_ow, force_ia)
@@ -8244,7 +8405,21 @@ function saveOverride(sku, field) {
   }
 
   applyFiltersAndRender();
+  ddRefreshActiveTab();
   setTimeout(() => openDrilldown(sku), 50);
+}
+
+// [p7t] The panel can now be opened from any tab, so an override saved from it
+// has to refresh whatever grid is actually on screen. Previously only the SKU
+// grid was re-rendered, which was fine when the panel could only be reached
+// from that tab — from Late List or IA the edit would have applied silently
+// while the visible row kept its old value.
+function ddRefreshActiveTab(){
+  try {
+    if (ACTIVE_TAB === 'late' && window._llBuilt && typeof llApplyFilters === 'function') llApplyFilters();
+    else if (ACTIVE_TAB === 'ia'  && typeof iaRefresh === 'function') iaRefresh();
+    else if (ACTIVE_TAB === 'nf'  && typeof window.nfRefresh === 'function') window.nfRefresh();
+  } catch(e){ console.warn('[dd] active-tab refresh failed:', e); }
 }
 // ── Cached dropdown option lists (rebuilt on each data load) ──
 let _tierOptionCache = null;
@@ -10807,7 +10982,7 @@ function renderSkuRowSet(rows, week) {
     const colorTxt = iaEsc(r.color || '—');
     const subLine  = [r.division, r.category].filter(Boolean).join(' · ');
 
-    return `<div class="ia-skurow" title="${iaEsc(r.proj || '')}" onclick="switchTab('sku');setTimeout(()=>openDrilldown('${r.sku}'),100)">
+    return `<div class="ia-skurow" title="${iaEsc(r.proj || '')}" onclick="openDrilldown('${r.sku}')">
       <div class="ia-skurow-stripe ${stripeCls}"></div>
       <span class="ia-skurow-sku">${tag}${r.sku}</span>
       <div class="ia-skurow-meta">
@@ -11963,7 +12138,7 @@ function renderLateListTable() {
           return `<td class="ll-td num" style="${color}">${n.toLocaleString()}</td>`;
         }
         if (col.id === 'sku') {
-          return `<td class="ll-td ll-pin"><span class="sku-code" onclick="switchTab('sku');setTimeout(()=>openDrilldown('${v}'),100)">${v}</span></td>`;
+          return `<td class="ll-td ll-pin"><span class="sku-code" onclick="openDrilldown('${v}')">${v}</span></td>`;
         }
         if (col.id === 'division') {
           const cls = v==='Mens'?'pill-blue':v==='Womens'?'pill-purple':'pill-muted';
@@ -12560,6 +12735,38 @@ ${'</' + 'script>'}
 .nf-fmin::placeholder{color:var(--dim)}
 .nf-ftext{width:100%;max-width:120px;font-family:var(--mono);font-size:10px;padding:2px 4px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
 .nf-ftext::placeholder{color:var(--dim)}
+/* ── Multi-select column filter  [p7s] ── */
+.nf-fmulti{width:100%;max-width:130px;font-family:var(--mono);font-size:10px;padding:2px 6px;
+  border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);
+  cursor:pointer;text-align:left;display:flex;align-items:center;justify-content:space-between;
+  gap:4px;line-height:1.5;overflow:hidden;white-space:nowrap}
+.nf-fmulti:hover{border-color:var(--accent)}
+.nf-fmulti.on{border-color:var(--accent);background:var(--accent-bg);color:var(--accent);font-weight:500}
+.nf-fmulti-car{flex-shrink:0;opacity:.5;font-size:8px}
+#nfMultiPop{position:fixed;z-index:9999;display:none;flex-direction:column;min-width:210px;
+  max-width:280px;background:var(--surface);border:1px solid var(--border);border-radius:9px;
+  box-shadow:0 8px 28px rgba(0,0,0,.16);overflow:hidden;font-family:var(--body)}
+#nfMultiPop .nfmp-head{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:7px 10px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:9px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+#nfMultiPop .nfmp-x{background:none;border:0;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:0 2px}
+#nfMultiPop .nfmp-x:hover{color:var(--text)}
+#nfMultiPop .nfmp-acts{display:flex;gap:5px;padding:7px 10px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+#nfMultiPop .nfmp-act{font-family:var(--mono);font-size:9.5px;padding:2px 7px;border:1px solid var(--border);
+  border-radius:4px;background:var(--bg);color:var(--muted);cursor:pointer;white-space:nowrap}
+#nfMultiPop .nfmp-act:hover{border-color:var(--accent);color:var(--accent)}
+#nfMultiPop .nfmp-list{overflow-y:auto;max-height:260px;padding:3px 0}
+#nfMultiPop .nfmp-item{display:flex;align-items:center;gap:7px;padding:4px 10px;cursor:pointer;font-size:11.5px;color:var(--text)}
+#nfMultiPop .nfmp-item:hover{background:var(--bg)}
+#nfMultiPop .nfmp-item.on{background:var(--accent-bg)}
+#nfMultiPop .nfmp-box{flex-shrink:0;width:13px;height:13px;border:1px solid var(--border);border-radius:3px;
+  background:var(--surface);font-size:9px;line-height:11px;text-align:center;color:var(--accent);font-weight:700}
+#nfMultiPop .nfmp-item.on .nfmp-box{border-color:var(--accent)}
+#nfMultiPop .nfmp-lbl{flex:1;font-family:var(--mono);font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#nfMultiPop .nfmp-ct{flex-shrink:0;font-family:var(--mono);font-size:9.5px;color:var(--dim)}
+#nfMultiPop .nfmp-empty{padding:12px 10px;font-size:11px;color:var(--muted);text-align:center}
+#nfMultiPop .nfmp-foot{padding:6px 10px;border-top:1px solid var(--border);font-family:var(--mono);
+  font-size:9.5px;color:var(--muted)}
 .nf-styledesc{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
 .nf-colordesc{max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
 .nf-table td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap;color:var(--text)}
@@ -12646,6 +12853,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
   // Filter semantics depend on the column's spec type (see NF_FILTER_SPEC):
   //   select → exact match · text → case-insensitive substring · min → value ≥ N
   var NF_FILT   = {};
+  // [p7s] Last unfiltered rec set rendered — read by the multi-select popover.
+  var NF_ALL_RECS = [];
   var NF_DATA   = {};              // { season: { sku: {depth, tier, status} } }
   // [p7k] View mode: 'pending' | 'released'. Replaces the old NF_SHOW_RELEASED
   // row-hide. These select different universe GATES (see nfUniverse) rather than
@@ -13060,15 +13269,21 @@ tr.nf-strow-shifted {background:#DBEAFE}
   // Every displayed column is filterable. `get` pulls the comparable value from
   // a computed rec; `type` selects the control + match semantics:
   //   select → dropdown of distinct values, exact match
+  //   multi  → checkbox popover, keeps rows matching ANY checked value (OR)
   //   text   → free-text input, case-insensitive substring match
   //   min    → numeric input, keeps rows whose value is ≥ the entered number
+  // A multi filter stores an ARRAY in NF_FILT (never a string, never empty —
+  // the setter deletes the key instead of storing []), so the "is this filter
+  // active?" checks elsewhere stay a simple null/'' test.
   var NF_FILTER_SPEC = {
     sku:       { type:'text',   get:function(r){ return r.sku; } },
     styledesc: { type:'text',   get:function(r){ return r.styleDesc; } },
     colordesc: { type:'text',   get:function(r){ return r.colorDesc; } },
     div:       { type:'select', get:function(r){ return r.division; } },
     cat:       { type:'select', get:function(r){ return r.category; } },
-    deliv:     { type:'select', get:function(r){ return r.deliv; } },
+    // [p7s] Multi-select: review routinely spans a month and its second drop
+    // (September + September_2), which a single-value dropdown couldn't express.
+    deliv:     { type:'multi',  get:function(r){ return r.deliv; } },
     size:      { type:'select', get:function(r){ return r.sizeScale; } },
     plg:       { type:'min',    get:function(r){ return r.plgOH; } },
     ia:        { type:'num',    get:function(r){ return r.iaRec; } },
@@ -13112,7 +13327,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
       var raw = NF_FILT[id]; if (raw == null || raw === '') continue;
       var spec = NF_FILTER_SPEC[id]; if (!spec) continue;
       var v = spec.get(r);
-      if (spec.type === 'min'){
+      if (spec.type === 'multi'){
+        // OR across checked values. An empty array can't reach here (the setter
+        // deletes the key), so this never silently hides every row.
+        if (!Array.isArray(raw) || !raw.length) continue;
+        if (raw.indexOf(String(v==null?'':v)) < 0) return false;
+      } else if (spec.type === 'min'){
         var n = parseFloat(raw); if (!isFinite(n)) continue;
         if (v == null || !(parseFloat(v) >= n)) return false;
       } else if (spec.type === 'num'){
@@ -13134,7 +13354,11 @@ tr.nf-strow-shifted {background:#DBEAFE}
   }
   function nfActiveFilterCount(){
     var n = 0;
-    for (var id in NF_FILT){ var v = NF_FILT[id]; if (v != null && v !== '') n++; }
+    for (var id in NF_FILT){
+      var v = NF_FILT[id];
+      if (Array.isArray(v)) { if (v.length) n++; continue; }
+      if (v != null && v !== '') n++;
+    }
     return n;
   }
 
@@ -13142,6 +13366,18 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function nfFilterCell(id, allRecs){
     var spec = NF_FILTER_SPEC[id]; if (!spec) return '';
     var cur = NF_FILT[id] || '';
+    if (spec.type === 'multi'){
+      // [p7s] The control is a summary button; the checkbox list lives in a
+      // popover so the filter row keeps its single-line height.
+      var sel = Array.isArray(NF_FILT[id]) ? NF_FILT[id] : [];
+      var lbl = !sel.length ? 'All'
+              : sel.length === 1 ? sel[0]
+              : sel.length + ' selected';
+      return '<button class="nf-fmulti' + (sel.length ? ' on' : '') + '" '
+           + 'onclick="nfOpenMulti(event,\'' + id + '\')" '
+           + 'title="' + (sel.length ? nfEsc(sel.join(', ')) : 'Filter by one or more values')
+           + '">' + nfEsc(lbl) + ' <span class="nf-fmulti-car">\u25BE</span></button>';
+    }
     if (spec.type === 'select'){
       var opts = nfDistinctBy(allRecs, spec.get);
       // Keep div/deliv in their natural order; everything else alphabetical.
@@ -13345,6 +13581,11 @@ tr.nf-strow-shifted {background:#DBEAFE}
 
   function nfRenderHead(allRecs){
     var el = document.getElementById('nfHead'); if (!el) return;
+    // [p7s] The multi-select popover is built on click, after this render has
+    // returned, so it needs the unfiltered rec set kept somewhere reachable.
+    // Stashing it here guarantees the option list and its counts always match
+    // the same universe the rest of the filter row was drawn from.
+    NF_ALL_RECS = allRecs || [];
     var COLS = nfCols();
     // Freeze the leftmost column (SKU) on both header rows so it lines up with
     // the pinned body cells during horizontal scroll.
@@ -13536,13 +13777,14 @@ tr.nf-strow-shifted {background:#DBEAFE}
     // Column filters are mode-specific (the Released view exposes different
     // columns), so clear them rather than carry a stale filter across.
     NF_FILT = {};
+    nfCloseMulti();   // [p7s] don't leave a popover open over a cleared filter
     try { localStorage.setItem('isr_nf_mode', NF_MODE); } catch(e){}
     nfRefresh();
   }
 
   function nfSetSeason(code){
     if (code===NF_SEASON) return;
-    NF_SEASON = code; NF_FILT = {};
+    NF_SEASON = code; NF_FILT = {}; nfCloseMulti();   // [p7s]
     // Released view is config-season only — fall back if we just left it.
     if (NF_MODE === 'released' && NF_SEASON !== CONFIG_SEASON) NF_MODE = 'pending';
     nfRefresh();
@@ -13688,6 +13930,130 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (combined === '') delete NF_FILT[prop]; else NF_FILT[prop] = combined;
     nfRefresh();
   }
+
+  // ── Multi-select column filter  [p7s] ─────────────────────────────────────
+  // Dedicated popover rather than a reuse of #sgPopover: that element is shared
+  // by the store-group and actual-depth popovers, and its dismissal handler
+  // closes on any outside mousedown. A filter list needs clicks inside it to
+  // survive, and needs to stay open across the re-render that each toggle
+  // triggers — so it owns its own element and its own listeners.
+  var NF_MULTI_OPEN = null;   // column id whose popover is currently open
+
+  function nfEnsureMultiPop(){
+    var el = document.getElementById('nfMultiPop');
+    if (!el){ el = document.createElement('div'); el.id = 'nfMultiPop'; document.body.appendChild(el); }
+    return el;
+  }
+  function nfCloseMulti(){
+    NF_MULTI_OPEN = null;
+    var el = document.getElementById('nfMultiPop');
+    if (el) el.style.display = 'none';
+  }
+  // Distinct values for a multi column, ordered the same way the old select was.
+  function nfMultiOpts(id){
+    var spec = NF_FILTER_SPEC[id]; if (!spec) return [];
+    var opts = nfDistinctBy(NF_ALL_RECS, spec.get).map(String);
+    if (id === 'deliv') opts.sort(function(a,b){ var pa=delivParts(a),pb=delivParts(b); return pa[0]-pb[0] || pa[1]-pb[1]; });
+    else if (id === 'div') opts.sort(function(a,b){ var d=nfDivRank(a)-nfDivRank(b); return d?d:nfAlpha(a,b); });
+    else opts.sort(nfAlpha);
+    return opts;
+  }
+  function nfMultiSel(id){ return Array.isArray(NF_FILT[id]) ? NF_FILT[id].slice() : []; }
+  function nfMultiCommit(id, sel){
+    if (!sel.length) delete NF_FILT[id]; else NF_FILT[id] = sel;
+    nfRefresh();                 // redraws the grid + the summary button
+    if (NF_MULTI_OPEN === id) nfPaintMulti(id);   // keep the popover open + in sync
+  }
+  function nfToggleMulti(id, val){
+    var sel = nfMultiSel(id), i = sel.indexOf(val);
+    if (i < 0) sel.push(val); else sel.splice(i, 1);
+    nfMultiCommit(id, sel);
+  }
+  function nfMultiAll(id){ nfMultiCommit(id, nfMultiOpts(id)); }
+  function nfMultiNone(id){ nfMultiCommit(id, []); }
+  // Expand the selection to include each selected value's second-drop sibling
+  // (September ⇄ September_2). Delivery months are the only place this pattern
+  // exists, and pairing them is the single most common review action.
+  function nfMultiPair(id){
+    var opts = nfMultiOpts(id), sel = nfMultiSel(id), add = {};
+    sel.forEach(function(v){ add[v] = 1; });
+    sel.forEach(function(v){
+      var base = /_2$/.test(v) ? v.replace(/_2$/, '') : v;
+      [base, base + '_2'].forEach(function(cand){ if (opts.indexOf(cand) >= 0) add[cand] = 1; });
+    });
+    nfMultiCommit(id, opts.filter(function(o){ return add[o]; }));
+  }
+
+  function nfPaintMulti(id){
+    var el = document.getElementById('nfMultiPop'); if (!el) return;
+    var spec = NF_FILTER_SPEC[id];
+    var opts = nfMultiOpts(id), sel = nfMultiSel(id);
+    var counts = {};
+    NF_ALL_RECS.forEach(function(r){
+      var v = String(spec.get(r) == null ? '' : spec.get(r));
+      if (v !== '') counts[v] = (counts[v] || 0) + 1;
+    });
+    var hasPair = opts.some(function(o){ return /_2$/.test(o); });
+    var list = opts.length ? opts.map(function(o){
+      var on = sel.indexOf(o) >= 0;
+      return '<div class="nfmp-item' + (on ? ' on' : '') + '" onclick="nfToggleMulti(\'' + id + '\',\''
+           + String(o).replace(/\\/g,'\\\\').replace(/'/g,"\\'") + '\')">'
+           + '<span class="nfmp-box">' + (on ? '\u2713' : '') + '</span>'
+           + '<span class="nfmp-lbl">' + nfEsc(o) + '</span>'
+           + '<span class="nfmp-ct">' + (counts[o] || 0) + '</span></div>';
+    }).join('') : '<div class="nfmp-empty">No values in the current universe.</div>';
+
+    el.innerHTML =
+      '<div class="nfmp-head"><span>' + nfEsc(id === 'deliv' ? 'Delivery month' : id) + '</span>'
+      + '<button class="nfmp-x" title="Close" onclick="nfCloseMulti()">\u00D7</button></div>'
+      + '<div class="nfmp-acts">'
+      + '<button class="nfmp-act" onclick="nfMultiAll(\'' + id + '\')">All</button>'
+      + '<button class="nfmp-act" onclick="nfMultiNone(\'' + id + '\')">None</button>'
+      + (hasPair ? '<button class="nfmp-act" onclick="nfMultiPair(\'' + id + '\')" '
+          + 'title="Add the matching second drop for everything selected — e.g. September also selects September_2">'
+          + '+ second drops</button>' : '')
+      + '</div>'
+      + '<div class="nfmp-list">' + list + '</div>'
+      + '<div class="nfmp-foot">' + (sel.length ? sel.length + ' of ' + opts.length + ' selected'
+                                                : 'Nothing selected \u00B7 showing all') + '</div>';
+  }
+
+  function nfOpenMulti(evt, id){
+    if (evt) { evt.preventDefault(); evt.stopPropagation(); }
+    if (NF_MULTI_OPEN === id) { nfCloseMulti(); return; }   // click the button again to close
+    var el = nfEnsureMultiPop();
+    NF_MULTI_OPEN = id;
+    nfPaintMulti(id);
+    el.style.display = 'flex';
+    // Anchor under the button, then clamp into the viewport.
+    el.style.left = '0px'; el.style.top = '0px';
+    var box = el.getBoundingClientRect(), pad = 8;
+    var btn = evt && evt.currentTarget && evt.currentTarget.getBoundingClientRect
+            ? evt.currentTarget.getBoundingClientRect() : null;
+    var x = btn ? btn.left : (evt ? evt.clientX : pad);
+    var y = btn ? btn.bottom + 4 : (evt ? evt.clientY + 6 : pad);
+    if (x + box.width  + pad > window.innerWidth)  x = Math.max(pad, window.innerWidth - box.width - pad);
+    if (y + box.height + pad > window.innerHeight) y = Math.max(pad, (btn ? btn.top : y) - box.height - 4);
+    if (x < pad) x = pad;
+    if (y < pad) y = pad;
+    el.style.left = x + 'px';
+    el.style.top  = y + 'px';
+  }
+
+  document.addEventListener('mousedown', function(e){
+    var el = document.getElementById('nfMultiPop');
+    if (!el || el.style.display === 'none') return;
+    if (el.contains(e.target)) return;
+    if (e.target.closest && e.target.closest('.nf-fmulti')) return;  // the toggle handles itself
+    nfCloseMulti();
+  });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') nfCloseMulti(); });
+  window.addEventListener('scroll', function(e){
+    var el = document.getElementById('nfMultiPop');
+    if (!el || el.style.display === 'none') return;
+    if (e.target && el.contains(e.target)) return;   // scrolling the list itself
+    nfCloseMulti();
+  }, true);
   function nfOpenSku(sku){
     // Open the SKU side panel (a fixed overlay) in place — do NOT switch to the
     // SKU Tracking tab, so the user stays in NF Review while viewing the panel.
@@ -13949,6 +14315,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.nfSetSeason  = nfSetSeason;
   window.nfSetFilter  = nfSetFilter;
   window.nfSetNumFilter = nfSetNumFilter;
+  window.nfOpenMulti    = nfOpenMulti;     // [p7s] multi-select column filter
+  window.nfCloseMulti   = nfCloseMulti;
+  window.nfToggleMulti  = nfToggleMulti;
+  window.nfMultiAll     = nfMultiAll;
+  window.nfMultiNone    = nfMultiNone;
+  window.nfMultiPair    = nfMultiPair;
   window.nfEditNote   = nfEditNote;
   window.nfEditDepth  = nfEditDepth;
   window.nfEditTier   = nfEditTier;
