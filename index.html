@@ -1054,7 +1054,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: live-refresh + csv-export-sanitation (p7q2)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: sm-used-only-filter (p7q3)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1518,6 +1518,8 @@ setTimeout(function(){
           <button class="sm-sort-btn active" id="smSortSize" onclick="smSetSort('size')">SKUs</button>
           <button class="sm-sort-btn" id="smSortAz" onclick="smSetSort('az')">A–Z</button>
         </div>
+        <button class="sm-unused-btn active" id="smUnusedBtn" onclick="smToggleUnused()"
+                title="Hide store groups with no SKUs assigned in the current season">Used only</button>
       </div>
       <div class="sm-rail-list" id="smRailList"></div>
     </div>
@@ -12405,6 +12407,9 @@ ${'</' + 'script>'}
 .sm-title{font-family:var(--head);font-size:17px;font-weight:700;color:var(--text)}
 .sm-subtitle{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.45}
 .sm-header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sm-unused-btn{border:1px solid var(--border);background:var(--surface);color:var(--muted);
+  font-family:var(--mono);font-size:11px;padding:5px 10px;border-radius:8px;cursor:pointer;white-space:nowrap}
+.sm-unused-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
 .sm-seg{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--surface)}
 .sm-seg-btn{border:none;background:transparent;font-family:var(--mono);font-size:11px;padding:6px 12px;cursor:pointer;color:var(--muted)}
 .sm-seg-btn.active{background:var(--accent);color:#fff;font-weight:600}
@@ -13965,6 +13970,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
   var SM_VIEW = 'groups';   // 'groups' | 'stores'
   var SM_SEL  = null;       // selected group name or store name
   var SM_Q    = '';         // rail search text
+  // [p7q3] Hide groups carrying no SKUs this season. The live matrix serves 202
+  // groups while only ~46 are used in a given season, so the rail is mostly
+  // noise by default. On by default; a search always overrides it, because
+  // looking up a specific group by name should never come back empty just
+  // because nothing is assigned to it yet.
+  var SM_HIDE_UNUSED = true;
   var SM_SORT = 'size';     // 'size' | 'az'
   var SM_DATA = null;
 
@@ -14213,6 +14224,10 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (SM_VIEW === 'groups') {
       var gs = d.groups.slice();
       if (q) gs = gs.filter(function(g){ return g.name.toLowerCase().indexOf(q) >= 0; });
+      // Always keep the current selection visible, or picking a group and then
+      // toggling would strand the detail pane with nothing highlighted.
+      else if (SM_HIDE_UNUSED) gs = gs.filter(function(g){
+        return (g.skuCount || 0) > 0 || g.name === SM_SEL; });
       // "SKUs" sort ranks by how widely the group is actually used, which is
       // the question the tab exists to answer. Store count breaks ties.
       gs.sort(SM_SORT === 'az'
@@ -14477,9 +14492,14 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (!el) return;
     var d = SM_DATA;
     var szn = (typeof CONFIG_SEASON !== 'undefined' && CONFIG_SEASON) ? CONFIG_SEASON : 'current season';
+    // [p7q3] Say how many groups are hidden, so "202 groups" never silently
+    // becomes "46 groups" with no explanation for where the rest went.
+    var unused = d.groups.filter(function(g){ return !(g.skuCount || 0); }).length;
+    var hidden = (SM_HIDE_UNUSED && !SM_Q.trim() && unused)
+      ? ' \u00B7 ' + unused + ' unused hidden' : '';
     el.textContent = d.groups.length
       ? szn + ' store matrix \u00B7 ' + d.groups.length + ' groups \u00B7 '
-        + (d.namesResolved ? d.totalStores + ' stores' : 'counts only') + ' \u00B7 read-only'
+        + (d.namesResolved ? d.totalStores + ' stores' : 'counts only') + hidden + ' \u00B7 read-only'
       : 'No matrix loaded \u00B7 read-only';
   }
 
@@ -14592,6 +14612,13 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (!SM_SEL) SM_SEL = smDefaultSel();
     smRenderAll();
   }
+  function smToggleUnused(){
+    SM_HIDE_UNUSED = !SM_HIDE_UNUSED;
+    var b = document.getElementById('smUnusedBtn');
+    if (b) b.classList.toggle('active', SM_HIDE_UNUSED);
+    smRenderRail(); smRenderSubtitle();
+  }
+
   function smSetView(v){
     if (v === SM_VIEW) return;
     SM_VIEW = v; SM_SEL = null; SM_Q = '';
@@ -14685,6 +14712,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
 
   window.smRefresh      = smRefresh;
   window.smRefreshLive  = smRefreshLive;
+  window.smToggleUnused = smToggleUnused;
   window.smSetView      = smSetView;
   window.smSetSort      = smSetSort;
   window.smSetQuery     = smSetQuery;
