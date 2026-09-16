@@ -1069,7 +1069,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown (p7t)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review (p7u)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1215,6 +1215,7 @@ setTimeout(function(){
         <button class="tab-btn" id="tabIaBtn" onclick="switchTab('ia')">📦 IA Volume</button>
         <button class="tab-btn" id="tabSmBtn" onclick="switchTab('sm')">🏬 Store Matrix</button>
         <button class="tab-btn" id="tabNfBtn" onclick="switchTab('nf')">🎯 NF Review</button>
+        <button class="tab-btn" id="tabEolBtn" onclick="switchTab('eol')">⏳ EOL Review</button>
       </div>
       <button class="ctrl-btn" onclick="document.getElementById('fileInput').click()">↻ Refresh Data</button>
       <button class="ctrl-btn" id="lookupBtn" onclick="openLookupModal()">🔍 Multi-SKU Lookup</button>
@@ -1539,6 +1540,67 @@ setTimeout(function(){
       <div class="sm-rail-list" id="smRailList"></div>
     </div>
     <div class="sm-detail" id="smDetail"></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════
+     EOL REVIEW  ·  SKUs reaching their configured end date        [p7u]
+     Purpose: a SKU whose Syrup config expires stops replenishing, which is
+     correct when it exits via markdown and wrong when the company keeps it
+     full price "until further notice". This tab surfaces the decision set
+     (end date + inventory position + price level) and writes an End Date
+     Override that flows back through the normal Configs Generator.
+     ═══════════════════════════════════════════════════ -->
+<div id="eolPanel">
+  <div class="nf-header">
+    <div>
+      <div class="nf-title">⏳ EOL Review — End of Lifecycle</div>
+      <div class="nf-subtitle" id="eolSubtitle">SKUs at or near their configured end date · extend to keep replenishment alive</div>
+    </div>
+    <div class="nf-header-actions">
+      <div class="nf-ctrl">
+        <span class="nf-ctrl-lbl">View</span>
+        <div class="nf-seg" id="eolViewSeg">
+          <button class="nf-seg-btn active" id="eolSegDecide" onclick="eolSetView('decide')">Needs decision</button>
+          <button class="nf-seg-btn" id="eolSegExt" onclick="eolSetView('extended')">Extended</button>
+          <button class="nf-seg-btn" id="eolSegAll" onclick="eolSetView('all')">All</button>
+        </div>
+      </div>
+      <div class="nf-ctrl">
+        <span class="nf-ctrl-lbl">Horizon</span>
+        <input class="eol-horizon" id="eolHorizon" type="number" min="0" max="365" step="7" value="28"
+               title="Forward window in days. Expired SKUs always appear regardless of this value."
+               onchange="eolSetHorizon(this.value)">
+      </div>
+      <div class="nf-ctrl">
+        <span class="nf-ctrl-lbl">Search</span>
+        <input class="nf-ftext" id="eolSearch" type="text" placeholder="SKU / style / color…" style="max-width:170px"
+               oninput="eolSetQuery(this.value)">
+      </div>
+      <button class="nf-action-btn" onclick="eolCopySkus()">⎘ Copy SKUs</button>
+      <button class="nf-action-btn" onclick="eolRefresh()">↻ Refresh</button>
+    </div>
+  </div>
+
+  <div class="nf-stats" id="eolStats"></div>
+
+  <div class="eol-bulk" id="eolBulk" style="display:none">
+    <span class="eol-bulk-count" id="eolBulkCount">0 selected</span>
+    <span class="eol-bulk-lbl">Set end date to</span>
+    <input class="eol-bulk-input" id="eolBulkInput" type="text" placeholder="3/15/27 · +13w · INDEF"
+           onkeydown="if(event.key==='Enter')eolBulkApply()">
+    <button class="nf-action-btn" onclick="eolBulkApply()">Apply</button>
+    <button class="nf-action-btn" onclick="eolBulkClear()">Clear override</button>
+    <button class="nf-action-btn" onclick="eolSelectNone()">Deselect all</button>
+    <span class="eol-bulk-hint">Anchors “+Nw” to whichever is later: the SKU’s current end date, or today.</span>
+  </div>
+
+  <div class="nf-tablewrap">
+    <table class="nf-table" id="eolTable">
+      <thead id="eolHead"></thead>
+      <tbody id="eolBody"></tbody>
+    </table>
+    <div class="nf-empty" id="eolEmpty" style="display:none"></div>
   </div>
 </div>
 
@@ -1961,6 +2023,9 @@ const COLS = [
   // re-keys overrides per season). Hidden by default.
   ['Config Overrides','deliv_ow','Delivery Override',false,false,true],
   ['Config Overrides','tier_ow','Tier Override',false,false,true],
+  // [p7u] End Date Override. Free text: a date, "+13w", or "INDEF". Edited
+  // inline here, from the drilldown, or in bulk from the EOL Review tab.
+  ['Config Overrides','end_ow','End Date OW',false,false,true],
   // Inventory
   ['Inventory Data','omni_oh','Omni OH',true,true,false],
   ['Inventory Data','plg_oh','PLG OH',true,true,false],
@@ -4909,6 +4974,8 @@ function computeAllRows(lookups) {
     // which meant the app disagreed with the rows it would upload to Syrup.
     const force_ia = getOW(sku, 'force_ia');
     const force_ia_on = isForceIA(force_ia);
+    // [p7u] End Date Override — season-scoped, resolved-at-entry (see parseEndOW).
+    const end_ow = getOW(sku, 'end_ow');
 
     const ps_tier_ow_upper = ps_tier_ow.trim().toUpperCase();
     const ps_ow_is_none = ps_tier_ow_upper === 'NONE';
@@ -5198,6 +5265,7 @@ function computeAllRows(lookups) {
     });
     const calc_end   = computeCalcEndDate({
       calc_start, new_cf, md_exit: cs.mdExit, weeks_bought: cs.weeksBought,
+      end_ow,
     });
     const syrup_start = parseSyrupDate(syrupCfg.validFrom);
     const syrup_end   = parseSyrupDate(syrupCfg.validUntil);
@@ -5217,7 +5285,9 @@ function computeAllRows(lookups) {
       // misleading "Correct" (its default) just because the off-detector bails
       // early on a null syrup_start. Overall still rolls up from ct="—".
       config_dt_status = '—';
-    } else if (!calc_start) {
+    } else if (!calc_start && !end_ow) {
+      // [p7u] `&& !end_ow`: an override supplies an end expectation even when
+      // there is no start expectation, so this early-out must not swallow it.
       config_dt_status = 'Correct';   // No expectation
     } else if (config_store_ct === 0 && (is_md || config_ct_status === 'Adjusted')) {
       config_dt_status = 'Correct';   // Excel-special: skip MD/Adjusted SKUs with no active configs
@@ -5226,6 +5296,7 @@ function computeAllRows(lookups) {
         syrup_start, syrup_end, calc_start, calc_end,
         deliv_alloc_date, alloc_date,
         md_exit: cs.mdExit, weeks_bought: cs.weeksBought,
+        end_ow,
       })) {
       config_dt_status = 'Off';
     }
@@ -5303,6 +5374,13 @@ function computeAllRows(lookups) {
       newness_proj,
       deliv_alloc_date: deliv_alloc_date ? fmtDate4(deliv_alloc_date) : '',
       force_ia,
+      end_ow,
+      // [p7u] True when ANY recognized adjustment-note prefix is present
+      // (ADJ / SR / ISS / ADD / MD / DROP). The Configs Generator refuses to
+      // auto-emit an end-date amendment for these because its store list is
+      // tier-derived, while a noted SKU's live config is deliberately not the
+      // tier — re-emitting would silently restore doors the note removed.
+      config_has_adj_note: adjInfo.matched.length > 0,
       start_date: syrupCfg.validFrom ? fmtDateStr(syrupCfg.validFrom) : '',
       end_date: syrupCfg.validUntil ? fmtDateStr(syrupCfg.validUntil) : '',
       status,
@@ -5463,7 +5541,14 @@ function fmtDateStr(s) { if (!s) return ''; const d = parseXLDate(s); return d ?
 
 // Excel sentinel dates — must match exactly so the date comparison passes.
 //   45658 (Excel serial) = 2025-01-01 — used as season-start for CF SKUs.
-//   73050 (Excel serial) = 2100-01-01 — used as "end of time" for CF / unbounded SKUs.
+//   73050 (Excel serial) — used as "end of time" for CF / unbounded SKUs.
+//     [p7u] NOTE: this resolves to 12/31/2099, not 1/1/2100 as originally
+//     commented. The VALUE is load-bearing — it is what this pipeline has
+//     always pushed to Syrup, so every existing CF config carries 12/31/2099
+//     and every sameDay comparison against it passes. Do not "fix" it to
+//     73051; that would flip every CF SKU to Off in one refresh. Only the
+//     comment was wrong. Code that needs to recognise "unbounded" should use
+//     isInfiniteEndDate() rather than comparing to a specific day.
 // Build via the same epoch math parseXLDate uses (1899-12-30) for byte-perfect parity.
 const CFG_CF_START_SERIAL = 45658;
 const CFG_INFINITY_SERIAL = 73050;
@@ -5502,7 +5587,14 @@ function computeCalcStartDate({new_cf, deliv_alloc_date, alloc_date}) {
 }
 
 // Calculated End Date (Excel AM4)
-function computeCalcEndDate({calc_start, new_cf, md_exit, weeks_bought}) {
+// [p7u] An explicit End Date Override wins outright and is evaluated BEFORE
+// the calc_start guard. An expired SKU can legitimately have no start
+// expectation at all (new_cf blank -> calc_start null), and we still need a
+// target end date for it — returning null there would make the override
+// invisible to the date check and the Configs Generator alike.
+function computeCalcEndDate({calc_start, new_cf, md_exit, weeks_bought, end_ow}) {
+  const _ow = parseEndOW(end_ow);
+  if (_ow) return _ow;
   if (!calc_start) return null;
   if (new_cf === 'CF') return CFG_INFINITY_DATE;
   const exitStr = String(md_exit || '').trim().toUpperCase();
@@ -5603,14 +5695,20 @@ function sameDay(a, b) {
 //     formula's current value. For the end side: duration invariant
 //     (syrup_end = syrup_start + weeks×7), or strict infinity match
 //     when md_exit=NONE / weeks=0.
-function isConfigDateOff({
+// [p7u] Split into parts so the Configs Generator can ask about the START half
+// on its own. A date-only amendment (end_ow set, start already agreeing) has to
+// replay the SKU's existing validFrom rather than emit a freshly calculated
+// one, and that decision needs startOk in isolation. isConfigDateOff is now a
+// thin wrapper so there is still exactly one copy of this logic.
+function configDateParts({
   new_cf,
   syrup_start, syrup_end,
   calc_start, calc_end,
   deliv_alloc_date, alloc_date,
   md_exit, weeks_bought,
+  end_ow,
 }) {
-  if (!syrup_start) return false;       // no Syrup config row → nothing to flag
+  if (!syrup_start) return { startOk: true, endOk: true };  // no Syrup config row → nothing to flag
 
   const today = new Date(); today.setHours(0,0,0,0);
   const aj = deliv_alloc_date instanceof Date ? deliv_alloc_date : null;
@@ -5667,7 +5765,28 @@ function isConfigDateOff({
     }
   }
 
-  return !startOk || !endOk;
+  // [p7u] An explicit End Date Override replaces the end expectation with a
+  // hard target, so the two tolerance branches above must NOT apply to it.
+  // Without this, the CF carve-out would accept syrup_start + weeks*7 — which
+  // for an expired SKU is exactly its current (stale) end date — and the
+  // override would save, display, and then silently do nothing.
+  if (parseEndOW(end_ow)) {
+    // Strict day match, with one carve-out: two "unbounded" dates are equal
+    // even when they are different days (see isInfiniteEndDate). Scoped to the
+    // override path so rows without an end_ow behave exactly as they did pre-p7u.
+    endOk = sameDay(syrup_end, calc_end)
+         || (isInfiniteEndDate(syrup_end) && isInfiniteEndDate(calc_end));
+    // No start expectation exists when calc_start is null (e.g. new_cf blank).
+    // Don't manufacture a start failure just to justify the end change.
+    if (!calc_start) startOk = true;
+  }
+
+  return { startOk: !!startOk, endOk: !!endOk };
+}
+
+function isConfigDateOff(args) {
+  const p = configDateParts(args);
+  return !p.startOk || !p.endOk;
 }
 
 function _addDays(d, n) {
@@ -5677,6 +5796,92 @@ function _addDays(d, n) {
   return r;
 }
 function _maxDate(a, b) { return a > b ? a : b; }
+
+// ── End Date Override (EOL Review · p7u) ────────────────────────────────────
+// `end_ow` is a season-scoped manual override declaring "this SKU keeps
+// replenishing until <date>". It exists because some SKUs pass their
+// calculated end date but stay full price by business decision, and the
+// calculated ladder (calc_start + weeks_bought x 7) has no way to express that.
+//
+// STORAGE IS RESOLVED-AT-ENTRY. The user may type a date, "+13w", or "INDEF",
+// but what lands in MANUAL_OW is always either the literal string 'INDEF' or a
+// concrete 'M/D/YYYY'. Storing "+13w" verbatim would make the override a moving
+// target: it would resolve to a different date on every render and could never
+// settle against the Syrup config it is supposed to match, so the SKU would
+// read Off forever.
+var EOL_INDEF = 'INDEF';
+
+// Stored override string -> Date | null. 'INDEF' maps to the same 1/1/2100
+// sentinel the CF branch already uses, so a sameDay comparison against a Syrup
+// config carrying 1/1/2100 passes unchanged.
+function parseEndOW(stored) {
+  var s = String(stored == null ? '' : stored).trim();
+  if (!s) return null;
+  if (s.toUpperCase() === EOL_INDEF) return CFG_INFINITY_DATE;
+  var d = parseXLDate(s);
+  return (d && !isNaN(d)) ? d : null;
+}
+
+function _fmtEndOW(d) {
+  return (d.getMonth()+1) + '/' + d.getDate() + '/' + d.getFullYear();
+}
+
+// "Unbounded" end date. Deliberately a year test rather than an equality test:
+// our own sentinel lands on 12/31/2099 (Excel serial 73050) while a config
+// written by hand or by another tool may carry 1/1/2100. Both mean the same
+// thing operationally — this SKU never expires — and treating them as
+// different would strand an Indefinite override in a permanent "pending push"
+// state, re-emitting the same row on every cycle.
+function isInfiniteEndDate(d) {
+  return !!d && !isNaN(d) && d.getFullYear() >= 2099;
+}
+
+// Display form for a stored override ('' -> '').
+function fmtEndOWDisplay(stored) {
+  var s = String(stored == null ? '' : stored).trim();
+  if (!s) return '';
+  return s.toUpperCase() === EOL_INDEF ? 'Indefinite' : s;
+}
+
+// Raw user input -> { ok, stored, date, reason }.
+// Accepts: '' (clear) | 'INDEF'/'INDEFINITE' | '+13w'/'13w' (weeks) | any date
+// parseXLDate understands. Week offsets anchor to max(currentEnd, today) so
+// "+13 weeks" on an already-expired SKU still lands in the future rather than
+// producing another past date.
+function parseEndOWInput(raw, currentEndStr) {
+  var s = String(raw == null ? '' : raw).trim();
+  if (!s) return { ok: true, stored: '', date: null };
+
+  var up = s.toUpperCase();
+  if (up === EOL_INDEF || up === 'INDEFINITE') {
+    return { ok: true, stored: EOL_INDEF, date: CFG_INFINITY_DATE };
+  }
+
+  var wk = up.match(/^\+?(\d{1,3})\s*W(?:K|KS|EEK|EEKS)?$/);
+  if (wk) {
+    var n = parseInt(wk[1], 10);
+    if (!n) return { ok: false, reason: 'week count must be at least 1' };
+    var today = new Date(); today.setHours(0,0,0,0);
+    var cur = currentEndStr ? parseXLDate(currentEndStr) : null;
+    var anchor = (cur && !isNaN(cur) && cur > today) ? cur : today;
+    var out = _addDays(anchor, n * 7);
+    return { ok: true, stored: _fmtEndOW(out), date: out };
+  }
+
+  // Bare digits that are not a plausible Excel serial would fall through to
+  // parseXLDate's native `new Date(s)` fallback, where "2" silently becomes
+  // Feb 2001. Reject them outright rather than storing a nonsense date.
+  if (/^\d+$/.test(s)) {
+    var nn = parseInt(s, 10);
+    if (!(nn > 25000 && nn < 80000)) {
+      return { ok: false, reason: 'not a date, +Nw, or INDEF' };
+    }
+  }
+
+  var d = parseXLDate(s);
+  if (!d || isNaN(d)) return { ok: false, reason: 'not a date, +Nw, or INDEF' };
+  return { ok: true, stored: _fmtEndOW(d), date: d };
+}
 
 // ── Debug helper for date-status investigation ──────────────────────────────
 // Call from F12 console: dbgConfigDate("MBS2524-DMR")
@@ -6469,6 +6674,7 @@ function recomputeRowDerived(row) {
   row.config_ct_delta  = actualDelta;
   row.config_ct_expected_delta = expectedDelta;
   row.cs_rp = ctReason;
+  row.config_has_adj_note = adjInfo.matched.length > 0;   // [p7u] two-site parity
 
   // 7. Config date status — recompute when overrides move the calc dates.
   //    Triggered specifically by deliv_ow changes (which move deliv_alloc_date
@@ -6486,9 +6692,16 @@ function recomputeRowDerived(row) {
   const calcStart = computeCalcStartDate({
     new_cf: row.new_cf, deliv_alloc_date: newAllocDate, alloc_date: ahDate,
   });
+  // [p7u] TWO-SITE PARITY: end_ow must be read and applied here exactly as in
+  // computeAllRows, or an override saved from the grid would compute correctly
+  // on a full rebuild and incorrectly on the in-place recompute that actually
+  // runs when the user hits Save.
+  const endOw = getOW(row.sku, 'end_ow');
+  row.end_ow = endOw;
   const calcEnd = computeCalcEndDate({
     calc_start: calcStart, new_cf: row.new_cf,
     md_exit: row.cs_md_exit, weeks_bought: row.cs_weeks_bought,
+    end_ow: endOw,
   });
   const syrupStart = row.config_syrup_start ? parseXLDate(row.config_syrup_start) : null;
   const syrupEnd   = row.config_syrup_end   ? parseXLDate(row.config_syrup_end)   : null;
@@ -6500,7 +6713,7 @@ function recomputeRowDerived(row) {
     dtStatus2 = 'Dropped';
   } else if (!hasCfg) {
     dtStatus2 = '—';
-  } else if (!calcStart) {
+  } else if (!calcStart && !endOw) {
     dtStatus2 = 'Correct';
   } else if (configured === 0 && (row.fp_md === 'Markdown' || ctStatus === 'Adjusted')) {
     dtStatus2 = 'Correct';
@@ -6510,6 +6723,7 @@ function recomputeRowDerived(row) {
       calc_start:  calcStart,         calc_end:  calcEnd,
       deliv_alloc_date: newAllocDate, alloc_date: ahDate,
       md_exit: row.cs_md_exit,        weeks_bought: row.cs_weeks_bought,
+      end_ow: endOw,
     })) {
     dtStatus2 = 'Off';
   }
@@ -7417,6 +7631,27 @@ function renderPage() {
         >${optHtml}</select></td>`;
       }
 
+      // end_ow MUST come before the empty-value guard — the input renders even
+      // with no override so the SKU's current Syrup end date can sit in the
+      // placeholder as context for what is being replaced.
+      if (id === 'end_ow') {
+        const cur  = row.config_syrup_end || row.end_date || '';
+        const isOv = v && v !== '';
+        const disp = fmtEndOWDisplay(v);
+        return `<td style="padding:4px 6px"><input
+          type="text"
+          class="ow-input${isOv?' overridden':''}"
+          data-sku="${row.sku}"
+          data-prev="${(v||'').replace(/"/g,'&quot;')}"
+          value="${disp.replace(/"/g,'&quot;')}"
+          placeholder="${cur ? String(cur).replace(/"/g,'&quot;') + ' (Syrup)' : 'date | +13w | INDEF'}"
+          title="${isOv ? 'Override: '+disp+' (Syrup: '+(cur||'—')+')' : 'Syrup end: '+(cur||'—')+' — type a date, +13w, or INDEF'}"
+          autocomplete="off"
+          onchange="saveEndOWFromInput(this)"
+          onfocus="this.dataset.prev=this.value"
+        ></td>`;
+      }
+
       // tier_ow MUST come before the empty-value guard — we always render the
       // combobox even when there is no override (placeholder shows PST tier).
       // Uses <input list=tierDatalist> for type-to-search behavior.
@@ -7881,6 +8116,7 @@ function openDrilldown(sku) {
       ['Tier Override (CS)', 'tier_ow', getOW(sku, 'tier_ow'), 'tier'],
       ['PS Tier Override', 'ps_tier_ow', getOW(sku, 'ps_tier_ow'), 'tier'],
       ['Force IA — "Y" (forces Newness + IA config dates)', 'force_ia', getOW(sku, 'force_ia'), 'text'],
+      ['End Date OW — date, "+13w", or "INDEF"', 'end_ow', fmtEndOWDisplay(getOW(sku, 'end_ow')), 'text'],
     ]},
     // ── INVENTORY: includes the depth metrics that previously lived in their
     // own "Depth Chain" section. Only the two depth metrics carry over; the
@@ -8306,6 +8542,10 @@ function recomputeConfigFlagForSku(sku) {
   row.config_ct_reason = ctReason;
   row.config_ct_expected_delta = expectedDelta;
   row.cs_rp = ctReason;
+  // [p7u] Notes just changed, so note PRESENCE may have changed too. This
+  // gates whether the Configs Generator will auto-emit an end_ow amendment,
+  // so it has to be refreshed on this path as well as the other two.
+  row.config_has_adj_note = adjInfo.matched.length > 0;
 
   // When a terminal status fires on the ct side, propagate to dt for
   // internal consistency (matches what a full rebuild via computeAllRows
@@ -8373,6 +8613,23 @@ function saveOverride(sku, field) {
     if (inputEl) inputEl.value = val;
   }
 
+  // [p7u] End Date Override arrives as free text and must be resolved before
+  // storage — see parseEndOWInput for why "+13w" is never persisted verbatim.
+  if (field === 'end_ow') {
+    const row0 = ALL_ROWS.find(r => r.sku === sku);
+    const res = parseEndOWInput(val, row0 ? (row0.config_syrup_end || row0.end_date || '') : '');
+    if (!res.ok) {
+      if (inputEl) {
+        inputEl.style.borderColor = 'var(--red)';
+        setTimeout(() => { inputEl.style.borderColor = ''; }, 700);
+      }
+      showToast(`"${val}" — ${res.reason}. Use a date, +13w, or INDEF.`, 3200);
+      return;
+    }
+    val = res.stored;
+    if (inputEl) inputEl.value = fmtEndOWDisplay(val);
+  }
+
   setOW(sku, field, val);  // season-pivot p4
   persistManualOW();
 
@@ -8398,7 +8655,7 @@ function saveOverride(sku, field) {
     // dependents (new_cf / deliv_alloc_date / status / on-time) so a delivery
     // edit also updates the in-season gate, a tier edit updates new_cf, and
     // a PS tier edit updates the CF tag.
-    if (field === 'tier_ow' || field === 'deliv_ow' || field === 'ps_tier_ow' || field === 'force_ia') {
+    if (field === 'tier_ow' || field === 'deliv_ow' || field === 'ps_tier_ow' || field === 'force_ia' || field === 'end_ow') {
       recomputeRowDerived(row);
       console.log(`[${field}-DD] ${sku} → "${val||'(cleared)'}" | new_cf=${row.new_cf} | status=${row.status} | newnessProj=${row.newness_proj}`);
     }
@@ -8419,6 +8676,7 @@ function ddRefreshActiveTab(){
     if (ACTIVE_TAB === 'late' && window._llBuilt && typeof llApplyFilters === 'function') llApplyFilters();
     else if (ACTIVE_TAB === 'ia'  && typeof iaRefresh === 'function') iaRefresh();
     else if (ACTIVE_TAB === 'nf'  && typeof window.nfRefresh === 'function') window.nfRefresh();
+    else if (ACTIVE_TAB === 'eol' && typeof window.eolRefresh === 'function') window.eolRefresh();
   } catch(e){ console.warn('[dd] active-tab refresh failed:', e); }
 }
 // ── Cached dropdown option lists (rebuilt on each data load) ──
@@ -8605,6 +8863,50 @@ function saveTierOW(selectEl) {
   // Refresh just the dependent cells for this row
   const tr = selectEl.closest('tr');
   if (tr && idx >= 0) refreshDependentCells(tr, ALL_ROWS[idx]);
+}
+
+// [p7u] End Date Override save — inline grid path.
+// Parses the raw text (date | +Nw | INDEF | blank) and stores the RESOLVED
+// value, then does a full recomputeRowDerived because the override moves
+// calc_end, which moves config_dt_status, which moves config_status, which
+// decides whether the SKU shows up in the Configs Generator at all.
+function saveEndOWFromInput(inputEl) {
+  const sku = inputEl.dataset.sku;
+  const raw = (inputEl.value || '').trim();
+  const row = ALL_ROWS.find(r => r.sku === sku);
+  const res = parseEndOWInput(raw, row ? (row.config_syrup_end || row.end_date || '') : '');
+
+  if (!res.ok) {
+    inputEl.style.borderColor = 'var(--red)';
+    setTimeout(() => { inputEl.style.borderColor = ''; }, 700);
+    inputEl.value = fmtEndOWDisplay(inputEl.dataset.prev || '');
+    showToast(`"${raw}" — ${res.reason}. Use a date, +13w, or INDEF.`, 3200);
+    return;
+  }
+
+  applyEndOW(sku, res.stored);
+  persistManualOW();          // applyEndOW only writes MANUAL_OW in memory
+  inputEl.value = fmtEndOWDisplay(res.stored);
+  inputEl.dataset.prev = res.stored;
+  inputEl.classList.toggle('overridden', res.stored !== '');
+
+  const tr = inputEl.closest('tr');
+  if (tr && row) refreshDependentCells(tr, row);
+  if (typeof eolRefreshIfOpen === 'function') eolRefreshIfOpen();
+}
+
+// Shared writer for every End Date Override entry point (grid, drilldown,
+// EOL tab row input, EOL bulk bar). `stored` must already be resolved —
+// 'INDEF', 'M/D/YYYY', or '' to clear.
+function applyEndOW(sku, stored) {
+  setOW(sku, 'end_ow', stored);
+  const row = ALL_ROWS.find(r => r.sku === sku);
+  if (row) {
+    row.end_ow = stored;
+    recomputeRowDerived(row);
+    console.log(`[EndOW] ${sku} → "${stored||'(cleared)'}" | calcEnd=${row.config_calc_end} | syrupEnd=${row.config_syrup_end} | dt=${row.config_dt_status} | status=${row.config_status}`);
+  }
+  return row;
 }
 
 function saveDelivOW(selectEl) {
@@ -9729,10 +10031,52 @@ function buildConfigsExport() {
   let skippedNoStores = 0;
   let skippedNoCode = 0;
   let skippedNoDates = 0;
+  let skippedNotedExt = 0;   // [p7u] end_ow amendment on a SKU carrying an adjustment note
+  let amendedSkus = 0;       // [p7u] SKUs emitted as date-only amendments (counted once per SKU, before the per-store fan-out)
   const unmappedStores = new Set();
   const unknownTiers = new Set();
 
   for (const r of actionableRows) {
+    // ── [p7u] End-date amendment lane ─────────────────────────────────────
+    // A SKU is Off *because of* an End Date Override when end_ow is set. Two
+    // things then differ from a structural rebuild:
+    //
+    //  (1) NOTED SKUs ARE REFUSED. The store list below is derived from the
+    //      SKU's tier. An ADJ/SR/ISS/ADD note declares that the live config is
+    //      deliberately NOT the tier (a subset, or the tier plus ad-hoc doors),
+    //      and the note carries no store identities we could replay. Emitting
+    //      the full tier to change one date would silently restore every door
+    //      the note removed. These are handled by hand in the eligibility
+    //      sheet; the EOL Review tab tags them "Manual" so it is visible.
+    //      (MD / DROP never reach here — TERMINAL_STATUSES filters them above.)
+    //
+    //  (2) validFrom IS PRESERVED, NOT RECALCULATED. config_calc_start for an
+    //      expired Newness SKU falls into the today-dependent fallback branch
+    //      (2nd Monday from today), so regenerating it would push a FUTURE
+    //      start date and switch replenishment OFF — the exact opposite of the
+    //      intent. We only take this shortcut when the start half of the date
+    //      check already agrees; if the start is genuinely wrong too, the SKU
+    //      needs a real rebuild and falls through to the normal path.
+    const endOwActive = !!String(r.end_ow || '').trim();
+    let amendFrom = '';
+    if (endOwActive) {
+      if (r.config_has_adj_note) { skippedNotedExt++; continue; }
+      const parts = configDateParts({
+        new_cf: r.new_cf,
+        syrup_start: r.config_syrup_start ? parseXLDate(r.config_syrup_start) : null,
+        syrup_end:   r.config_syrup_end   ? parseXLDate(r.config_syrup_end)   : null,
+        calc_start:  r.config_calc_start  ? parseXLDate(r.config_calc_start)  : null,
+        calc_end:    r.config_calc_end    ? parseXLDate(r.config_calc_end)    : null,
+        deliv_alloc_date: r.deliv_alloc_date ? parseXLDate(r.deliv_alloc_date) : null,
+        alloc_date:       r.alloc_date       ? parseXLDate(r.alloc_date)       : null,
+        md_exit: r.cs_md_exit, weeks_bought: r.cs_weeks_bought,
+        end_ow: r.end_ow,
+      });
+      if (parts.startOk && r.config_syrup_start) {
+        amendFrom = _fmtConfigDate(r.config_syrup_start);
+      }
+    }
+
     // Effective tier (override-aware, matching the rest of the app)
     const effTier = (r.tier_ow || r.cs_tier || '').trim().toUpperCase();
     if (!effTier) { skippedNoTier++; continue; }
@@ -9752,9 +10096,12 @@ function buildConfigsExport() {
 
     // Date strings on the row are formatted like "01/01/25". Re-parse and
     // reformat to M/D/YYYY for clean Google Sheets paste behavior.
-    const vFrom  = _fmtConfigDate(r.config_calc_start);
+    // [p7u] amendFrom is set only on the date-only amendment path; everywhere
+    // else this is byte-identical to the pre-p7u behaviour.
+    const vFrom  = amendFrom || _fmtConfigDate(r.config_calc_start);
     const vUntil = _fmtConfigDate(r.config_calc_end);
     if (!vFrom || !vUntil) { skippedNoDates++; continue; }
+    if (amendFrom) amendedSkus++;
 
     for (const storeName of stores) {
       const code = STORE_CODE_MAP[storeName];
@@ -9778,6 +10125,10 @@ function buildConfigsExport() {
   if (skippedNoStores) warnings.push(`${skippedNoStores} SKU(s) skipped — tier has no member stores`);
   if (skippedNoDates) warnings.push(`${skippedNoDates} SKU(s) skipped — calc_start or calc_end was empty`);
   if (skippedNoCode)  warnings.push(`${skippedNoCode} (SKU × store) row(s) skipped — store name has no entry in STORE_CODE_MAP: ${[...unmappedStores].join(', ')}`);
+  if (skippedNotedExt) warnings.push(`${skippedNotedExt} SKU(s) skipped — End Date Override on a SKU carrying an adjustment note. `
+    + `The generated store list comes from the tier, but the note means the live config is intentionally a different set, `
+    + `so emitting would restore doors the note removed. Update these rows directly in the config eligibility sheet `
+    + `(see the EOL Review tab · "Manual" tag).`);
 
   return {
     skuList,
@@ -9786,6 +10137,8 @@ function buildConfigsExport() {
     offCount: offRows.length,
     dashOverrideCount: dashWithOverrideRows.length,
     emptyTierOwRows,
+    amendedSkus,
+    skippedNotedExt,
   };
 }
 
@@ -10337,10 +10690,12 @@ function switchTab(tab) {
   document.getElementById('tabIaBtn').classList.remove('active');
   { const b = document.getElementById('tabNfBtn'); if (b) b.classList.remove('active'); }
   { const b = document.getElementById('tabSmBtn'); if (b) b.classList.remove('active'); }
+  { const b = document.getElementById('tabEolBtn'); if (b) b.classList.remove('active'); }
   document.getElementById('lateListPanel').style.display = 'none';
   document.getElementById('iaPanel').style.display = 'none';
   { const p = document.getElementById('nfPanel'); if (p) p.style.display = 'none'; }
   { const p = document.getElementById('smPanel'); if (p) p.style.display = 'none'; }
+  { const p = document.getElementById('eolPanel'); if (p) p.style.display = 'none'; }
 
   if (tab === 'sku') {
     document.getElementById('tabSkuBtn').classList.add('active');
@@ -10384,6 +10739,17 @@ function switchTab(tab) {
     document.getElementById('exportBtn').style.display = 'none';
     document.getElementById('colPanelBtn').style.display = 'none';
     if (typeof nfRefresh === 'function') nfRefresh();
+  } else if (tab === 'eol') {
+    const b = document.getElementById('tabEolBtn'); if (b) b.classList.add('active');
+    skuEls.forEach(id => { const el=document.getElementById(id); if(el) el.style.display='none'; });
+    const p = document.getElementById('eolPanel'); if (p) p.style.display = 'flex';
+    document.getElementById('lookupBtn').style.display = 'none';
+    document.getElementById('clearLookupBtn').style.display = 'none';
+    document.getElementById('copySkuBtn').style.display = 'none';
+    document.getElementById('bulkNotesBtn').style.display = 'none';
+    document.getElementById('exportBtn').style.display = 'none';
+    document.getElementById('colPanelBtn').style.display = 'none';
+    if (typeof eolRefresh === 'function') eolRefresh();
   } else if (tab === 'sm') {
     const b = document.getElementById('tabSmBtn'); if (b) b.classList.add('active');
     skuEls.forEach(id => { const el=document.getElementById(id); if(el) el.style.display='none'; });
@@ -12799,6 +13165,22 @@ tr.nf-strow-shifted  td.nf-pin{background:#DBEAFE}
 .nf-depth-input{width:56px;font-family:var(--mono);font-size:12px;text-align:right;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
 .nf-note-input{width:100%;min-width:130px;font-family:var(--mono);font-size:11px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
 .nf-depth-input.set{border-color:var(--accent);background:var(--accent-bg);font-weight:700;color:var(--accent)}
+/* ── EOL Review [p7u] ── reuses the nf-* shell; only its own bits live here */
+#eolPanel{display:none;flex-direction:column;flex:1;overflow:hidden;background:var(--bg)}
+.eol-horizon{width:64px;font-family:var(--mono);font-size:11px;padding:5px 8px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text)}
+.eol-bulk{display:flex;align-items:center;gap:10px;margin:0 24px 12px;padding:9px 14px;border:1px solid var(--accent);border-radius:9px;background:var(--accent-bg);flex-wrap:wrap}
+.eol-bulk-count{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--accent)}
+.eol-bulk-lbl{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.eol-bulk-input{width:170px;font-family:var(--mono);font-size:11px;padding:4px 7px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)}
+.eol-bulk-hint{font-family:var(--mono);font-size:10px;color:var(--muted);opacity:.8}
+.eol-ow-input{width:104px;font-family:var(--mono);font-size:11px;text-align:right;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
+.eol-ow-input.set{border-color:var(--accent);background:var(--accent-bg);font-weight:700;color:var(--accent)}
+.eol-ow-input:disabled{opacity:.4;cursor:not-allowed}
+.eol-days{font-family:var(--mono);font-size:11px}
+.eol-days.past{color:var(--red);font-weight:600}
+.eol-days.soon{color:var(--orange);font-weight:600}
+.eol-chk{cursor:pointer}
+.eol-manual{font-family:var(--mono);font-size:9px;letter-spacing:.04em;color:var(--muted);margin-left:5px;border:1px solid var(--border);border-radius:4px;padding:0 3px}
 .nf-tier-sel{max-width:150px;font-family:var(--mono);font-size:10.5px;padding:3px 4px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
 .nf-tier-sel.alt{border-color:var(--purple);background:var(--purple-bg);color:var(--purple);font-weight:600}
 .nf-newrec{font-family:var(--mono);font-weight:700}
@@ -15126,6 +15508,439 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window._smBuild       = smBuild;   // exposed for the test harness
 
   console.log('[SM] Store Matrix module ready [store-matrix-v1]');
+})();
+</script>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════════
+// EOL REVIEW  ·  End-of-lifecycle decision surface                     [p7u]
+// ════════════════════════════════════════════════════════════════════════════
+// WHY THIS TAB EXISTS
+//   A Syrup config carries a validUntil. When it passes, the SKU stops
+//   replenishing. That is the right outcome when the SKU exits via markdown
+//   and the wrong outcome when the company keeps it full price indefinitely —
+//   and the calculated ladder (calc_start + weeks_bought × 7) has no way to
+//   express "keep going until further notice". This tab is where that call
+//   gets made, with the two inputs the decision actually needs in view:
+//   price level (FP/MD) and inventory position (PLG OH is the go/no-go —
+//   extending replenishment on a SKU with no DC stock and nothing inbound
+//   accomplishes nothing).
+//
+// WHERE THE WRITE GOES
+//   The tab writes `end_ow` and nothing else. From there the existing pipeline
+//   does the work: end_ow → computeCalcEndDate → config_dt_status → 'Off' →
+//   the SKU appears in the Configs Generator with its Syrup validFrom
+//   preserved and the new validUntil applied. Once the push lands and configs
+//   are re-pulled, syrup_end matches calc_end and the SKU falls back to
+//   'Correct' on its own. There is no second export and no state to reconcile.
+//
+// WHAT THIS TAB DELIBERATELY DOES NOT DO
+//   It does not write to Syrup, does not touch tiers, and does not decide
+//   emission. A SKU carrying an adjustment note is tagged "manual" here
+//   because buildConfigsExport refuses it — the generator's store list is
+//   tier-derived, and a note means the live config is intentionally a
+//   different set of doors. Those are amended by hand in the eligibility
+//   sheet. MD / DROP notes block the override entirely: those SKUs are on a
+//   declared exit path, and contradicting that belongs in the PST, not here.
+(function(){
+  'use strict';
+
+  var EOL_HORIZON   = 28;        // forward window in days; Expired always shows
+  var EOL_VIEW      = 'decide';  // decide | extended | all
+  var EOL_QUERY     = '';
+  var EOL_SEL       = {};        // sku -> true
+  var EOL_ROWS      = [];        // last built universe (render + bulk read this)
+
+  function _today(){ var d = new Date(); d.setHours(0,0,0,0); return d; }
+  function _days(a, b){ return Math.round((a - b) / 86400000); }
+  function esc(v){
+    return String(v == null ? '' : v)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function num(v){ var n = Number(v); return isFinite(n) ? n : 0; }
+  function fmtN(v){ return num(v).toLocaleString(); }
+
+  // Delegates to the shared predicate so this tab and the date check agree on
+  // what "never expires" means. See isInfiniteEndDate for why it is a year test.
+  function isInfinite(d){ return isInfiniteEndDate(d); }
+
+  // Has Syrup caught up with the override? Two unbounded dates count as a
+  // match even when they are different days — without this, an Indefinite
+  // override would read "Pending" forever.
+  function owSettled(owDate, syrupEnd){
+    if (!owDate || !syrupEnd || isNaN(syrupEnd)) return false;
+    if (isInfinite(owDate) && isInfinite(syrupEnd)) return true;
+    return sameDay(owDate, syrupEnd);
+  }
+
+  // ── Universe ─────────────────────────────────────────────────────────────
+  // Auto-surfaced: a SKU that HAS a live Syrup config (≥1 TRUE row), whose end
+  // date is finite, and which lands inside [−∞, today + horizon]. The
+  // finite-date gate matters: SKUs already sitting at 1/1/2100 never expire and
+  // would otherwise permanently occupy the list.
+  //
+  // Always surfaced, regardless of the above: any SKU carrying an end_ow. An
+  // extension that disappears from view the moment it is applied is how the
+  // current backlog accumulated in the first place — extensions stay auditable,
+  // Indefinite included.
+  function eolBuild(){
+    var today = _today();
+    var horizonEnd = new Date(today.getTime() + EOL_HORIZON * 86400000);
+    var out = [];
+
+    (window.ALL_ROWS || []).forEach(function(r){
+      var ow       = String(r.end_ow || '').trim();
+      var hasOw    = !!ow;
+      var owDate   = hasOw ? parseEndOW(ow) : null;
+      var syrupEnd = r.config_syrup_end ? parseXLDate(r.config_syrup_end) : null;
+      var hasCfg   = r._cfgPresent === true || !!r._cfgStatusUpper;
+      var live     = num(r.config_store_ct) > 0;
+
+      var inWindow = hasCfg && live && syrupEnd && !isNaN(syrupEnd)
+                  && !isInfinite(syrupEnd) && syrupEnd <= horizonEnd;
+
+      if (!hasOw && !inWindow) return;
+
+      var st = String(r.config_status || '');
+      var blocked = (st === 'Markdown' || st === 'Markdown!' || st === 'Dropped');
+
+      // State machine. "Pending" means the override is recorded but Syrup has
+      // not caught up yet — i.e. the row is sitting in the Configs Generator
+      // waiting to be pushed.
+      var state;
+      if (blocked)                                   state = 'Blocked';
+      else if (owSettled(owDate, syrupEnd))          state = isInfinite(owDate) ? 'Indefinite' : 'Extended';
+      else if (hasOw)                                state = 'Pending';
+      else if (syrupEnd && syrupEnd < today)         state = 'Expired';
+      else                                           state = 'Expiring';
+
+      out.push({
+        row: r,
+        sku: r.sku,
+        state: state,
+        blocked: blocked,
+        // Noted SKUs are recorded here but never auto-emitted — see the
+        // buildConfigsExport amendment lane for the full reasoning.
+        manual: !blocked && hasOw && !!r.config_has_adj_note,
+        ow: ow,
+        owDate: owDate,
+        syrupEnd: syrupEnd,
+        days: (syrupEnd && !isNaN(syrupEnd)) ? _days(syrupEnd, today) : null,
+      });
+    });
+
+    // Expired first (oldest end date at the very top, so the standing backlog
+    // surfaces before anything merely approaching), then Expiring, then the
+    // extension states, then Blocked.
+    var rank = { Expired:0, Expiring:1, Pending:2, Extended:3, Indefinite:4, Blocked:5 };
+    out.sort(function(a,b){
+      var d = rank[a.state] - rank[b.state];
+      if (d) return d;
+      var ax = a.syrupEnd ? a.syrupEnd.getTime() : Infinity;
+      var bx = b.syrupEnd ? b.syrupEnd.getTime() : Infinity;
+      if (ax !== bx) return ax - bx;
+      return String(a.sku).localeCompare(String(b.sku));
+    });
+    return out;
+  }
+
+  function eolVisible(){
+    var q = EOL_QUERY.trim().toLowerCase();
+    return EOL_ROWS.filter(function(e){
+      if (EOL_VIEW === 'decide'   && !(e.state === 'Expired' || e.state === 'Expiring' || e.state === 'Pending')) return false;
+      if (EOL_VIEW === 'extended' && !(e.state === 'Extended' || e.state === 'Indefinite')) return false;
+      if (!q) return true;
+      var r = e.row;
+      return (String(r.sku||'') + ' ' + String(r.style_desc||'') + ' ' + String(r.color_desc||'') + ' ' + String(r.style||''))
+        .toLowerCase().indexOf(q) >= 0;
+    });
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────
+  var COLS = [
+    ['',            'chk',   false],
+    ['SKU',         'sku',   false],
+    ['Style Desc',  'desc',  false],
+    ['Color',       'color', false],
+    ['Div',         'div',   false],
+    ['FP/MD',       'fpmd',  false],
+    ['Cfg End',     'end',   false],
+    ['Days',        'days',  true ],
+    ['State',       'state', false],
+    ['Ext To',      'ow',    false],
+    ['New/CF',      'newcf', false],
+    ['MD Exit Wk',  'mdwk',  true ],
+    ['PLG OH',      'plg',   true ],
+    ['Store OH',    'soh',   true ],
+    ['Omni OH',     'ooh',   true ],
+    ['Depth',       'depth', true ],
+    ['Store LCW',   'lcw',   true ],
+    ['Turn',        'turn',  true ],
+    ['In-Stock',    'stock', false],
+    ['Next In-DC',  'indc',  false],
+    ['Cfg Ct',      'cfgct', true ],
+  ];
+
+  function statePill(e){
+    var cls = e.state === 'Expired'    ? 'pill-red'
+            : e.state === 'Expiring'   ? 'pill-orange'
+            : e.state === 'Pending'    ? 'pill-yellow'
+            : e.state === 'Extended'   ? 'pill-green'
+            : e.state === 'Indefinite' ? 'pill-blue'
+            : 'pill-muted';
+        var tip = e.state === 'Pending'
+      ? 'Override recorded \u2014 waiting in the Configs Generator to be pushed to Syrup'
+      : e.state === 'Blocked'
+      ? 'MD / DROP note present \u2014 this SKU is on a declared exit path and cannot be extended here'
+      : '';
+    return '<span class="pill ' + cls + '" title="' + esc(tip) + '">' + esc(e.state) + '</span>'
+         + (e.manual ? '<span class="eol-manual" title="Carries an adjustment note, so the Configs Generator will not auto-emit it \u2014 amend this one directly in the config eligibility sheet">manual</span>' : '');
+  }
+
+  function renderHead(){
+    var h = '<tr>' + COLS.map(function(c){
+      var left = !c[2] && c[1] !== 'chk';
+      if (c[1] === 'chk') {
+        return '<th class="l nf-pin" style="width:26px"><input type="checkbox" class="eol-chk" id="eolChkAll" onclick="eolSelectAll(this.checked)"></th>';
+      }
+      return '<th class="' + (left ? 'l' : '') + (c[1] === 'sku' ? ' nf-pin' : '') + '">' + esc(c[0]) + '</th>';
+    }).join('') + '</tr>';
+    document.getElementById('eolHead').innerHTML = h;
+  }
+
+  function renderBody(list){
+    var body = document.getElementById('eolBody');
+    var empty = document.getElementById('eolEmpty');
+    if (!list.length) {
+      body.innerHTML = '';
+      empty.style.display = '';
+      empty.textContent = EOL_ROWS.length
+        ? 'No SKUs match this view.'
+        : 'No SKUs are within ' + EOL_HORIZON + ' days of their configured end date, and none carry an End Date Override.';
+      return;
+    }
+    empty.style.display = 'none';
+
+    body.innerHTML = list.map(function(e){
+      var r = e.row;
+      var daysCls = e.days == null ? '' : (e.days < 0 ? ' past' : (e.days <= EOL_HORIZON ? ' soon' : ''));
+      var daysTxt = e.days == null ? '\u2014' : (e.days < 0 ? e.days + 'd' : '+' + e.days + 'd');
+      var owDisp  = fmtEndOWDisplay(e.ow);
+      var isMd    = r.fp_md === 'Markdown';
+
+      return '<tr>'
+        + '<td class="l nf-pin"><input type="checkbox" class="eol-chk" data-sku="' + esc(r.sku) + '"'
+            + (EOL_SEL[r.sku] ? ' checked' : '') + (e.blocked ? ' disabled' : '')
+            + ' onclick="eolToggle(this)"></td>'
+        + '<td class="l nf-pin"><a href="javascript:void(0)" onclick="openDrilldown(\'' + esc(r.sku) + '\')">' + esc(r.sku) + '</a></td>'
+        + '<td class="l"><div class="nf-styledesc" title="' + esc(r.style_desc) + '">' + esc(r.style_desc || '\u2014') + '</div></td>'
+        + '<td class="l"><div class="nf-colordesc" title="' + esc(r.color_desc) + '">' + esc(r.color_desc || '\u2014') + '</div></td>'
+        + '<td class="l">' + esc(r.division || '\u2014') + '</td>'
+        + '<td class="l"><span class="pill ' + (isMd ? 'pill-markdown' : 'pill-muted') + '">' + esc(isMd ? 'MD' : 'FP') + '</span></td>'
+        + '<td class="nf-num">' + esc(r.config_syrup_end || '\u2014') + '</td>'
+        + '<td class="eol-days' + daysCls + '">' + esc(daysTxt) + '</td>'
+        + '<td class="l">' + statePill(e) + '</td>'
+        + '<td><input type="text" class="eol-ow-input' + (e.ow ? ' set' : '') + '"'
+            + ' data-sku="' + esc(r.sku) + '" data-prev="' + esc(e.ow) + '" value="' + esc(owDisp) + '"'
+            + (e.blocked ? ' disabled title="MD / DROP note \u2014 override blocked"' : ' placeholder="date | +13w | INDEF"')
+            + ' onchange="eolSaveRow(this)" onfocus="this.dataset.prev=this.value"></td>'
+        + '<td class="l">' + esc(r.new_cf || '\u2014') + '</td>'
+        + '<td class="nf-num">' + esc(r.cs_md_exit || '\u2014') + '</td>'
+        + '<td class="nf-num">' + fmtN(r.plg_oh) + '</td>'
+        + '<td class="nf-num">' + fmtN(r.store_oh) + '</td>'
+        + '<td class="nf-num">' + fmtN(r.omni_oh) + '</td>'
+        + '<td class="nf-num">' + esc(r.sku_depth === '' || r.sku_depth == null ? '\u2014' : r.sku_depth) + '</td>'
+        + '<td class="nf-num">' + fmtN(r.store_lcw) + '</td>'
+        + '<td class="nf-num">' + esc(r.store_turn === '' || r.store_turn == null ? '\u2014' : r.store_turn) + '</td>'
+        + '<td class="l">' + esc(r.in_stock || '\u2014') + '</td>'
+        + '<td class="nf-num">' + esc(r.xs_pend_disp || '\u2014') + '</td>'
+        + '<td class="nf-num">' + fmtN(r.config_store_ct) + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  function renderStats(){
+    function cnt(st){ return EOL_ROWS.filter(function(e){ return e.state === st; }).length; }
+    var atRisk = EOL_ROWS
+      .filter(function(e){ return e.state === 'Expired' || e.state === 'Expiring'; })
+      .reduce(function(a,e){ return a + num(e.row.store_oh); }, 0);
+    var noFuel = EOL_ROWS.filter(function(e){
+      return (e.state === 'Expired' || e.state === 'Expiring') && num(e.row.plg_oh) === 0;
+    }).length;
+
+    var tiles = [
+      ['Expired',            cnt('Expired'),    'var(--red)',    'Past their configured end date \u2014 not replenishing today'],
+      ['Expiring \u2264' + EOL_HORIZON + 'd', cnt('Expiring'), 'var(--orange)', 'Will stop replenishing inside the horizon'],
+      ['Pending push',       cnt('Pending'),    '',              'Override set \u2014 sitting in the Configs Generator, not yet in Syrup'],
+      ['Extended',           cnt('Extended'),   'var(--green)',  'Override set and confirmed live in Syrup'],
+      ['Indefinite',         cnt('Indefinite'), '',              'Extended to 1/1/2100 \u2014 kept in view on purpose'],
+      ['No DC stock',        noFuel,            '',              'Of the decision set, how many have zero PLG OH \u2014 extending these changes nothing without inbound supply'],
+      ['Store units at risk', atRisk,           '',              'Store OH across Expired + Expiring'],
+    ];
+    document.getElementById('eolStats').innerHTML = tiles.map(function(t){
+      return '<div class="nf-stat" title="' + esc(t[3]) + '">'
+        + '<div class="nf-stat-val"' + (t[2] ? ' style="color:' + t[2] + '"' : '') + '>' + fmtN(t[1]) + '</div>'
+        + '<div class="nf-stat-lbl">' + esc(t[0]) + '</div></div>';
+    }).join('');
+  }
+
+  function renderBulk(list){
+    var visible = {};
+    list.forEach(function(e){ visible[e.sku] = 1; });
+    // Selection survives filtering, but the bar counts only what is on screen
+    // so "Apply" can never silently touch a row the user cannot see.
+    var n = Object.keys(EOL_SEL).filter(function(s){ return visible[s]; }).length;
+    var bar = document.getElementById('eolBulk');
+    bar.style.display = n ? 'flex' : 'none';
+    document.getElementById('eolBulkCount').textContent = n + ' selected';
+  }
+
+  function eolRefresh(){
+    if (!document.getElementById('eolPanel')) return;
+    EOL_ROWS = eolBuild();
+    var list = eolVisible();
+    renderHead();
+    renderBody(list);
+    renderStats();
+    renderBulk(list);
+    var sub = document.getElementById('eolSubtitle');
+    if (sub) {
+      sub.textContent = EOL_ROWS.length + ' SKU(s) \u00b7 ' + EOL_HORIZON
+        + '-day horizon + all expired + all overridden \u00b7 config season ' + (window.CONFIG_SEASON || '');
+    }
+  }
+
+  function eolRefreshIfOpen(){
+    if (window.ACTIVE_TAB === 'eol') eolRefresh();
+  }
+
+  // ── Selection ────────────────────────────────────────────────────────────
+  function eolToggle(el){
+    var sku = el.dataset.sku;
+    if (el.checked) EOL_SEL[sku] = true; else delete EOL_SEL[sku];
+    renderBulk(eolVisible());
+  }
+  function eolSelectAll(on){
+    eolVisible().forEach(function(e){
+      if (e.blocked) return;                       // never bulk-select a blocked SKU
+      if (on) EOL_SEL[e.sku] = true; else delete EOL_SEL[e.sku];
+    });
+    eolRefresh();
+  }
+  function eolSelectNone(){ EOL_SEL = {}; eolRefresh(); }
+
+  // ── Writes ───────────────────────────────────────────────────────────────
+  // Single-row edit. Resolution and validation are shared with the grid and
+  // drilldown paths via parseEndOWInput, so there is one syntax across the app.
+  function eolSaveRow(inputEl){
+    var sku = inputEl.dataset.sku;
+    var raw = (inputEl.value || '').trim();
+    var ent = EOL_ROWS.find(function(e){ return e.sku === sku; });
+    if (ent && ent.blocked) { inputEl.value = ''; return; }
+
+    var cur = ent ? (ent.row.config_syrup_end || ent.row.end_date || '') : '';
+    var res = parseEndOWInput(raw, cur);
+    if (!res.ok) {
+      inputEl.style.borderColor = 'var(--red)';
+      setTimeout(function(){ inputEl.style.borderColor = ''; }, 700);
+      inputEl.value = fmtEndOWDisplay(inputEl.dataset.prev || '');
+      showToast('"' + raw + '" \u2014 ' + res.reason + '. Use a date, +13w, or INDEF.', 3200);
+      return;
+    }
+    applyEndOW(sku, res.stored);
+    persistManualOW();
+    eolRefresh();
+    if (typeof applyFiltersAndRender === 'function') applyFiltersAndRender();
+  }
+
+  // Bulk apply. Resolves ONCE PER SKU rather than once for the batch, because
+  // "+13w" anchors to each SKU's own current end date — a single shared
+  // resolution would give every selected SKU the same date and quietly destroy
+  // the staggered review cadence the finite extension exists to preserve.
+  function eolBulkApply(){
+    var raw = (document.getElementById('eolBulkInput').value || '').trim();
+    if (!raw) { showToast('Enter a date, +13w, or INDEF first.', 2600); return; }
+
+    var visible = {};
+    eolVisible().forEach(function(e){ visible[e.sku] = e; });
+    var targets = Object.keys(EOL_SEL).filter(function(s){ return visible[s] && !visible[s].blocked; });
+    if (!targets.length) { showToast('Nothing selected.', 2200); return; }
+
+    var okCt = 0, failCt = 0, firstReason = '';
+    targets.forEach(function(sku){
+      var e = visible[sku];
+      var cur = e.row.config_syrup_end || e.row.end_date || '';
+      var res = parseEndOWInput(raw, cur);
+      if (!res.ok) { failCt++; if (!firstReason) firstReason = res.reason; return; }
+      applyEndOW(sku, res.stored);
+      okCt++;
+    });
+
+    if (failCt && !okCt) {
+      showToast('"' + raw + '" \u2014 ' + firstReason + '. Use a date, +13w, or INDEF.', 3400);
+      return;
+    }
+    persistManualOW();           // one cloud round-trip for the whole batch
+    document.getElementById('eolBulkInput').value = '';
+    eolRefresh();
+    if (typeof applyFiltersAndRender === 'function') applyFiltersAndRender();
+    showToast('\u2713 Extended ' + okCt + ' SKU(s)' + (failCt ? ' \u00b7 ' + failCt + ' failed' : ''), 2800);
+  }
+
+  function eolBulkClear(){
+    var visible = {};
+    eolVisible().forEach(function(e){ visible[e.sku] = e; });
+    var targets = Object.keys(EOL_SEL).filter(function(s){ return visible[s]; });
+    if (!targets.length) { showToast('Nothing selected.', 2200); return; }
+    if (!confirm('Clear the End Date Override on ' + targets.length + ' SKU(s)?\n\nThey will revert to their calculated end date.')) return;
+    targets.forEach(function(sku){ applyEndOW(sku, ''); });
+    persistManualOW();
+    eolRefresh();
+    if (typeof applyFiltersAndRender === 'function') applyFiltersAndRender();
+    showToast('Cleared ' + targets.length + ' override(s)', 2600);
+  }
+
+  // ── Controls ─────────────────────────────────────────────────────────────
+  function eolSetView(v){
+    EOL_VIEW = v;
+    ['decide','extended','all'].forEach(function(k){
+      var b = document.getElementById('eolSeg' + (k === 'decide' ? 'Decide' : k === 'extended' ? 'Ext' : 'All'));
+      if (b) b.classList.toggle('active', k === v);
+    });
+    eolRefresh();
+  }
+  function eolSetHorizon(v){
+    var n = parseInt(v, 10);
+    EOL_HORIZON = (isFinite(n) && n >= 0 && n <= 365) ? n : 28;
+    document.getElementById('eolHorizon').value = EOL_HORIZON;
+    eolRefresh();
+  }
+  function eolSetQuery(q){ EOL_QUERY = q || ''; renderBody(eolVisible()); renderBulk(eolVisible()); }
+
+  function eolCopySkus(){
+    var list = eolVisible().map(function(e){ return e.sku; });
+    if (!list.length) { showToast('Nothing to copy.', 2000); return; }
+    navigator.clipboard.writeText(list.join('\n')).then(
+      function(){ showToast('\u2713 Copied ' + list.length + ' SKU(s)', 2200); },
+      function(){ showToast('Copy failed \u2014 clipboard blocked', 2600); }
+    );
+  }
+
+  window.eolRefresh       = eolRefresh;
+  window.eolRefreshIfOpen = eolRefreshIfOpen;
+  window.eolSetView       = eolSetView;
+  window.eolSetHorizon    = eolSetHorizon;
+  window.eolSetQuery      = eolSetQuery;
+  window.eolToggle        = eolToggle;
+  window.eolSelectAll     = eolSelectAll;
+  window.eolSelectNone    = eolSelectNone;
+  window.eolSaveRow       = eolSaveRow;
+  window.eolBulkApply     = eolBulkApply;
+  window.eolBulkClear     = eolBulkClear;
+  window.eolCopySkus      = eolCopySkus;
+  window._eolBuild        = eolBuild;   // exposed for the test harness
+
+  console.log('[EOL] End-of-lifecycle module ready [eol-review p7u]');
 })();
 </script>
 
