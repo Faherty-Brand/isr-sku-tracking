@@ -409,8 +409,8 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .ia-prob-pct{font-weight:600;color:var(--text)}
 
 /* ── LOOKUP MODAL ── */
-#lookupModal,#nfBulkModal{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:300;display:none;align-items:center;justify-content:center}
-#lookupModal.open{display:flex}
+#lookupModal,#nfBulkModal,#eolLookupModal{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:300;display:none;align-items:center;justify-content:center}
+#lookupModal.open,#eolLookupModal.open{display:flex}
 #bulkNotesModal{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:300;display:none;align-items:center;justify-content:center}
 #bulkNotesModal.open{display:flex}
 /* Generic modal backdrop class — used by Configs Generator (#configsModal).
@@ -1069,7 +1069,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review (p7u2 · scope fix)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review (p7u3 · filters + lookup)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1577,6 +1577,9 @@ setTimeout(function(){
         <input class="nf-ftext" id="eolSearch" type="text" placeholder="SKU / style / color…" style="max-width:170px"
                oninput="eolSetQuery(this.value)">
       </div>
+      <button class="nf-action-btn" id="eolLookupBtn" onclick="eolOpenLookup()">🔍 Lookup</button>
+      <button class="nf-action-btn" id="eolClearLookupBtn" onclick="eolClearLookup()" style="display:none">✕ Clear lookup</button>
+      <button class="nf-action-btn" onclick="eolClearFilters()">✕ Clear filters</button>
       <button class="nf-action-btn" onclick="eolCopySkus()">⎘ Copy SKUs</button>
       <button class="nf-action-btn" onclick="eolRefresh()">↻ Refresh</button>
     </div>
@@ -1601,6 +1604,26 @@ setTimeout(function(){
       <tbody id="eolBody"></tbody>
     </table>
     <div class="nf-empty" id="eolEmpty" style="display:none"></div>
+  </div>
+</div>
+
+<!-- EOL MULTI-SKU LOOKUP MODAL -->
+<div id="eolLookupModal">
+  <div class="modal-box">
+    <div class="modal-title">Multi-SKU Lookup — EOL Review</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px;line-height:1.45">
+      Paste or type SKUs (one per line, or comma/semicolon separated).
+      <br><br>
+      <b style="color:var(--text)">Note:</b> a lookup <b>bypasses the horizon gate</b> — every SKU you
+      paste is shown with its end date and inventory position, whether or not it is near expiry and
+      whether or not it has a live Syrup config. This is the “I have a list from a meeting” path.
+      The view segment is ignored while a lookup is active.
+    </div>
+    <textarea class="modal-textarea" id="eolLookupInput" placeholder="MBS2517-DKT&#10;MBS2517-RDO&#10;MWS2509-NYH"></textarea>
+    <div class="modal-actions">
+      <button class="modal-btn" onclick="eolRunLookup()">Filter to SKUs</button>
+      <button class="modal-btn sec" onclick="eolCloseLookup()">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -13175,6 +13198,17 @@ tr.nf-strow-shifted  td.nf-pin{background:#DBEAFE}
 .eol-bulk-hint{font-family:var(--mono);font-size:10px;color:var(--muted);opacity:.8}
 .eol-ow-input{width:104px;font-family:var(--mono);font-size:11px;text-align:right;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
 .eol-ow-input.set{border-color:var(--accent);background:var(--accent-bg);font-weight:700;color:var(--accent)}
+/* Two frozen columns: checkbox at 0, SKU immediately after it. The base
+   .nf-pin rules put everything at left:0, which stacked the two on top of
+   each other; these come later in the sheet so they win on equal specificity. */
+.nf-table thead th.eol-pin2, .nf-table tbody td.eol-pin2{left:30px}
+.nf-table thead tr.nf-filterrow th.eol-pin2{left:30px}
+.eol-fsel{width:100%;max-width:118px;font-family:var(--mono);font-size:10px;padding:2px 4px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);cursor:pointer}
+.eol-fsel.on,.eol-ftext.on,.eol-fnum.on{border-color:var(--accent);background:var(--accent-bg);color:var(--accent);font-weight:600}
+.eol-ftext{width:100%;max-width:110px;font-family:var(--mono);font-size:10px;padding:2px 4px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
+.eol-fnum{width:100%;font-family:var(--mono);font-size:10px;text-align:right;padding:2px 4px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
+.eol-ftext::placeholder,.eol-fnum::placeholder{color:var(--dim)}
+.eol-lookup-note{font-family:var(--mono);font-size:10px;color:var(--accent);background:var(--accent-bg);border:1px solid var(--accent);border-radius:6px;padding:2px 8px;margin-left:8px}
 .eol-ow-input:disabled{opacity:.4;cursor:not-allowed}
 .eol-days{font-family:var(--mono);font-size:11px}
 .eol-days.past{color:var(--red);font-weight:600}
@@ -15550,6 +15584,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
   var EOL_QUERY     = '';
   var EOL_SEL       = {};        // sku -> true
   var EOL_ROWS      = [];        // last built universe (render + bulk read this)
+  var EOL_FILT      = {};        // column id -> filter value ('min~max' for numerics)
+  var EOL_LOOKUP    = new Set(); // multi-SKU lookup; non-empty REPLACES the universe
 
   function _today(){ var d = new Date(); d.setHours(0,0,0,0); return d; }
   function _days(a, b){ return Math.round((a - b) / 86400000); }
@@ -15583,65 +15619,92 @@ tr.nf-strow-shifted {background:#DBEAFE}
   // extension that disappears from view the moment it is applied is how the
   // current backlog accumulated in the first place — extensions stay auditable,
   // Indefinite included.
+  // SCOPE: ALL_ROWS / CONFIG_SEASON / ACTIVE_TAB are top-level `let` bindings in
+  // an earlier <script> block. A top-level `let` lands in the shared global
+  // LEXICAL scope, NOT on `window` — so `window.ALL_ROWS` is permanently
+  // undefined here while the bare identifier resolves fine. Reading them off
+  // `window` is why this tab first shipped rendering an empty list. Every other
+  // module in this file uses the same typeof-guarded bare read.
+  function allRows(){
+    return (typeof ALL_ROWS !== 'undefined' && Array.isArray(ALL_ROWS)) ? ALL_ROWS : [];
+  }
+
+  // Build one universe entry. Gating is the caller's job so the lookup path can
+  // admit a SKU the horizon would reject while still classifying it identically.
+  function eolEntry(r, today){
+    var ow       = String(r.end_ow || '').trim();
+    var hasOw    = !!ow;
+    var owDate   = hasOw ? parseEndOW(ow) : null;
+    var syrupEnd = r.config_syrup_end ? parseXLDate(r.config_syrup_end) : null;
+    var st       = String(r.config_status || '');
+    var blocked  = (st === 'Markdown' || st === 'Markdown!' || st === 'Dropped');
+
+    // "Pending" means the override is recorded but Syrup has not caught up —
+    // i.e. the row is sitting in the Configs Generator waiting to be pushed.
+    var state;
+    if (blocked)                              state = 'Blocked';
+    else if (owSettled(owDate, syrupEnd))     state = isInfinite(owDate) ? 'Indefinite' : 'Extended';
+    else if (hasOw)                           state = 'Pending';
+    else if (!syrupEnd || isNaN(syrupEnd))    state = 'No end date';
+    else if (isInfinite(syrupEnd))            state = 'Never expires';
+    else if (syrupEnd < today)                state = 'Expired';
+    else                                      state = 'Expiring';
+
+    return {
+      row: r,
+      sku: r.sku,
+      state: state,
+      blocked: blocked,
+      // Noted SKUs are recorded here but never auto-emitted — see the
+      // buildConfigsExport amendment lane for the full reasoning.
+      manual: !blocked && hasOw && !!r.config_has_adj_note,
+      ow: ow,
+      owDate: owDate,
+      syrupEnd: syrupEnd,
+      days: (syrupEnd && !isNaN(syrupEnd)) ? _days(syrupEnd, today) : null,
+    };
+  }
+
   function eolBuild(){
     var today = _today();
     var horizonEnd = new Date(today.getTime() + EOL_HORIZON * 86400000);
     var out = [];
+    var rows = allRows();
 
-    // SCOPE: ALL_ROWS / CONFIG_SEASON / ACTIVE_TAB are top-level `let` bindings
-    // in an earlier <script> block. A top-level `let` lands in the shared global
-    // LEXICAL scope, NOT on `window` — so `window.ALL_ROWS` is permanently
-    // undefined here while the bare identifier resolves fine. Reading them off
-    // `window` is why this tab first shipped rendering an empty list. Every
-    // other module in this file uses the same typeof-guarded bare read.
-    var rows = (typeof ALL_ROWS !== 'undefined' && Array.isArray(ALL_ROWS)) ? ALL_ROWS : [];
-    rows.forEach(function(r){
-      var ow       = String(r.end_ow || '').trim();
-      var hasOw    = !!ow;
-      var owDate   = hasOw ? parseEndOW(ow) : null;
-      var syrupEnd = r.config_syrup_end ? parseXLDate(r.config_syrup_end) : null;
-      var hasCfg   = r._cfgPresent === true || !!r._cfgStatusUpper;
-      var live     = num(r.config_store_ct) > 0;
-
-      var inWindow = hasCfg && live && syrupEnd && !isNaN(syrupEnd)
-                  && !isInfinite(syrupEnd) && syrupEnd <= horizonEnd;
-
-      if (!hasOw && !inWindow) return;
-
-      var st = String(r.config_status || '');
-      var blocked = (st === 'Markdown' || st === 'Markdown!' || st === 'Dropped');
-
-      // State machine. "Pending" means the override is recorded but Syrup has
-      // not caught up yet — i.e. the row is sitting in the Configs Generator
-      // waiting to be pushed.
-      var state;
-      if (blocked)                                   state = 'Blocked';
-      else if (owSettled(owDate, syrupEnd))          state = isInfinite(owDate) ? 'Indefinite' : 'Extended';
-      else if (hasOw)                                state = 'Pending';
-      else if (syrupEnd && syrupEnd < today)         state = 'Expired';
-      else                                           state = 'Expiring';
-
-      out.push({
-        row: r,
-        sku: r.sku,
-        state: state,
-        blocked: blocked,
-        // Noted SKUs are recorded here but never auto-emitted — see the
-        // buildConfigsExport amendment lane for the full reasoning.
-        manual: !blocked && hasOw && !!r.config_has_adj_note,
-        ow: ow,
-        owDate: owDate,
-        syrupEnd: syrupEnd,
-        days: (syrupEnd && !isNaN(syrupEnd)) ? _days(syrupEnd, today) : null,
+    // LOOKUP REPLACES THE UNIVERSE, it does not filter it. Pasting a SKU list
+    // and getting back only the two that happened to be inside a 28-day window
+    // would be useless — the point of the lookup is "here is a list from a
+    // meeting, show me where each one stands". Two extra states exist purely to
+    // describe SKUs that only a lookup can surface: 'No end date' and
+    // 'Never expires'.
+    if (EOL_LOOKUP.size) {
+      rows.forEach(function(r){
+        if (!EOL_LOOKUP.has(String(r.sku).toUpperCase())) return;
+        out.push(eolEntry(r, today));
       });
-    });
+    } else {
+      rows.forEach(function(r){
+        var ow       = String(r.end_ow || '').trim();
+        var hasOw    = !!ow;
+        var syrupEnd = r.config_syrup_end ? parseXLDate(r.config_syrup_end) : null;
+        var hasCfg   = r._cfgPresent === true || !!r._cfgStatusUpper;
+        var live     = num(r.config_store_ct) > 0;
+
+        var inWindow = hasCfg && live && syrupEnd && !isNaN(syrupEnd)
+                    && !isInfinite(syrupEnd) && syrupEnd <= horizonEnd;
+
+        if (!hasOw && !inWindow) return;
+        out.push(eolEntry(r, today));
+      });
+    }
 
     // Expired first (oldest end date at the very top, so the standing backlog
     // surfaces before anything merely approaching), then Expiring, then the
     // extension states, then Blocked.
-    var rank = { Expired:0, Expiring:1, Pending:2, Extended:3, Indefinite:4, Blocked:5 };
+    var rank = { Expired:0, Expiring:1, Pending:2, Extended:3, Indefinite:4,
+                 'Never expires':5, 'No end date':6, Blocked:7 };
     out.sort(function(a,b){
-      var d = rank[a.state] - rank[b.state];
+      var d = (rank[a.state] == null ? 9 : rank[a.state]) - (rank[b.state] == null ? 9 : rank[b.state]);
       if (d) return d;
       var ax = a.syrupEnd ? a.syrupEnd.getTime() : Infinity;
       var bx = b.syrupEnd ? b.syrupEnd.getTime() : Infinity;
@@ -15651,16 +15714,178 @@ tr.nf-strow-shifted {background:#DBEAFE}
     return out;
   }
 
+  // ── Column filters ───────────────────────────────────────────────────────
+  // One spec per filterable column id. `get` returns the value the filter
+  // compares against, deliberately reading the SAME thing the cell renders so
+  // "filter to what I can see" always holds.
+  //   select -> exact match on the string, options derived from the universe
+  //   text   -> case-insensitive substring
+  //   num    -> 'min~max', either side optional
+  var FILTER_SPEC = {
+    sku:   { type:'text',   get:function(e){ return e.row.sku; } },
+    desc:  { type:'text',   get:function(e){ return e.row.style_desc; } },
+    color: { type:'text',   get:function(e){ return e.row.color_desc; } },
+    div:   { type:'select', get:function(e){ return e.row.division; } },
+    fpmd:  { type:'select', get:function(e){ return e.row.fp_md === 'Markdown' ? 'MD' : 'FP'; } },
+    days:  { type:'num',    get:function(e){ return e.days; } },
+    state: { type:'select', get:function(e){ return e.state; } },
+    // Not a value match — an "is it set, and how" filter, which is what you
+    // actually want from an override column.
+    ow:    { type:'select', get:function(e){
+               if (!e.ow) return 'None';
+               return e.ow.toUpperCase() === EOL_INDEF ? 'Indefinite' : 'Dated';
+             } },
+    newcf: { type:'select', get:function(e){ return e.row.new_cf; } },
+    mdwk:  { type:'text',   get:function(e){ return e.row.cs_md_exit; } },
+    plg:   { type:'num',    get:function(e){ return num(e.row.plg_oh); } },
+    soh:   { type:'num',    get:function(e){ return num(e.row.store_oh); } },
+    ooh:   { type:'num',    get:function(e){ return num(e.row.omni_oh); } },
+    depth: { type:'num',    get:function(e){ return e.row.sku_depth === '' ? null : num(e.row.sku_depth); } },
+    lcw:   { type:'num',    get:function(e){ return num(e.row.store_lcw); } },
+    turn:  { type:'num',    get:function(e){ return e.row.store_turn === '' ? null : num(e.row.store_turn); } },
+    stock: { type:'select', get:function(e){ return e.row.in_stock; } },
+    cfgct: { type:'num',    get:function(e){ return num(e.row.config_store_ct); } },
+  };
+
+  function matchesFilters(e){
+    for (var id in EOL_FILT) {
+      var spec = FILTER_SPEC[id]; if (!spec) continue;
+      var want = EOL_FILT[id];
+      if (want === '' || want == null) continue;
+      // The State column carries one non-state option: "manual only". It is an
+      // emission property, not a lifecycle stage, so it is handled by the
+      // caller and must be skipped here — otherwise the select's own equality
+      // test compares e.state against the sentinel and matches nothing.
+      if (id === 'state' && want === '✓manual') continue;
+      var got = spec.get(e);
+
+      if (spec.type === 'num') {
+        var pr = String(want).split('~');
+        var mn = pr[0] === '' || pr[0] == null ? null : Number(pr[0]);
+        var mx = pr[1] === '' || pr[1] == null ? null : Number(pr[1]);
+        // A null metric (blank depth / turn) can't satisfy a bound. Excluding
+        // it is the honest answer — "depth >= 5" should not return rows whose
+        // depth is unknown.
+        if (got == null || !isFinite(got)) return false;
+        if (mn != null && isFinite(mn) && got < mn) return false;
+        if (mx != null && isFinite(mx) && got > mx) return false;
+        continue;
+      }
+      if (spec.type === 'text') {
+        if (String(got == null ? '' : got).toLowerCase().indexOf(String(want).toLowerCase()) < 0) return false;
+        continue;
+      }
+      // select
+      if (String(got == null ? '' : got) !== String(want)) return false;
+    }
+    return true;
+  }
+
+  function distinct(id){
+    var spec = FILTER_SPEC[id]; if (!spec) return [];
+    var seen = {}, out = [];
+    EOL_ROWS.forEach(function(e){
+      var v = spec.get(e);
+      v = (v == null || v === '') ? '' : String(v);
+      if (!v) return;
+      if (!seen[v]) { seen[v] = 0; out.push(v); }
+      seen[v]++;
+    });
+    out._counts = seen;
+    return out;
+  }
+
+  function filterCell(id){
+    var spec = FILTER_SPEC[id];
+    if (!spec) return '';
+    var cur = EOL_FILT[id] == null ? '' : EOL_FILT[id];
+    var on  = cur !== '';
+
+    if (spec.type === 'select') {
+      var opts = distinct(id);
+      // State keeps its lifecycle order; everything else reads alphabetically.
+      if (id === 'state') {
+        var order = ['Expired','Expiring','Pending','Extended','Indefinite','Never expires','No end date','Blocked'];
+        opts.sort(function(a,b){
+          var ia=order.indexOf(a), ib=order.indexOf(b);
+          return (ia<0?99:ia) - (ib<0?99:ib);
+        });
+      } else {
+        opts.sort(function(a,b){ return String(a).localeCompare(String(b)); });
+      }
+      var h = '<select class="eol-fsel' + (on?' on':'') + '" onchange="eolSetFilter(\'' + id + '\',this.value)">'
+            + '<option value="">All</option>';
+      opts.forEach(function(o){
+        h += '<option value="' + esc(o) + '"' + (String(o)===String(cur)?' selected':'') + '>'
+           + esc(o) + ' (' + (opts._counts[o]||0) + ')</option>';
+      });
+      // "Manual" is orthogonal to state (it is an emission property, not a
+      // lifecycle stage) but it belongs on this column because that is where
+      // the tag renders.
+      if (id === 'state') {
+        var mct = EOL_ROWS.filter(function(e){ return e.manual; }).length;
+        h += '<option value="✓manual"' + (cur==='✓manual'?' selected':'') + '>— manual only (' + mct + ')</option>';
+      }
+      return h + '</select>';
+    }
+
+    if (spec.type === 'text') {
+      return '<input class="eol-ftext' + (on?' on':'') + '" type="text" placeholder="search" value="' + esc(cur) + '" '
+           + 'onchange="eolSetFilter(\'' + id + '\',this.value)" '
+           + 'title="Case-insensitive substring. Applies on blur or Enter.">';
+    }
+
+    var np = String(cur).split('~');
+    var mn = np[0] != null ? np[0] : '', mx = np[1] != null ? np[1] : '';
+    return '<div style="display:flex;flex-direction:column;gap:2px">'
+      + '<input class="eol-fnum' + (mn!==''?' on':'') + '" type="number" step="1" placeholder="≥ min" value="' + esc(mn) + '" '
+      + 'onchange="eolSetNumFilter(\'' + id + '\',\'min\',this.value)" title="Minimum (≥)">'
+      + '<input class="eol-fnum' + (mx!==''?' on':'') + '" type="number" step="1" placeholder="≤ max" value="' + esc(mx) + '" '
+      + 'onchange="eolSetNumFilter(\'' + id + '\',\'max\',this.value)" title="Maximum (≤). Set max = 0 to show only zeros.">'
+      + '</div>';
+  }
+
   function eolVisible(){
     var q = EOL_QUERY.trim().toLowerCase();
+    var lookupOn = EOL_LOOKUP.size > 0;
     return EOL_ROWS.filter(function(e){
-      if (EOL_VIEW === 'decide'   && !(e.state === 'Expired' || e.state === 'Expiring' || e.state === 'Pending')) return false;
-      if (EOL_VIEW === 'extended' && !(e.state === 'Extended' || e.state === 'Indefinite')) return false;
+      // The view segment is a shortcut over the standing universe. A lookup
+      // replaced that universe on purpose, so applying the segment on top
+      // would silently hide SKUs the user explicitly asked to see.
+      if (!lookupOn) {
+        if (EOL_VIEW === 'decide'   && !(e.state === 'Expired' || e.state === 'Expiring' || e.state === 'Pending')) return false;
+        if (EOL_VIEW === 'extended' && !(e.state === 'Extended' || e.state === 'Indefinite')) return false;
+      }
+      if (EOL_FILT.state === '✓manual') { if (!e.manual) return false; }
+      if (!matchesFilters(e)) return false;
       if (!q) return true;
       var r = e.row;
       return (String(r.sku||'') + ' ' + String(r.style_desc||'') + ' ' + String(r.color_desc||'') + ' ' + String(r.style||''))
         .toLowerCase().indexOf(q) >= 0;
     });
+  }
+
+  function eolSetFilter(id, val){
+    if (!FILTER_SPEC[id]) return;
+    if (val == null || val === '') delete EOL_FILT[id]; else EOL_FILT[id] = val;
+    eolRefresh();
+  }
+  function eolSetNumFilter(id, which, val){
+    if (!FILTER_SPEC[id]) return;
+    var pr = String(EOL_FILT[id] || '').split('~');
+    var mn = pr[0] != null ? pr[0] : '', mx = pr[1] != null ? pr[1] : '';
+    val = (val == null ? '' : String(val).trim());
+    if (which === 'min') mn = val; else mx = val;
+    var combined = (mn === '' && mx === '') ? '' : (mn + '~' + mx);
+    if (combined === '') delete EOL_FILT[id]; else EOL_FILT[id] = combined;
+    eolRefresh();
+  }
+  function eolClearFilters(){
+    var n = Object.keys(EOL_FILT).length + (EOL_QUERY ? 1 : 0);
+    EOL_FILT = {}; EOL_QUERY = '';
+    var sb = document.getElementById('eolSearch'); if (sb) sb.value = '';
+    eolRefresh();
+    showToast(n ? 'Cleared ' + n + ' filter(s)' : 'No filters were set', 2200);
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -15694,25 +15919,43 @@ tr.nf-strow-shifted {background:#DBEAFE}
             : e.state === 'Pending'    ? 'pill-yellow'
             : e.state === 'Extended'   ? 'pill-green'
             : e.state === 'Indefinite' ? 'pill-blue'
+            : e.state === 'Never expires' ? 'pill-blue'
             : 'pill-muted';
         var tip = e.state === 'Pending'
       ? 'Override recorded \u2014 waiting in the Configs Generator to be pushed to Syrup'
       : e.state === 'Blocked'
       ? 'MD / DROP note present \u2014 this SKU is on a declared exit path and cannot be extended here'
+      : e.state === 'Never expires'
+      ? 'Syrup config already runs to the end-of-time sentinel \u2014 nothing to extend'
+      : e.state === 'No end date'
+      ? 'No Syrup config end date on this SKU (it may have no live config at all) \u2014 surfaced only because you looked it up'
       : '';
     return '<span class="pill ' + cls + '" title="' + esc(tip) + '">' + esc(e.state) + '</span>'
          + (e.manual ? '<span class="eol-manual" title="Carries an adjustment note, so the Configs Generator will not auto-emit it \u2014 amend this one directly in the config eligibility sheet">manual</span>' : '');
   }
 
+  // Frozen columns: checkbox at left:0, SKU at left:30px (see .eol-pin2). Both
+  // header rows carry the same pin classes as the body cells or they drift
+  // apart during horizontal scroll.
+  function pinCls(id){
+    return id === 'chk' ? ' nf-pin' : id === 'sku' ? ' nf-pin eol-pin2' : '';
+  }
+
   function renderHead(){
-    var h = '<tr>' + COLS.map(function(c){
-      var left = !c[2] && c[1] !== 'chk';
+    var labels = '<tr>' + COLS.map(function(c){
       if (c[1] === 'chk') {
-        return '<th class="l nf-pin" style="width:26px"><input type="checkbox" class="eol-chk" id="eolChkAll" onclick="eolSelectAll(this.checked)"></th>';
+        return '<th class="l nf-pin" style="width:30px"><input type="checkbox" class="eol-chk" id="eolChkAll" onclick="eolSelectAll(this.checked)"></th>';
       }
-      return '<th class="' + (left ? 'l' : '') + (c[1] === 'sku' ? ' nf-pin' : '') + '">' + esc(c[0]) + '</th>';
+      var left = !c[2];
+      return '<th class="' + (left ? 'l' : '') + pinCls(c[1]) + '">' + esc(c[0]) + '</th>';
     }).join('') + '</tr>';
-    document.getElementById('eolHead').innerHTML = h;
+
+    var filters = '<tr class="nf-filterrow">' + COLS.map(function(c){
+      var left = !c[2] && c[1] !== 'chk';
+      return '<th class="' + (left ? 'l' : '') + pinCls(c[1]) + '">' + filterCell(c[1]) + '</th>';
+    }).join('') + '</tr>';
+
+    document.getElementById('eolHead').innerHTML = labels + filters;
   }
 
   function renderBody(list){
@@ -15739,7 +15982,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
         + '<td class="l nf-pin"><input type="checkbox" class="eol-chk" data-sku="' + esc(r.sku) + '"'
             + (EOL_SEL[r.sku] ? ' checked' : '') + (e.blocked ? ' disabled' : '')
             + ' onclick="eolToggle(this)"></td>'
-        + '<td class="l nf-pin"><a href="javascript:void(0)" onclick="openDrilldown(\'' + esc(r.sku) + '\')">' + esc(r.sku) + '</a></td>'
+        + '<td class="l nf-pin eol-pin2"><a href="javascript:void(0)" onclick="openDrilldown(\'' + esc(r.sku) + '\')">' + esc(r.sku) + '</a></td>'
         + '<td class="l"><div class="nf-styledesc" title="' + esc(r.style_desc) + '">' + esc(r.style_desc || '\u2014') + '</div></td>'
         + '<td class="l"><div class="nf-colordesc" title="' + esc(r.color_desc) + '">' + esc(r.color_desc || '\u2014') + '</div></td>'
         + '<td class="l">' + esc(r.division || '\u2014') + '</td>'
@@ -15812,10 +16055,16 @@ tr.nf-strow-shifted {background:#DBEAFE}
     renderBulk(list);
     var sub = document.getElementById('eolSubtitle');
     if (sub) {
-      sub.textContent = EOL_ROWS.length + ' SKU(s) \u00b7 ' + EOL_HORIZON
-        + '-day horizon + all expired + all overridden \u00b7 config season '
-        + ((typeof CONFIG_SEASON !== 'undefined' && CONFIG_SEASON) || '');
+      var season = ((typeof CONFIG_SEASON !== 'undefined' && CONFIG_SEASON) || '');
+      var nFilt  = Object.keys(EOL_FILT).length;
+      var shown  = list.length;
+      sub.textContent = EOL_LOOKUP.size
+        ? ('Lookup: ' + shown + ' of ' + EOL_LOOKUP.size + ' SKU(s) \u00b7 horizon bypassed \u00b7 config season ' + season)
+        : (shown + ' of ' + EOL_ROWS.length + ' SKU(s) \u00b7 ' + EOL_HORIZON
+           + '-day horizon + all expired + all overridden \u00b7 config season ' + season)
+        + (nFilt ? ' \u00b7 ' + nFilt + ' column filter(s)' : '');
     }
+    updateLookupBtn();
   }
 
   function eolRefreshIfOpen(){
@@ -15923,7 +16172,67 @@ tr.nf-strow-shifted {background:#DBEAFE}
     document.getElementById('eolHorizon').value = EOL_HORIZON;
     eolRefresh();
   }
-  function eolSetQuery(q){ EOL_QUERY = q || ''; renderBody(eolVisible()); renderBulk(eolVisible()); }
+  // Deliberately does NOT call eolRefresh: this fires on every keystroke and a
+  // head re-render would blow away focus mid-word. The filter row's own inputs
+  // use onchange (blur/Enter) and can afford the full refresh.
+  function eolSetQuery(q){ EOL_QUERY = q || ''; var v = eolVisible(); renderBody(v); renderBulk(v); }
+
+  // ── Multi-SKU lookup ─────────────────────────────────────────────────────
+  function eolOpenLookup(){
+    var m = document.getElementById('eolLookupModal'); if (m) m.classList.add('open');
+  }
+  function eolCloseLookup(){
+    var m = document.getElementById('eolLookupModal'); if (m) m.classList.remove('open');
+  }
+
+  function eolRunLookup(){
+    var raw = (document.getElementById('eolLookupInput').value || '');
+    var skus = raw.split(/[\n,;\t]+/).map(function(x){ return x.trim().toUpperCase(); })
+                  .filter(Boolean);
+    if (!skus.length) { showToast('No SKUs entered', 2400); return; }
+
+    // De-dupe but keep the paste order for the "not found" message.
+    var seen = {}, uniq = [];
+    skus.forEach(function(x){ if (!seen[x]) { seen[x] = 1; uniq.push(x); } });
+
+    var known = {};
+    allRows().forEach(function(r){ known[String(r.sku).toUpperCase()] = 1; });
+    var missing = uniq.filter(function(x){ return !known[x]; });
+
+    EOL_LOOKUP = new Set(uniq);
+    eolCloseLookup();
+    eolRefresh();
+    updateLookupBtn();
+
+    var found = uniq.length - missing.length;
+    var msg = 'Showing ' + found + ' of ' + uniq.length + ' SKU(s)';
+    if (missing.length) {
+      msg += ' \u00b7 ' + missing.length + ' not in this season\u2019s data';
+      console.log('[EOL lookup] not found in ALL_ROWS (' + missing.length + '): ' + missing.join(', '));
+    }
+    showToast(msg, 4000);
+  }
+
+  function eolClearLookup(){
+    EOL_LOOKUP = new Set();
+    var ta = document.getElementById('eolLookupInput'); if (ta) ta.value = '';
+    eolRefresh();
+    updateLookupBtn();
+    showToast('Lookup cleared \u2014 back to the ' + EOL_HORIZON + '-day universe', 2600);
+  }
+
+  function updateLookupBtn(){
+    var b = document.getElementById('eolLookupBtn');
+    var c = document.getElementById('eolClearLookupBtn');
+    if (b) b.textContent = EOL_LOOKUP.size ? '\ud83d\udd0d ' + EOL_LOOKUP.size + ' SKU' + (EOL_LOOKUP.size !== 1 ? 's' : '') : '\ud83d\udd0d Lookup';
+    if (c) c.style.display = EOL_LOOKUP.size ? '' : 'none';
+    // The view segment is inert during a lookup (see eolVisible) — grey it out
+    // rather than leaving three buttons that silently do nothing.
+    ['eolSegDecide','eolSegExt','eolSegAll'].forEach(function(id){
+      var el = document.getElementById(id);
+      if (el) { el.disabled = EOL_LOOKUP.size > 0; el.style.opacity = EOL_LOOKUP.size ? '.4' : ''; }
+    });
+  }
 
   function eolCopySkus(){
     var list = eolVisible().map(function(e){ return e.sku; });
@@ -16001,6 +16310,13 @@ tr.nf-strow-shifted {background:#DBEAFE}
     console.log('[eolDiag] tab shows ' + eolBuild().length + ' SKU(s)');
   }
 
+  window.eolSetFilter     = eolSetFilter;
+  window.eolSetNumFilter  = eolSetNumFilter;
+  window.eolClearFilters  = eolClearFilters;
+  window.eolOpenLookup    = eolOpenLookup;
+  window.eolCloseLookup   = eolCloseLookup;
+  window.eolRunLookup     = eolRunLookup;
+  window.eolClearLookup   = eolClearLookup;
   window.eolDiag          = eolDiag;
   window.eolRefresh       = eolRefresh;
   window.eolRefreshIfOpen = eolRefreshIfOpen;
@@ -16016,7 +16332,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.eolCopySkus      = eolCopySkus;
   window._eolBuild        = eolBuild;   // exposed for the test harness
 
-  console.log('[EOL] End-of-lifecycle module ready [eol-review p7u]');
+  var _eolLm = document.getElementById('eolLookupModal');
+  if (_eolLm && _eolLm.addEventListener) {
+    _eolLm.addEventListener('click', function(e){ if (e.target === _eolLm) eolCloseLookup(); });
+  }
+
+  console.log('[EOL] End-of-lifecycle module ready [eol-review p7u3]');
 })();
 </script>
 
