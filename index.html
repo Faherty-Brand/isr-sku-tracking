@@ -1069,7 +1069,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review (p7u)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review (p7u2 · scope fix)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -15588,7 +15588,14 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var horizonEnd = new Date(today.getTime() + EOL_HORIZON * 86400000);
     var out = [];
 
-    (window.ALL_ROWS || []).forEach(function(r){
+    // SCOPE: ALL_ROWS / CONFIG_SEASON / ACTIVE_TAB are top-level `let` bindings
+    // in an earlier <script> block. A top-level `let` lands in the shared global
+    // LEXICAL scope, NOT on `window` — so `window.ALL_ROWS` is permanently
+    // undefined here while the bare identifier resolves fine. Reading them off
+    // `window` is why this tab first shipped rendering an empty list. Every
+    // other module in this file uses the same typeof-guarded bare read.
+    var rows = (typeof ALL_ROWS !== 'undefined' && Array.isArray(ALL_ROWS)) ? ALL_ROWS : [];
+    rows.forEach(function(r){
       var ow       = String(r.end_ow || '').trim();
       var hasOw    = !!ow;
       var owDate   = hasOw ? parseEndOW(ow) : null;
@@ -15806,12 +15813,13 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var sub = document.getElementById('eolSubtitle');
     if (sub) {
       sub.textContent = EOL_ROWS.length + ' SKU(s) \u00b7 ' + EOL_HORIZON
-        + '-day horizon + all expired + all overridden \u00b7 config season ' + (window.CONFIG_SEASON || '');
+        + '-day horizon + all expired + all overridden \u00b7 config season '
+        + ((typeof CONFIG_SEASON !== 'undefined' && CONFIG_SEASON) || '');
     }
   }
 
   function eolRefreshIfOpen(){
-    if (window.ACTIVE_TAB === 'eol') eolRefresh();
+    if (typeof ACTIVE_TAB !== 'undefined' && ACTIVE_TAB === 'eol') eolRefresh();
   }
 
   // ── Selection ────────────────────────────────────────────────────────────
@@ -15926,6 +15934,74 @@ tr.nf-strow-shifted {background:#DBEAFE}
     );
   }
 
+  // ── Diagnostic ───────────────────────────────────────────────────────────
+  // eolDiag()        -> funnel counts: how many rows die at each gate
+  // eolDiag('SKU-1') -> that SKU's gate-by-gate evaluation
+  // Exists because an empty tab has five plausible causes and squinting at the
+  // universe predicate is a bad way to tell them apart.
+  function eolDiag(sku){
+    var rows = (typeof ALL_ROWS !== 'undefined' && Array.isArray(ALL_ROWS)) ? ALL_ROWS : [];
+    var today = _today();
+    var horizonEnd = new Date(today.getTime() + EOL_HORIZON * 86400000);
+
+    function gates(r){
+      var syrupEnd = r.config_syrup_end ? parseXLDate(r.config_syrup_end) : null;
+      return {
+        hasCfg:    r._cfgPresent === true || !!r._cfgStatusUpper,
+        liveRows:  num(r.config_store_ct) > 0,
+        endParses: !!(syrupEnd && !isNaN(syrupEnd)),
+        notInf:    !!(syrupEnd && !isInfinite(syrupEnd)),
+        inWindow:  !!(syrupEnd && !isNaN(syrupEnd) && syrupEnd <= horizonEnd),
+        hasOw:     !!String(r.end_ow || '').trim(),
+        syrupEnd:  syrupEnd,
+      };
+    }
+
+    if (sku) {
+      var r = rows.find(function(x){ return String(x.sku).toUpperCase() === String(sku).toUpperCase(); });
+      if (!r) { console.log('[eolDiag] not in ALL_ROWS: ' + sku); return; }
+      var g = gates(r);
+      console.log('[eolDiag] ' + r.sku);
+      console.table([{
+        'config_syrup_end (raw)': r.config_syrup_end || '(blank)',
+        'parsed':                 g.syrupEnd ? g.syrupEnd.toDateString() : '(unparseable)',
+        'config_store_ct':        r.config_store_ct,
+        'config_status':          r.config_status,
+        'end_ow':                 r.end_ow || '(none)',
+      }]);
+      console.table([{
+        'has Syrup config': g.hasCfg, 'has >=1 TRUE row': g.liveRows,
+        'end date parses': g.endParses, 'end is finite': g.notInf,
+        'within horizon': g.inWindow, 'horizon (days)': EOL_HORIZON, 'has override': g.hasOw,
+        'APPEARS IN TAB': (g.hasCfg && g.liveRows && g.endParses && g.notInf && g.inWindow) || g.hasOw,
+      }]);
+      return;
+    }
+
+    var f = { total: rows.length, hasCfg:0, liveRows:0, endParses:0, notInf:0, inWindow:0, hasOw:0 };
+    rows.forEach(function(r){
+      var g = gates(r);
+      if (g.hasOw) f.hasOw++;
+      if (!g.hasCfg) return; f.hasCfg++;
+      if (!g.liveRows) return; f.liveRows++;
+      if (!g.endParses) return; f.endParses++;
+      if (!g.notInf) return; f.notInf++;
+      if (!g.inWindow) return; f.inWindow++;
+    });
+    console.log('[eolDiag] funnel \u00b7 horizon ' + EOL_HORIZON + 'd \u00b7 today ' + today.toDateString());
+    console.table([
+      { gate: '0. rows in ALL_ROWS',            surviving: f.total },
+      { gate: '1. has a Syrup config',          surviving: f.hasCfg },
+      { gate: '2. has >=1 TRUE (live) row',     surviving: f.liveRows },
+      { gate: '3. end date parses',             surviving: f.endParses },
+      { gate: '4. end date is finite',          surviving: f.notInf },
+      { gate: '5. end <= today + horizon',      surviving: f.inWindow },
+      { gate: '+ carrying an end_ow (always in)', surviving: f.hasOw },
+    ]);
+    console.log('[eolDiag] tab shows ' + eolBuild().length + ' SKU(s)');
+  }
+
+  window.eolDiag          = eolDiag;
   window.eolRefresh       = eolRefresh;
   window.eolRefreshIfOpen = eolRefreshIfOpen;
   window.eolSetView       = eolSetView;
