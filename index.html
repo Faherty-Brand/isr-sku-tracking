@@ -1069,7 +1069,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date (p7v)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort (p7w)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -5589,6 +5589,28 @@ function r2(n) { return Math.round(n * 100) / 100; }
 function fmtDate(d) { if (!d || !(d instanceof Date) || isNaN(d)) return ''; const m=d.getMonth()+1,dd=d.getDate(),y=d.getFullYear(); return `${m.toString().padStart(2,'0')}/${dd.toString().padStart(2,'0')}/${String(y).slice(2)}`; }
 function fmtDate4(d) { if (!d || !(d instanceof Date) || isNaN(d)) return ''; const m=d.getMonth()+1,dd=d.getDate(),y=d.getFullYear(); return `${m}/${dd}/${y}`; }
 function fmtDateStr(s) { if (!s) return ''; const d = parseXLDate(s); return d ? fmtDate(d) : ''; }
+// [p7w] Date-aware ordering for filter-dropdown value lists.
+// filterDateKey: 'MM/DD/YY', 'M/D/YYYY', optional '~' projection prefix ->
+// sortable yyyymmdd number (projected '~' dates sit just after an actual date
+// on the same day), or null if the value isn't date-shaped.
+function filterDateKey(v) {
+  const m = /^\s*(~)?\s*(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})\s*$/.exec(String(v));
+  if (!m) return null;
+  const mo = +m[2], d = +m[3];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const y = m[4].length === 2 ? 2000 + +m[4] : +m[4];
+  return y * 10000 + mo * 100 + d + (m[1] ? 0.5 : 0);
+}
+// cmpFilterDates: chronological compare when either side is a date; dates sort
+// ahead of non-date text in the same column (INDEF, —, Pending…). Returns null
+// when neither value is a date, so the caller falls through to its own rule.
+function cmpFilterDates(a, b) {
+  const ka = filterDateKey(a), kb = filterDateKey(b);
+  if (ka === null && kb === null) return null;
+  if (ka === null) return 1;
+  if (kb === null) return -1;
+  return ka - kb;
+}
 
 // ── Config date helpers (Pass 2 of Syrup Config Accuracy) ──────────────────
 // Replicate Excel AL/AM start/end date formulas + comparison shims.
@@ -7350,6 +7372,10 @@ function openColFilter(colId) {
       if (ia !== -1) return -1;
       if (ib !== -1) return 1;
     }
+    // [p7w] Dates must be checked before the numeric branch: parseFloat('09/08/26')
+    // is 9, so every September date tied and kept raw row order.
+    const dc = cmpFilterDates(a, b);
+    if (dc !== null) return dc;
     const an = parseFloat(a), bn = parseFloat(b);
     if (!isNaN(an) && !isNaN(bn)) return an - bn;
     return a.localeCompare(b);
@@ -12065,6 +12091,8 @@ function llOpenColFilter(colId, th) {
     }
     if (a === '(Blank)') return 1;
     if (b === '(Blank)') return -1;
+    const dc = cmpFilterDates(a, b);   // [p7w] chronological, not alphabetical
+    if (dc !== null) return dc;
     return a.localeCompare(b);
   });
 
@@ -13517,6 +13545,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
     return 6;
   }
   function nfAlpha(a,b){ return String(a||'').localeCompare(String(b||''), undefined, {sensitivity:'base', numeric:true}); }
+  // [p7w] Filter-option order: chronological for date values, else nfAlpha.
+  function nfOptCmp(a,b){ var dc = cmpFilterDates(a,b); return dc !== null ? dc : nfAlpha(a,b); }
 
   // ---- Newness for a given season (season-relative, PS-presence principle) ----
   // Mirrors the app's rule: a SKU is Newness for season X when it is planned in
@@ -13978,7 +14008,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
       // Keep div/deliv in their natural order; everything else alphabetical.
       if (id === 'div')        opts.sort(function(a,b){ var d=nfDivRank(a)-nfDivRank(b); return d?d:nfAlpha(a,b); });
       else if (id === 'deliv') opts.sort(function(a,b){ var pa=delivParts(a),pb=delivParts(b); return pa[0]-pb[0] || pa[1]-pb[1]; });
-      else                     opts.sort(nfAlpha);
+      else                     opts.sort(nfOptCmp);
       var h = '<select class="nf-fsel" onchange="nfSetFilter(\'' + id + '\',this.value)"><option value="">All</option>';
       opts.forEach(function(o){
         // Size column: show the SIZE COUNT next to the size set (matching the
@@ -14550,7 +14580,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var opts = nfDistinctBy(NF_ALL_RECS, spec.get).map(String);
     if (id === 'deliv') opts.sort(function(a,b){ var pa=delivParts(a),pb=delivParts(b); return pa[0]-pb[0] || pa[1]-pb[1]; });
     else if (id === 'div') opts.sort(function(a,b){ var d=nfDivRank(a)-nfDivRank(b); return d?d:nfAlpha(a,b); });
-    else opts.sort(nfAlpha);
+    else opts.sort(nfOptCmp);
     return opts;
   }
   function nfMultiSel(id){ return Array.isArray(NF_FILT[id]) ? NF_FILT[id].slice() : []; }
@@ -15990,7 +16020,10 @@ tr.nf-strow-shifted {background:#DBEAFE}
           return (ia<0?99:ia) - (ib<0?99:ib);
         });
       } else {
-        opts.sort(function(a,b){ return String(a).localeCompare(String(b)); });
+        opts.sort(function(a,b){   // [p7w] dates chronological, text alphabetical
+          var dc = cmpFilterDates(a,b);
+          return dc !== null ? dc : String(a).localeCompare(String(b));
+        });
       }
       var h = '<select class="eol-fsel' + (on?' on':'') + '" onchange="eolSetFilter(\'' + id + '\',this.value)">'
             + '<option value="">All</option>';
