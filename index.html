@@ -595,6 +595,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .ll-badge-atrisk{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:var(--orange-bg);color:var(--orange);border:1px solid rgba(211,84,0,.2)}
 .ll-badge-late{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:var(--yellow-bg);color:var(--yellow);border:1px solid rgba(160,107,0,.2)}
 .ll-badge-noeta{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:500;background:#ECEAE5;color:#6B6560;border:1px solid #C8C4BC}
+.ll-badge-pastdue{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:700;background:var(--text);color:#fff;border:1px solid transparent}
 .ll-days-late{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--red)}
 .ll-days-ok{font-family:var(--mono);font-size:11px;color:var(--muted)}
 .ll-empty{padding:60px;text-align:center;color:var(--muted);font-family:var(--mono);font-size:12px}
@@ -1069,7 +1070,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort (p7w)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due (p7x)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -5144,8 +5145,10 @@ function computeAllRows(lookups) {
     }
 
     // ── On-Time Status (AR/CS) ──
-    const cs_ontime = computeOnTime(wip_cs_recv, wip_cs_pend, deliv_alloc_date);
-    const ns_ontime = computeOnTime(wip_ns_recv, wip_ns_pend, null);
+    const _fund = { plg_oh, syrup_ia };   // [p7x] funding gate for Past Due
+    const cs_ontime = computeOnTime(wip_cs_recv, wip_cs_pend, deliv_alloc_date, _fund);
+    const ns_ontime = computeOnTime(wip_ns_recv, wip_ns_pend, null, _fund);
+    const wip_past_due_days = wipPastDueDays(wip_cs_pend.inDCDate, plg_oh, syrup_ia);
 
     // ── Size Scale (PST col BE) ──
     const cs_size_scale = cfg.sizeScale || '';
@@ -5306,8 +5309,9 @@ function computeAllRows(lookups) {
     //     and frozen-but-still-valid (syrup<calc_start, ≥AJ+11) pass.
     //   • Otherwise: Syrup start exists AND (Syrup start ≠ calc start OR Syrup end ≠ calc end) → "Off"
     //   • Otherwise → "Correct"
+    const _pendForCfg = (wip_cs_pend && wip_cs_pend.inDCDate instanceof Date) ? wip_cs_pend.inDCDate : null;  // [p7x]
     const calc_start = computeCalcStartDate({
-      new_cf, deliv_alloc_date, alloc_date,
+      new_cf, deliv_alloc_date, alloc_date, pend_indc: _pendForCfg,
     });
     const calc_end   = computeCalcEndDate({
       calc_start, new_cf, md_exit: cs.mdExit, weeks_bought: cs.weeksBought,
@@ -5343,6 +5347,7 @@ function computeAllRows(lookups) {
         deliv_alloc_date, alloc_date,
         md_exit: cs.mdExit, weeks_bought: cs.weeksBought,
         end_ow,
+        pend_indc: _pendForCfg,
       })) {
       config_dt_status = 'Off';
     }
@@ -5452,6 +5457,8 @@ function computeAllRows(lookups) {
       xs_pend_qty:  xs_pend_qty  === '' ? '' : xs_pend_qty,
       syrup_rp: syrup_rp || '',
       cs_ontime,
+      wip_past_due: wip_past_due_days !== null,        // [p7x]
+      wip_past_due_days: wip_past_due_days,            // [p7x] null when not past due
       cs_dc_recd: wip_cs_recv.inDCDate ? fmtDate4(wip_cs_recv.inDCDate) : '',
       cs_po_recd: wip_cs_recv.poQty || '',
       cs_dc_pend: wip_cs_pend.inDCDate ? fmtDate4(wip_cs_pend.inDCDate) : '',
@@ -5636,8 +5643,71 @@ function _serialToDate(s) {
 const CFG_CF_START_DATE = _serialToDate(CFG_CF_START_SERIAL);
 const CFG_INFINITY_DATE = _serialToDate(CFG_INFINITY_SERIAL);
 
+// ── [p7x] Late-newness hold ────────────────────────────────────────────────
+// ROOT CAUSE this replaces: a Newness SKU whose Flow Cal drop (AJ) has passed
+// but which has NOT dropped (no Newness Log entry) used to fall into a
+// today-dependent "fallback" start (2nd Saturday from today, floored at AJ+11)
+// and a matching tolerance window in the date check. Neither checked that the
+// Syrup start was still in the FUTURE. A late SKU therefore kept its original
+// AJ+11 start, Syrup flipped it IA -> Replen on that date with nothing in the
+// DC, IA recs against the PO stopped, and the date check still read Correct —
+// so the SKU never reached the Configs Generator. Re-generating only bought
+// ~10 days before it lapsed again.
+//
+// New model ("hold, then snap to the drop"):
+//   upcoming  AJ in the future                       -> AJ + 11          (unchanged)
+//   dropped   Newness Log date for THIS delivery     -> max(AH+3, AJ+11) (fixed, event-based)
+//   held      AJ passed, no drop logged              -> placeholder well in the
+//             future; the Newness Log entry is what later sets the real date.
+// "Dropped" is decided by Newness Log presence, NOT by which formula branch a
+// row lands in: an early drop (AH < AJ) used to fall into the fallback too.
+const CFG_HOLD_DAYS        = 28;  // held start = at least today + this, Monday-snapped
+const CFG_HOLD_LEAD_DAYS   = 7;   // re-flag a held config when its start is within this many days
+const CFG_PEND_BUFFER_DAYS = 14;  // expected receipt (future WIP in-DC) -> start buffer
+const CFG_DROP_WINDOW_DAYS = 14;  // a Newness Log date counts as this delivery's drop if >= AJ - this
+                                  // (same backoff the NF Review release window uses)
+
+function _nextMondayOnOrAfter(d) {
+  const dow = d.getDay();                      // Sun=0 .. Sat=6
+  return _addDays(d, (8 - dow) % 7);           // Mon -> +0, Sun -> +1, Tue -> +6
+}
+
+// 'upcoming' | 'dropped' | 'held' for a Newness row. aj/ah are Date|null.
+function cfgDropState(aj, ah, today) {
+  if (aj && aj > today) return 'upcoming';
+  if (ah && (!aj || ah >= _addDays(aj, -CFG_DROP_WINDOW_DAYS))) return 'dropped';
+  return 'held';
+}
+
+// Start for an undropped Newness SKU whose drop date has passed. pend =
+// expected in-DC (Date|null); only a FUTURE pending date counts — a past one
+// is stale.
+//
+// GRACE: the planned AJ+11 is KEPT while it is still safely ahead — beyond the
+// lead window and after any future receipt. On drop day the Newness Log often
+// lags by a day; without this, an on-time SKU that happened to be Off for an
+// unrelated reason (e.g. a store-count mismatch) would be regenerated with a
+// start pushed a month out. This is the exact complement of the held check in
+// configDateParts, so calc_start and the verdict can't disagree.
+function cfgHoldStart(aj, pend, today) {
+  const pendF = (pend instanceof Date && !isNaN(pend) && pend > today) ? pend : null;
+  if (aj) {
+    const planned = _addDays(aj, 11);
+    if (planned > _addDays(today, CFG_HOLD_LEAD_DAYS) && (!pendF || planned > pendF)) return planned;
+  }
+  let d = _addDays(today, CFG_HOLD_DAYS);
+  if (aj) d = _maxDate(d, _addDays(aj, 11));
+  if (pend instanceof Date && !isNaN(pend) && pend > today) {
+    d = _maxDate(d, _addDays(pend, CFG_PEND_BUFFER_DAYS));
+  }
+  return _nextMondayOnOrAfter(d);
+}
+
 // Calculated Start Date (Excel AL4)
-function computeCalcStartDate({new_cf, deliv_alloc_date, alloc_date}) {
+// [p7x] `pend_indc` feeds the hold. `legacy: true` returns the pre-p7x value
+// and exists ONLY for the CF carve-out in configDateParts, whose tolerance
+// ceiling was tuned against the old formula — CF behaviour must not move.
+function computeCalcStartDate({new_cf, deliv_alloc_date, alloc_date, pend_indc, legacy}) {
   if (!new_cf) return null;                    // no expectation
   if (new_cf === 'CF') return CFG_CF_START_DATE;
 
@@ -5645,18 +5715,22 @@ function computeCalcStartDate({new_cf, deliv_alloc_date, alloc_date}) {
   const aj = deliv_alloc_date instanceof Date ? deliv_alloc_date : null;
   const ah = alloc_date       instanceof Date ? alloc_date       : null;
 
-  if (aj && aj > today) {
-    return _addDays(aj, 11);
-  }
-  if (ah && aj && ah >= aj) {
-    return _maxDate(_addDays(ah, 3), _addDays(aj, 11));
-  }
-  // Fallback: 2nd Monday from today, or aj+14 if later. Excel formula:
-  //   today + IF(MOD(7-WEEKDAY(today,1),7)=0, 14, MOD(7-WEEKDAY(today,1),7)+7)
-  // WEEKDAY mode 1: Sun=1..Sat=7. MOD(7-WD(d,1),7) = days until next Sunday (0 if Sun today).
-  // The +7 makes that "the Monday a week after next Sunday." If today IS Sunday, jump 14.
-  const dow = today.getDay(); // JS: Sun=0..Sat=6 — same as Excel WEEKDAY(...,1)-1
-  const wd1 = dow + 1;        // Sun=1..Sat=7 to match Excel
+  if (legacy) return _legacyCalcStart(aj, ah, today);
+
+  const state = cfgDropState(aj, ah, today);
+  if (state === 'upcoming') return _addDays(aj, 11);
+  if (state === 'dropped')  return aj ? _maxDate(_addDays(ah, 3), _addDays(aj, 11)) : _addDays(ah, 3);
+  const pend = pend_indc instanceof Date ? pend_indc : null;
+  return cfgHoldStart(aj, pend, today);
+}
+
+// Pre-p7x formula, verbatim. Excel parity: the "fallback" lands on the second
+// SATURDAY from today (MOD(7-WEEKDAY(d,1),7) counts days to Saturday), not the
+// Monday the old comment claimed. Kept only for the CF ceiling — see above.
+function _legacyCalcStart(aj, ah, today) {
+  if (aj && aj > today) return _addDays(aj, 11);
+  if (ah && aj && ah >= aj) return _maxDate(_addDays(ah, 3), _addDays(aj, 11));
+  const wd1 = today.getDay() + 1;
   const offset = (7 - wd1) % 7 === 0 ? 14 : ((7 - wd1) % 7) + 7;
   const calendarFallback = _addDays(today, offset);
   return aj ? _maxDate(calendarFallback, _addDays(aj, 11)) : calendarFallback;
@@ -5783,6 +5857,7 @@ function configDateParts({
   deliv_alloc_date, alloc_date,
   md_exit, weeks_bought,
   end_ow,
+  pend_indc,
 }) {
   if (!syrup_start) return { startOk: true, endOk: true };  // no Syrup config row → nothing to flag
 
@@ -5799,8 +5874,9 @@ function configDateParts({
   if (new_cf === 'CF') {
     // (A) CF carve-out — accept past dates AND fresh-allocation dates.
     // Compute what calc_start would be if new_cf weren't CF.
+    // [p7x] legacy: the CF ceiling is deliberately left on the pre-p7x formula.
     const underlyingStart = computeCalcStartDate({
-      new_cf: 'NEWNESS', deliv_alloc_date: aj, alloc_date: ah,
+      new_cf: 'NEWNESS', deliv_alloc_date: aj, alloc_date: ah, legacy: true,
     });
     const ceiling = underlyingStart ? _maxDate(today, underlyingStart) : today;
     startOk = syrup_start <= ceiling;
@@ -5815,17 +5891,26 @@ function configDateParts({
       endOk = false;
     }
   } else {
-    // (B) NEWNESS — detect today-dependent fallback branch.
-    const inFallbackBranch =
-      (!aj || aj <= today) &&
-      !(ah && aj && ah >= aj);
+    // (B) NEWNESS  [p7x]. Classified by drop state, not formula branch.
+    const state = cfgDropState(aj, ah, today);
 
-    if (inFallbackBranch) {
-      // Start: any value in [AJ+11, calc_start]
-      const floor = aj ? _addDays(aj, 11) : null;
-      const aboveFloor   = !floor || syrup_start >= floor;
-      const belowCeiling = syrup_start <= calc_start;
-      startOk = aboveFloor && belowCeiling;
+    if (state === 'held') {
+      // Late and undropped. calc_start moves with today, so an exact match is
+      // impossible; instead enforce the invariant that matters: the Syrup start
+      // must still be comfortably in the FUTURE, or Syrup flips the SKU to
+      // Replen before it ever gets its IA.
+      //   • > today + CFG_HOLD_LEAD_DAYS  (flag a week before it would lapse)
+      //   • ≥ AJ + 11                     (never open earlier than the plan)
+      //   • > expected in-DC, when WIP carries a future date (start must not
+      //     lapse before the goods even arrive — catches WIP pushouts)
+      // No upper ceiling: while undropped, any future start holds IA. Once the
+      // drop is logged the row becomes 'dropped' and is checked strictly.
+      const leadEdge = _addDays(today, CFG_HOLD_LEAD_DAYS);
+      const floor    = aj ? _addDays(aj, 11) : null;
+      const pend     = (pend_indc instanceof Date && !isNaN(pend_indc) && pend_indc > today) ? pend_indc : null;
+      startOk = syrup_start > leadEdge
+             && (!floor || syrup_start >= floor)
+             && (!pend  || syrup_start > pend);
 
       // End: duration invariant, or strict infinity when expected
       if (!hasFiniteDuration) {
@@ -5835,7 +5920,8 @@ function configDateParts({
         endOk = !!syrup_end && sameDay(syrup_end, expectedEnd);
       }
     } else {
-      // AJ+11 branch or AH>=AJ branch — both today-independent. Strict.
+      // 'upcoming' (AJ+11) or 'dropped' (max(AH+3, AJ+11)) — both
+      // today-independent. Strict.
       startOk = sameDay(syrup_start, calc_start);
       endOk   = sameDay(syrup_end, calc_end);
     }
@@ -5855,6 +5941,11 @@ function configDateParts({
     // No start expectation exists when calc_start is null (e.g. new_cf blank).
     // Don't manufacture a start failure just to justify the end change.
     if (!calc_start) startOk = true;
+    // [p7x] An end override declares the SKU is in its replen life. If it is
+    // also 'held' (no Newness Log entry), the held-start rule would demand a
+    // future start and the generator would switch replen OFF — the opposite of
+    // the override's intent. The override wins; the start is left alone.
+    if (new_cf !== 'CF' && cfgDropState(aj, ah, today) === 'held') startOk = true;
   }
 
   return { startOk: !!startOk, endOk: !!endOk };
@@ -5985,8 +6076,10 @@ window.dbgConfigDate = function(sku) {
            : row.alloc_date ? parseXLDate(row.alloc_date) : null;
   const aj = row.deliv_alloc_date instanceof Date ? row.deliv_alloc_date
            : row.deliv_alloc_date ? parseXLDate(row.deliv_alloc_date) : null;
+  const _dbgPend = row.cs_dc_pend ? parseXLDate(row.cs_dc_pend) : null;
+  const pend = (_dbgPend && !isNaN(_dbgPend)) ? _dbgPend : null;   // [p7x]
   const calc_start = computeCalcStartDate({
-    new_cf: row.new_cf, deliv_alloc_date: aj, alloc_date: ah,
+    new_cf: row.new_cf, deliv_alloc_date: aj, alloc_date: ah, pend_indc: pend,
   });
   const calc_end = computeCalcEndDate({
     calc_start, new_cf: row.new_cf, md_exit: row._cs_md_exit_raw, weeks_bought: row.cs_weeks_bought,
@@ -6033,7 +6126,7 @@ window.dbgConfigDate = function(sku) {
   if (row.new_cf === 'CF') {
     const today = new Date(); today.setHours(0,0,0,0);
     const underlyingStart = computeCalcStartDate({
-      new_cf: 'NEWNESS', deliv_alloc_date: aj, alloc_date: ah,
+      new_cf: 'NEWNESS', deliv_alloc_date: aj, alloc_date: ah, legacy: true,
     });
     const ceiling = underlyingStart ? _maxDate(today, underlyingStart) : today;
     const startOk = syrupStartObj ? syrupStartObj <= ceiling : true;
@@ -6054,18 +6147,27 @@ window.dbgConfigDate = function(sku) {
       console.log(`  End check: no infinity match and no finite-duration path available → end fails`);
     }
   } else {
-    // Surface the today-dependent fallback-branch carve-out for NEWNESS rows.
+    // [p7x] Newness drop state: upcoming / dropped / held.
     const today = new Date(); today.setHours(0,0,0,0);
-    const inFallbackBranch =
-      (!aj || aj <= today) &&
-      !(ah && aj && ah >= aj);
-    console.log('In today-dependent fallback branch:', inFallbackBranch);
-    if (inFallbackBranch) {
+    const state = cfgDropState(aj, ah, today);
+    console.log('Drop state:', state,
+      state === 'upcoming' ? '(AJ in future → strict AJ+11)'
+    : state === 'dropped'  ? '(Newness Log date for this delivery → strict max(AH+3, AJ+11))'
+    :                        '(AJ passed, no drop logged → hold; Syrup start must stay in the future)');
+    if (ah && aj && state === 'held') {
+      console.log(`  Note: AH=${fmt(ah)} is older than AJ−${CFG_DROP_WINDOW_DAYS}d (${fmt(_addDays(aj,-CFG_DROP_WINDOW_DAYS))}) → treated as a prior drop, not this delivery's`);
+    }
+    if (state === 'held') {
+      const leadEdge = _addDays(today, CFG_HOLD_LEAD_DAYS);
       const floor = aj ? _addDays(aj, 11) : null;
-      const aboveFloor   = !floor || (syrupStartObj && syrupStartObj >= floor);
-      const belowCeiling = syrupStartObj && syrupStartObj <= calc_start;
-      console.log(`  Start window: [${fmt(floor)}, ${fmt(calc_start)}]  syrup_start=${fmt(syrupStartObj)}`);
-      console.log(`  ≥ floor: ${aboveFloor}  |  ≤ calc_start: ${belowCeiling}  →  start ${aboveFloor && belowCeiling ? 'passes' : 'fails'}`);
+      const pendF = (pend && pend > today) ? pend : null;
+      console.log(`  pending in-DC: ${fmt(pend)}${pend && pend <= today ? '  (PAST — stale, ignored for the hold)' : ''}`);
+      console.log(`  Hold target (calc_start): ${fmt(calc_start)} = Monday on/after max(today+${CFG_HOLD_DAYS}d${floor?', AJ+11':''}${pendF?', pend+'+CFG_PEND_BUFFER_DAYS+'d':''})`);
+      const c1 = !!syrupStartObj && syrupStartObj > leadEdge;
+      const c2 = !floor || (!!syrupStartObj && syrupStartObj >= floor);
+      const c3 = !pendF || (!!syrupStartObj && syrupStartObj > pendF);
+      console.log(`  syrup_start=${fmt(syrupStartObj)} | > today+${CFG_HOLD_LEAD_DAYS}d (${fmt(leadEdge)}): ${c1} | ≥ AJ+11 (${fmt(floor)}): ${c2} | > future pend (${fmt(pendF)}): ${c3}  →  start ${c1&&c2&&c3?'passes':'fails'}`);
+      if (String(row.end_ow||'').trim()) console.log('  End Date Override active → held-start rule waived (start passes regardless)');
       const exitStr = String(row.cs_md_exit || row._cs_md_exit_raw || '').trim().toUpperCase();
       const wks = parseFloat(row.cs_weeks_bought) || 0;
       const expectsInfinity = (exitStr === 'NONE' || wks === 0);
@@ -6077,6 +6179,7 @@ window.dbgConfigDate = function(sku) {
         console.log(`  End duration check: syrup_start (${fmt(syrupStartObj)}) + ${wks}w = ${fmt(expectedEnd)}  vs  syrup_end=${fmt(syrupEndObj)}  →  end ${endOk ? 'passes' : 'fails'}`);
       }
     }
+    console.log('WIP past due:', row.wip_past_due ? `YES — ${row.wip_past_due_days}d past WIP date, IA not funded` : 'no');
   }
   console.log('--- Status fields ---');
   console.log('config_dt_status:', row.config_dt_status);
@@ -6337,7 +6440,49 @@ function renderSSOffCell(row) {
   return `<span title="${ttl}" style="${mono}">${disp}</span>`;
 }
 
-function computeOnTime(wip_recv, wip_pend, allocDate) {
+// [p7x] On-Time pill — shared by the grid, partial repaint and side panel so
+// the three can't drift. 'Past Due' is dark (not red): red means "late with a
+// known date"; dark means "the date has passed, so there is no trustworthy ETA".
+function onTimePillHtml(v, row) {
+  const cls = v==='On Time'?'pill-green':v==='Late'?'pill-red':v==='Past Due'?'pill-dark':v==='In DC'?'pill-blue':'pill-muted';
+  let ttl = '';
+  if (v === 'Past Due' && row) {
+    const d = row.wip_past_due_days;
+    ttl = ` title="WIP in-DC ${row.cs_dc_pend||''} has passed${d!=null?' ('+d+'d ago)':''} and PLG OH (${(+row.plg_oh||0).toLocaleString()}) can't fund the IA ask (${(+row.syrup_ia||0).toLocaleString()}). WIP date likely not updated."`;
+  }
+  return `<span class="pill ${cls}"${ttl}>${v||'—'}</span>`;
+}
+
+// ── WIP past due  [p7x] ─────────────────────────────────────────────────────
+// ONE definition, shared by On-Time Status, the Late List, and dbgConfigDate:
+//   a pending WIP line whose in-DC date is BEFORE today, on a SKU whose online
+//   OH cannot fund its IA ask.
+// Why the funding gate: WIP is often updated a day or two after goods land. If
+// PLG OH already covers the IA ask the units are effectively here, whatever
+// the stale WIP line says — the same funding rule the Late List has always
+// used to drop fully-funded SKUs. Arriving TODAY is not past due.
+function isIAFunded(plgOH, iaQty) {
+  const p = +plgOH || 0, ia = +iaQty || 0;
+  return p > 0 && (ia === 0 || p >= ia);
+}
+// Days past the WIP in-DC date, or null when not past due.
+function wipPastDueDays(pendDate, plgOH, iaQty, today) {
+  if (!(pendDate instanceof Date) || isNaN(pendDate)) return null;
+  let t = today;
+  if (!t) { t = new Date(); t.setHours(0,0,0,0); }
+  const pd = new Date(pendDate); pd.setHours(0,0,0,0);
+  if (pd >= t) return null;
+  if (isIAFunded(plgOH, iaQty)) return null;
+  return Math.round((t - pd) / 86400000);
+}
+
+// [p7x] `fund` = {plg_oh, syrup_ia}. When supplied, a past-due pending line
+// reads 'Past Due' BEFORE the received/pending comparisons — previously a
+// stale date earlier than the alloc drop read "On Time" indefinitely. Checked
+// ahead of the received branch too: a partial receipt that still can't fund
+// the IA ask, with the remainder overdue, is past due.
+function computeOnTime(wip_recv, wip_pend, allocDate, fund) {
+  if (fund && wipPastDueDays(wip_pend.inDCDate, fund.plg_oh, fund.syrup_ia) !== null) return 'Past Due';
   if (wip_recv.inDCDate) {
     if (!allocDate) return 'In DC';
     const daysLate = Math.round((allocDate - wip_recv.inDCDate) / 86400000);
@@ -6803,7 +6948,10 @@ function recomputeRowDerived(row) {
   const wipPendDate = row.cs_dc_pend ? new Date(row.cs_dc_pend) : null;
   const fakeRecv = wipRecvDate && !isNaN(wipRecvDate) ? {inDCDate: wipRecvDate} : {};
   const fakePend = wipPendDate && !isNaN(wipPendDate) ? {inDCDate: wipPendDate} : {};
-  row.cs_ontime = computeOnTime(fakeRecv, fakePend, newAllocDate);
+  // [p7x] TWO-SITE PARITY: funding gate + past-due stamp, as in computeAllRows.
+  row.cs_ontime = computeOnTime(fakeRecv, fakePend, newAllocDate, { plg_oh: row.plg_oh, syrup_ia: row.syrup_ia });
+  row.wip_past_due_days = wipPastDueDays(fakePend.inDCDate, row.plg_oh, row.syrup_ia);
+  row.wip_past_due = row.wip_past_due_days !== null;
 
   // 5. Newness Proj — depends on the freshly-recomputed status above. Without
   //    this step, status flips to "Allocated for Season" after an override but
@@ -6896,8 +7044,13 @@ function recomputeRowDerived(row) {
   const ahDate = row.alloc_date instanceof Date ? row.alloc_date
                : row.alloc_date ? parseXLDate(row.alloc_date) : null;
   // newAllocDate (computed in step 1) is the override-aware AJ
+  // [p7x] TWO-SITE PARITY: pending in-DC feeds the late-newness hold here
+  // exactly as in computeAllRows.
+  const _pendCfg = row.cs_dc_pend ? parseXLDate(row.cs_dc_pend) : null;
+  const pendForCfg = (_pendCfg && !isNaN(_pendCfg)) ? _pendCfg : null;
   const calcStart = computeCalcStartDate({
     new_cf: row.new_cf, deliv_alloc_date: newAllocDate, alloc_date: ahDate,
+    pend_indc: pendForCfg,
   });
   // [p7u] TWO-SITE PARITY: end_ow must be read and applied here exactly as in
   // computeAllRows, or an override saved from the grid would compute correctly
@@ -6931,6 +7084,7 @@ function recomputeRowDerived(row) {
       deliv_alloc_date: newAllocDate, alloc_date: ahDate,
       md_exit: row.cs_md_exit,        weeks_bought: row.cs_weeks_bought,
       end_ow: endOw,
+      pend_indc: pendForCfg,
     })) {
     dtStatus2 = 'Off';
   }
@@ -8109,8 +8263,7 @@ function renderPage() {
       // repaint path (refreshDependentCells) can't drift from this one.
       if (id === 'ss_off_date') return `<td>${renderSSOffCell(row)}</td>`;
       if (id === 'cs_ontime' || id === 'ns_ontime' || id === 'v_ontime') {
-        const cls = v==='On Time'?'pill-green':v==='Late'?'pill-red':v==='In DC'?'pill-blue':'pill-muted';
-        return `<td><span class="pill ${cls}">${v}</span></td>`;
+        return `<td>${onTimePillHtml(v, id === 'cs_ontime' ? row : null)}</td>`;   // [p7x]
       }
       // Style Description — constrained-width column: clip with ellipsis and
       // expose the full text on hover so the column stays narrow without losing
@@ -8370,7 +8523,7 @@ function openDrilldown(sku) {
       ['Next in-DC', row.xs_pend_full || '—'],
       ['Syrup IA', (row.syrup_ia||0).toLocaleString()],
       ['Syrup Rp', (row.syrup_rp||0).toLocaleString()],
-      ['On-Time Status', `<span class="pill ${row.cs_ontime==='On Time'?'pill-green':row.cs_ontime==='Late'?'pill-red':'pill-muted'}">${row.cs_ontime||'—'}</span>`],
+      ['On-Time Status', onTimePillHtml(row.cs_ontime, row)],   // [p7x]
     ]},
     // ── Syrup Config Accuracy (Pass 1: store count only) ──────────────────
     // Surfaces the BG / BL flag breakdown so the user can see WHY a config
@@ -9318,9 +9471,7 @@ function refreshDependentCells(tr, row) {
       cell.innerHTML = `<span class="pill ${statusClass(row.status)}">${row.status||'—'}</span>`;
     }
     if (id === 'cs_ontime') {
-      const v = row.cs_ontime;
-      const cls = v==='On Time'?'pill-green':v==='Late'?'pill-red':v==='In DC'?'pill-blue':'pill-muted';
-      cell.innerHTML = `<span class="pill ${cls}">${v||'—'}</span>`;
+      cell.innerHTML = onTimePillHtml(row.cs_ontime, row);   // [p7x]
     }
     if (id === 'newness_proj') {
       const v = row.newness_proj || '';
@@ -10263,6 +10414,10 @@ function buildConfigsExport() {
   let amendedSkus = 0;       // [p7u] SKUs emitted as date-only amendments (counted once per SKU, before the per-store fan-out)
   const unmappedStores = new Set();
   const unknownTiers = new Set();
+  // [p7x] late-newness hold accounting
+  const _cfgToday = new Date(); _cfgToday.setHours(0,0,0,0);
+  const heldSkus = [];            // held SKUs emitted with a pushed-out start
+  const heldWithStoreOH = [];     // …of which already carry store units (possible missing Newness Log entry)
 
   for (const r of actionableRows) {
     // ── [p7u] End-date amendment lane ─────────────────────────────────────
@@ -10299,6 +10454,7 @@ function buildConfigsExport() {
         alloc_date:       r.alloc_date       ? parseXLDate(r.alloc_date)       : null,
         md_exit: r.cs_md_exit, weeks_bought: r.cs_weeks_bought,
         end_ow: r.end_ow,
+        pend_indc: r.cs_dc_pend ? parseXLDate(r.cs_dc_pend) : null,
       });
       if (parts.startOk && r.config_syrup_start) {
         amendFrom = _fmtConfigDate(r.config_syrup_start);
@@ -10330,6 +10486,15 @@ function buildConfigsExport() {
     const vUntil = _fmtConfigDate(r.config_calc_end);
     if (!vFrom || !vUntil) { skippedNoDates++; continue; }
     if (amendFrom) amendedSkus++;
+    // [p7x] Is this a late-newness hold? (non-CF, no amendment, drop state held)
+    if (!amendFrom && String(r.new_cf||'').trim().toUpperCase() !== 'CF') {
+      const _aj = r.deliv_alloc_date ? parseXLDate(r.deliv_alloc_date) : null;
+      const _ah = r.alloc_date       ? parseXLDate(r.alloc_date)       : null;
+      if (cfgDropState(_aj && !isNaN(_aj) ? _aj : null, _ah && !isNaN(_ah) ? _ah : null, _cfgToday) === 'held') {
+        heldSkus.push(r.sku);
+        if ((+r.store_oh || 0) > 0) heldWithStoreOH.push(r.sku);
+      }
+    }
 
     for (const storeName of stores) {
       const code = STORE_CODE_MAP[storeName];
@@ -10353,6 +10518,10 @@ function buildConfigsExport() {
   if (skippedNoStores) warnings.push(`${skippedNoStores} SKU(s) skipped — tier has no member stores`);
   if (skippedNoDates) warnings.push(`${skippedNoDates} SKU(s) skipped — calc_start or calc_end was empty`);
   if (skippedNoCode)  warnings.push(`${skippedNoCode} (SKU × store) row(s) skipped — store name has no entry in STORE_CODE_MAP: ${[...unmappedStores].join(', ')}`);
+  if (heldSkus.length) warnings.push(`${heldSkus.length} late Newness SKU(s) held — not in the Newness Log, so the start date is pushed out to keep them in IA. `
+    + `Once each drop is logged the SKU flips to Off and one more regeneration sets its real date.`);
+  if (heldWithStoreOH.length) warnings.push(`${heldWithStoreOH.length} of those already carry store inventory — confirm they have not dropped. `
+    + `If a Newness Log entry is simply missing, pushing the start out would switch their replen OFF: ${heldWithStoreOH.join(', ')}`);
   if (skippedNotedExt) warnings.push(`${skippedNotedExt} SKU(s) skipped — End Date Override on a SKU carrying an adjustment note. `
     + `The generated store list comes from the tier, but the note means the live config is intentionally a different set, `
     + `so emitting would restore doors the note removed. Update these rows directly in the config eligibility sheet `
@@ -10367,6 +10536,8 @@ function buildConfigsExport() {
     emptyTierOwRows,
     amendedSkus,
     skippedNotedExt,
+    heldSkus,
+    heldWithStoreOH,
   };
 }
 
@@ -11049,7 +11220,7 @@ function iaWipProb(bufferDays) {
 
 function iaOnTimeBonus(cs_ontime) {
   if (cs_ontime === 'On Time') return 0.05;
-  if (cs_ontime === 'Late')    return -0.05;
+  if (cs_ontime === 'Late' || cs_ontime === 'Past Due') return -0.05;   // [p7x]
   return 0;
 }
 
@@ -11059,8 +11230,12 @@ function iaPendingProb(row) {
   if (!row.cs_dc_pend) return null; // no WIP date — caller handles separately
 
   const dropDate = row.deliv_alloc_date ? parseXLDate(row.deliv_alloc_date) : null;
-  const wipDate  = parseXLDate(row.cs_dc_pend);
+  let   wipDate  = parseXLDate(row.cs_dc_pend);
   if (!dropDate || !wipDate) return null;
+  // [p7x] A pending date already behind us is stale — the goods can't arrive
+  // yesterday. Use today as the effective ETA so a past-due line isn't scored
+  // as if it had landed comfortably ahead of the drop.
+  { const _t = new Date(); _t.setHours(0,0,0,0); if (wipDate < _t) wipDate = _t; }
 
   const bufferDays = Math.round((dropDate - wipDate) / 86400000);
   const wipProb = iaWipProb(bufferDays);
@@ -11963,13 +12138,23 @@ function computeLateList(season) {
       // ── Resolve pending in-DC date ──────────────────────────────────────
       const pendDate = agg.earliestPendDate || parseXLDate(sSlice.dc_pend || '');
 
+      // [p7x] WIP PAST DUE — the pending in-DC date is already behind us and
+      // the SKU still can't fund its IA ask (the funding gate above has already
+      // removed funded SKUs). A stale date is not evidence of being on time, so
+      // past-due rows bypass the "arrives before the drop" skips below. Before
+      // p7x a line dated 9/4 against a 9/10 drop read on-time forever, and
+      // merch partners never saw SKUs whose WIP simply hadn't been updated.
+      const pastDueDays = (pendDate && !isNaN(pendDate))
+        ? wipPastDueDays(pendDate, onHandSignal, iaQty, today) : null;
+      const isPastDue = pastDueDays !== null;
+
       // Skip only if soonest pending shipment arrives strictly BEFORE alloc date.
       // Same-day (pendDate === allocDate) is considered late — inbound SKUs take
       // 1 day to receive and process, so arriving on alloc day is effectively late.
       // NOTE: This check only applies to CS. For PS, stale pending dates that
       // predate the alloc date are NOT considered on-time — the date simply
       // wasn't updated, so we still surface them as late.
-      if (isCS && pendDate && pendDate < allocDate) {
+      if (isCS && pendDate && pendDate < allocDate && !isPastDue) {
         return;
       }
 
@@ -11981,7 +12166,7 @@ function computeLateList(season) {
       // ── NS (FA26): pure date comparison ──────────────────────────────────
       // Late only when the pend-in-DC date lands on/after the alloc drop date.
       // Anything arriving before its alloc drop is on time and is not surfaced.
-      if (isNS && pendDate < allocDate) {
+      if (isNS && pendDate < allocDate && !isPastDue) {
         return;
       }
 
@@ -11989,8 +12174,13 @@ function computeLateList(season) {
       // allocation cannot cover from current funding (IA minus funded OH),
       // falling back to pending inbound qty when there is no IA ask.
       const missingQty = (iaQty > 0 ? Math.max(0, iaQty - totalFunded) : (pendQty || 0));
-      const daysLate   = pendDate ? Math.round((pendDate - allocDate) / 86400000) : null;
-      const urgency    = daysLate === null ? 'No ETA'
+      // [p7x] A past-due line's effective ETA is TODAY (the goods can't arrive
+      // yesterday), so Days Late is measured from today rather than from the
+      // stale date — which used to produce negatives like "+-6 days".
+      const effEta     = isPastDue ? today : pendDate;
+      const daysLate   = effEta ? Math.round((effEta - allocDate) / 86400000) : null;
+      const urgency    = isPastDue ? 'Past Due'
+        : daysLate === null ? 'No ETA'
         : daysLate <= 7  ? 'Late'
         : daysLate <= 21 ? 'At Risk'
         : 'Critical';
@@ -12016,6 +12206,7 @@ function computeLateList(season) {
         pend_indc_date:  pendDate ? fmtDate4(pendDate) : '—',
         pend_indc_raw:   pendDate,
         days_late:       daysLate,
+        wip_overdue_days: pastDueDays,          // [p7x] days past the WIP in-DC date (null = not past due)
         urgency,
         allocDate,
       });
@@ -12245,8 +12436,9 @@ function llClearColFilter(colId) {
 let LL_TB_FILTERS = { deliv_month:new Set(), division:new Set(), category:new Set(), urgency:new Set() };
 let LL_TB_ACTIVE  = null;
 
-const LL_URGENCY_ORDER  = ['Critical','At Risk','Late','No ETA'];
+const LL_URGENCY_ORDER  = ['Past Due','Critical','At Risk','Late','No ETA'];
 const LL_URGENCY_LABELS = {
+  'Past Due':'Past Due (WIP date passed, not received)',   // [p7x]
   'Critical':'Critical (>21 days)',
   'At Risk':'At Risk (8–21 days)',
   'Late':'Late (≤7 days)',
@@ -12620,6 +12812,9 @@ function llSortRows() {
     if (LL_SORT_COL === 'days_late') {
       av = av === null ? 9999 : av;
       bv = bv === null ? 9999 : bv;
+    } else if (LL_SORT_COL === 'wip_overdue_days') {   // [p7x] not-past-due sorts below 0d
+      av = (av === null || av === undefined) ? -1 : av;
+      bv = (bv === null || bv === undefined) ? -1 : bv;
     } else if (LL_SORT_COL === 'deliv_month') {
       // Chronological sort using month order map
       return LL_SORT_DIR * (llMonthKey(av) - llMonthKey(bv));
@@ -12656,6 +12851,7 @@ const LL_COLS = [
   { id:'recv_qty',       label:'PLG OH',             grp:'Inventory', num:true },
   { id:'missing_qty',    label:'Missing Qty',       grp:'Inventory', num:true },
   { id:'pend_indc_date', label:'Pend In-DC Date',   grp:'WIP' },
+  { id:'wip_overdue_days', label:'WIP Overdue',     grp:'WIP',       num:true },   // [p7x]
   { id:'days_late',      label:'Days Late',         grp:'WIP',       num:true },
   { id:'urgency',        label:'Urgency',           grp:'WIP' },
 ];
@@ -12721,12 +12917,17 @@ function renderLateListTable() {
           return `<td class="ll-td"><span class="pill ${isCS?'pill-teal':'pill-muted'}">${v}</span></td>`;
         }
         if (col.id === 'urgency') {
-          const cls = v==='Critical'?'ll-badge-critical':v==='At Risk'?'ll-badge-atrisk':v==='No ETA'?'ll-badge-noeta':'ll-badge-late';
+          const cls = v==='Past Due'?'ll-badge-pastdue':v==='Critical'?'ll-badge-critical':v==='At Risk'?'ll-badge-atrisk':v==='No ETA'?'ll-badge-noeta':'ll-badge-late';
           return `<td class="ll-td"><span class="${cls}">${v}</span></td>`;
         }
         if (col.id === 'days_late') {
           if (v === null) return `<td class="ll-td num"><span class="ll-days-ok">No ETA</span></td>`;
-          return `<td class="ll-td num"><span class="${v>0?'ll-days-late':'ll-days-ok'}">+${v} days</span></td>`;
+          // [p7x] v can be <= 0 (a past-due line whose drop is still ahead) — no "+-N".
+          return `<td class="ll-td num"><span class="${v>0?'ll-days-late':'ll-days-ok'}">${v>0?'+':''}${v} days</span></td>`;
+        }
+        if (col.id === 'wip_overdue_days') {   // [p7x]
+          if (v === null || v === undefined) return `<td class="ll-td num"><span class="muted-cell">—</span></td>`;
+          return `<td class="ll-td num" title="WIP in-DC date ${row.pend_indc_date} has passed and the IA ask is not funded — WIP likely not updated"><span class="ll-days-late">${v}d</span></td>`;
         }
         if (col.id === 'missing_qty' || col.id === 'ia_qty' || col.id === 'recv_qty' || col.id === 'qty_ordered') {
           const n = parseFloat(v)||0;
@@ -12831,7 +13032,7 @@ function exportLateListHTML() {
   const fields = ['sku','season','division','category','subcategory','style_desc','color_desc',
     'tier','new_cf',
     'deliv_month','ship_mode','alloc_drop_date','ia_qty','qty_ordered','recv_qty','missing_qty',
-    'pend_indc_date','pend_indc_raw','days_late','urgency','allocDate'];
+    'pend_indc_date','pend_indc_raw','wip_overdue_days','days_late','urgency','allocDate'];
   const slimData = LATE_LIST_ALL.map(r => {
     const o = {};
     fields.forEach(f => { if (r[f] !== undefined) o[f] = r[f]; });
@@ -12901,6 +13102,7 @@ body{font-family:var(--body);background:var(--bg);color:var(--text);display:flex
 .ll-badge-atrisk{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:var(--orange-bg);color:var(--orange);border:1px solid rgba(211,84,0,.2)}
 .ll-badge-late{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:var(--yellow-bg);color:var(--yellow);border:1px solid rgba(160,107,0,.2)}
 .ll-badge-noeta{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:500;background:#ECEAE5;color:#6B6560;border:1px solid #C8C4BC}
+.ll-badge-pastdue{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:700;background:var(--text);color:#fff;border:1px solid transparent}
 .ll-days-late{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--red)}
 .ll-footer{display:flex;align-items:center;justify-content:space-between;padding:6px 20px;background:var(--surface);border-top:1px solid var(--border);flex-shrink:0}
 .sort-arrow{font-size:9px;margin-left:3px;opacity:.5}
@@ -12961,6 +13163,7 @@ body{font-family:var(--body);background:var(--bg);color:var(--text);display:flex
     <option value="Critical">Critical (&gt;21 days)</option>
     <option value="At Risk">At Risk (8–21 days)</option>
     <option value="Late">Late (≤7 days)</option>
+    <option value="Past Due">Past Due (WIP date passed)</option>
   </select>
   <div style="flex:1"></div>
   <span class="ll-filter-label" id="llRowCount">— rows</span>
@@ -13109,10 +13312,11 @@ function renderTable(){
   document.getElementById('llTableHead').innerHTML=grpRow+colRow;
   // Body
   const body=slice.map(r=>{let tr='<tr class="ll-row">';LL_COLS.forEach((c,ci)=>{const v=r[c.id];let cell='';
-    if(c.id==='urgency'){const cls=v==='Critical'?'ll-badge-critical':v==='At Risk'?'ll-badge-atrisk':v==='Late'?'ll-badge-late':'ll-badge-noeta';cell='<span class="'+cls+'">'+(v||'—')+'</span>'}
+    if(c.id==='urgency'){const cls=v==='Past Due'?'ll-badge-pastdue':v==='Critical'?'ll-badge-critical':v==='At Risk'?'ll-badge-atrisk':v==='Late'?'ll-badge-late':'ll-badge-noeta';cell='<span class="'+cls+'">'+(v||'—')+'</span>'}
     else if(c.id==='new_cf'){cell=v?'<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:600;'+(v==='Newness'?'background:#efe7fb;color:#6b21a8':v==='CF'?'background:#e3ecf9;color:#1e40af':'background:#ececec;color:#555')+'">'+v+'</span>':'—'}
     else if(c.id==='tier'){cell=v?'<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;background:#ececec;color:#444">'+v+'</span>':'—'}
-    else if(c.id==='days_late'){cell=v!==null&&v!==undefined?'<span class="ll-days-late">+'+v+'</span>':'—'}
+    else if(c.id==='days_late'){cell=v!==null&&v!==undefined?'<span class="ll-days-late">'+(v>0?'+':'')+v+'</span>':'—'}
+    else if(c.id==='wip_overdue_days'){cell=v!==null&&v!==undefined?'<span class="ll-days-late">'+v+'d</span>':'—'}
     else if(c.num){cell=v!=null?Number(v).toLocaleString():'—'}
     else{cell=v||'—'}
     tr+='<td class="ll-td'+(c.num?' num':'')+(ci===0?' ll-pin':'')+'">'+cell+'</td>'});
@@ -13582,6 +13786,19 @@ tr.nf-strow-shifted {background:#DBEAFE}
     return num(row.syrup_ia) > 0;
   }
 
+  // [p7x] STRANDED = a config-season Newness SKU that Syrup has already
+  // flipped to Replen (its config start date passed) but that has NOT dropped
+  // (not Released via the Newness Log). It never got its IA, so it still needs
+  // a depth decision — yet it failed BOTH gates before p7x: pending required
+  // cfg_life==='IA', released required a log entry. It is surfaced in the
+  // pending review and flagged; the fix itself is a config regeneration.
+  function nfIsStranded(row, code){
+    if (code !== CONFIG_SEASON) return false;
+    if (String(row.new_cf||'').trim().toUpperCase() !== 'NEWNESS') return false;
+    if (String(row.cfg_life||'').trim().toUpperCase() !== 'REPLEN') return false;
+    return !nfIsReleased(row, code);
+  }
+
   // ---- base universe for a season (before month filter): planned to deliver &
   //      NOT Carried-Forward. Store OH is intentionally NOT a gate — early-
   //      released newness and returning IA styles can carry store units and
@@ -13628,7 +13845,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
         // to Replen (config start date passed, i.e. the buffer after the drop) it
         // leaves the pending review. This removes carryforward/replen SKUs while
         // KEEPING IA SKUs that carry some spare OH in PLG/stores.
-        if (!nfIsIAEligible(row)) continue;
+        if (!nfIsIAEligible(row) && !nfIsStranded(row, code)) continue;   // [p7x] + stranded
         if (nfIsReleased(row, code)) continue;         // released rows live in the other mode
       } else {
         // Other seasons: season-relative carryforward exclusion.
@@ -13866,6 +14083,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
       status: dropped ? 'released' : (stored.status || 'pending'),
       autoReleased: dropped,
       logLocked: dropped,
+      stranded: !dropped && nfIsStranded(row, NF_SEASON),   // [p7x]
       overridden: overridden,
       droppedDate: droppedDate,
       // [nf-release-p6i] diagnostics for nfWhy()
@@ -14161,6 +14379,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
     status: function(r){
       return '<td class="l">'+nfStatusSelect(r)
         + (r.autoReleased?' <span title="In Newness Log'+(r.droppedDate?' — '+nfEsc(r.droppedDate):'')+'" style="color:var(--purple);font-size:11px;margin-left:2px">⬇</span>':'')
+        // [p7x] stranded marker
+        + (r.stranded?' <span class="pill pill-dark" style="margin-left:4px" title="Syrup already flipped this SKU to Replen, but it has not dropped (not in the Newness Log). It never received its IA. Regenerate its config (Configs Generator) to push the start date out.">Stranded</span>':'')
         + '</td>';
     },
     notes: function(r){ return '<td class="l"><input class="nf-note-input" type="text" value="'+nfEsc(r.note||'')+'" placeholder="note…" onchange="nfEditNote(\''+nfEsc(r.sku)+'\',this.value)" title="Note for merchandising partners — saved, synced, and included in the CSV export."></td>'; },
@@ -14442,7 +14662,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
         console.log('[NF] '+sku+' is not in the current view.\n'+
           '  Either a column filter is hiding it, or it is excluded from the universe:\n'+
           '  no delivery for '+NF_SEASON+' · non-allocated tier · or cfg_life is not IA\n'+
-          '  (a SKU whose Syrup config start date has passed flips to Replen and leaves NF).');
+          '  (a SKU whose Syrup config start date has passed flips to Replen and leaves NF —\n'+
+          '   unless it is Newness and has not dropped, in which case it is kept as Stranded [p7x]).');
         return;
       }
       var why = nfReason(r);
@@ -14923,8 +15144,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
     console.log('  hasPST[cur]='+(cur&&cur.hasPST)+' | prevSeason='+(i>0?reg[i-1].id:'(none)')+' hasPST[prev]='+(prev&&prev.hasPST)+' prevTier="'+(prev&&prev.tier||'')+'"');
     var _dOw = (NF_SEASON===CONFIG_SEASON && row.deliv_ow) ? String(row.deliv_ow).trim() : '';
     var _effDeliv = _dOw ? (_dOw.toUpperCase()==='NONE'?'':_dOw) : String((cur&&cur.deliv1)||'').trim();
-    var _gate = (NF_SEASON===CONFIG_SEASON) ? nfIsIAEligible(row) : !nfIsCF(row,NF_SEASON);
-    console.log('  → cfg_life="'+(row.cfg_life||'')+'" IAeligible='+nfIsIAEligible(row)+' | CF='+nfIsCF(row,NF_SEASON)+' (new_cf="'+(row.new_cf||'')+'") | effDeliv="'+_effDeliv+'" (deliv_ow="'+(row.deliv_ow||'')+'") | INCLUDED='+(!!_effDeliv && _gate));
+    var _gate = (NF_SEASON===CONFIG_SEASON) ? (nfIsIAEligible(row) || nfIsStranded(row, NF_SEASON)) : !nfIsCF(row,NF_SEASON);
+    console.log('  → cfg_life="'+(row.cfg_life||'')+'" IAeligible='+nfIsIAEligible(row)+' stranded='+nfIsStranded(row, NF_SEASON)+' | CF='+nfIsCF(row,NF_SEASON)+' (new_cf="'+(row.new_cf||'')+'") | effDeliv="'+_effDeliv+'" (deliv_ow="'+(row.deliv_ow||'')+'") | INCLUDED='+(!!_effDeliv && _gate));
     console.log('  aps='+num(cur&&cur.aps)+' sizeScale="'+(cur&&cur.size_scale||'')+'" sizeCt='+sizeCtFor(cur&&cur.size_scale)+' syrup_ia='+num(row.syrup_ia)+' tier_oh='+num(row.tier_oh)+' plg_oh='+num(row.plg_oh)+' store_ct='+num(cur&&cur.store_ct));
     console.log('  retailBuy='+num(cur&&cur.final_buy)+' onlineBuy='+num(cur&&cur.online_final_buy)+' minBuy='+num(cur&&cur.min_buy));
     return nfGet(NF_SEASON, sku);
