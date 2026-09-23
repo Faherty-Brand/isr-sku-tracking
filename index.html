@@ -1070,7 +1070,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category (p7z)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category (p7z2)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -2514,12 +2514,22 @@ function seasonMatricesOnBuild(P) {
 // Lookup key is trim().toUpperCase() — IDENTICAL to cs_store_ct's, so the
 // config season reproduces cs_store_ct exactly and a label cs_store_ct can't
 // resolve is reported as nomatch rather than papered over.
+// [p7z2] DISPLAY-ONLY "Non-allocating" labels for the Season-block Store Count
+// and Group Category columns. Deliberately NOT NON_ALLOC_TIERS: that set also
+// holds NFL / COLLEGIATE / NBA and drives Status, configs and the NF universe —
+// those SKUs still don't allocate. Here, a label outside this list that isn't a
+// matrix group reads "Not in matrix", so it surfaces as needing a matrix group.
+// DO NOT ALLOCATE is the drop-overwrite tier (legacy DROP normalizes to it);
+// matched with includes() for parity with the Status logic.
+const MX_NONALLOC_LABELS = new Set(['ONLINE ONLY', 'PARTNERSHIP', 'WHOLESALE EXCLUSIVE', 'DO NOT ALLOCATE', 'DROP']);
+function isMxNonAllocLabel(up) { return MX_NONALLOC_LABELS.has(up) || up.indexOf('DO NOT ALLOCATE') !== -1; }
+
 function seasonStoreCountInfo(key, tier) {
   const t = String(tier || '').trim();
   if (!t) return { count: null, state: 'notier' };
   const up = t.toUpperCase();
   if (up === 'NONE' || up === 'CF' || up === 'CARRY FORWARD') return { count: null, state: 'sentinel' };
-  if (NON_ALLOC_TIERS.has(up)) {
+  if (isMxNonAllocLabel(up)) {   // [p7z2] display list, not NON_ALLOC_TIERS
     // [p7z] still report a category if the label happens to be a matrix group
     const _m0 = seasonMatrixFor(key);
     return { count: null, state: 'nonalloc', category: (_m0.state === 'ready' && (_m0.tierToCategory || {})[up]) || '' };
@@ -2538,10 +2548,13 @@ function seasonStoreCountInfo(key, tier) {
 
 // [p7z] Group Category shown/filtered/exported. Blank only when there is no
 // store group at all, so no SKU silently drops out of a category filter.
+// [p7z2] 'Uncategorized' retired: a matrix group with no category also reads
+// "Not in matrix" (it has no usable matrix association). The cell tooltip and
+// the load log still say which of the two it is.
 function mxCategoryLabel(mx) {
   if (mx.category) return mx.category;
   switch (mx.state) {
-    case 'ok':          return 'Uncategorized';
+    case 'ok':          return 'Not in matrix';
     case 'nomatch':     return 'Not in matrix';
     case 'nonalloc':    return 'Non-allocating';
     case 'loading':     return 'Loading';
@@ -2552,8 +2565,10 @@ function mxCategoryLabel(mx) {
 function renderMxCategoryCell(r) {
   const v = r.v_mx_category || '';
   if (!v) return '<span class="muted-cell">—</span>';
-  if (v === 'Not in matrix') return `<span class="pill pill-orange" title="&quot;${sgEsc(r.v_tier)}&quot; is not a group in the ${sgEsc(seasonViewKey())} matrix">Not in matrix</span>`;
-  if (v === 'Uncategorized' || v === 'Non-allocating' || v === 'Loading' || v === 'Matrix unavailable')
+  if (v === 'Not in matrix') return `<span class="pill pill-orange" title="${r.v_mx_uncat
+      ? '&quot;' + sgEsc(r.v_tier) + '&quot; is a ' + sgEsc(seasonViewKey()) + ' matrix group but has no category assigned'
+      : '&quot;' + sgEsc(r.v_tier) + '&quot; is not a group in the ' + sgEsc(seasonViewKey()) + ' matrix — needs a matrix group'}">Not in matrix</span>`;
+  if (v === 'Non-allocating' || v === 'Loading' || v === 'Matrix unavailable')
     return `<span class="muted-cell" style="font-style:italic">${sgEsc(v === 'Loading' ? '…' : v)}</span>`;
   return `<span class="pill pill-muted">${sgEsc(v)}</span>`;
 }
@@ -2918,6 +2933,8 @@ function adaptMatrixPayload(payload, codeMap) {
   const _nCat = Object.keys(_gc.tierToCategory).length;
   console.log('[LiveMatrix] categories: ' + _nCat + ' of ' + Object.keys(tierToStores).length + ' groups categorized'
     + (_gc.categoryOrder.length ? ' · order: ' + _gc.categoryOrder.join(', ') : ''));
+  const _uncat = Object.keys(tierToStores).filter(function (k) { return !_gc.tierToCategory[k]; });
+  if (_nCat && _uncat.length) console.warn('[LiveMatrix] ' + _uncat.length + ' group(s) have no category (shown as "Not in matrix"): ' + _uncat.slice(0, 20).join(', '));
   if (payload && payload.groupCategories && !_nCat) {
     console.warn('[LiveMatrix] ⚠ payload has groupCategories but none could be read — run matrixCategoryDiag()');
   }
@@ -3030,6 +3047,7 @@ function seasonProjection(row, key){
   v.v_mx_state     = mx.state;
   v.v_mx_note      = mx.note || '';
   v.v_mx_category  = mxCategoryLabel(mx);   // [p7z] plain string — filters/CSV pass it through
+  v.v_mx_uncat     = (mx.state === 'ok' && !mx.category);   // [p7z2] group exists, category missing
   return v;
 }
 function projectSeasonView(row){
