@@ -1070,7 +1070,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due (p7x)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count (p7y)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -2029,6 +2029,10 @@ const COLS = [
   ['Season','v_deliv2','Delivery 2',false,false,false],
   ['Season','v_tier','Store Group',true,false,false],
   ['Season','v_tier_prev','Prev. Store Group',true,false,false],
+  // [p7y] Matrix store count for the DISPLAYED season's Store Group. Replaces
+  // the Stock Status count as the default-visible one; that column is now
+  // "Config Store Count" (always the config season — it drives Config Status).
+  ['Season','v_mx_store_ct','Store Count',true,true,false],
   // Strategy-note indicator — shows a dot when the SKU carries ≥1 config-season
   // strategy note (Notes only; overrides are already visible via their own
   // columns). Hover the dot to read the notes. Not tied to display-season data;
@@ -2070,7 +2074,7 @@ const COLS = [
   // tooltip. Exists so a CSV export can distinguish a projected date from a
   // logged one, which the exported date string alone can't do.
   ['Stock Status','ss_off_basis_disp','SS Off Basis',false,false,false],
-  ['Stock Status','cs_store_ct','Store Count',true,true,false],
+  ['Stock Status','cs_store_ct','Config Store Count',false,true,false],   // [p7y] relabeled, default-hidden
   // Configs Count = number of TRUE rows in Syrup Configs for this SKU. Sits
   // next to Store Count (matrix expected) so the discrepancy that drives
   // Config Status is visible at-a-glance. Default visible.
@@ -2360,6 +2364,247 @@ async function readCachedMatrix(seasonCode) {
     return { payload: data[0].payload, fetchedAt: data[0].fetched_at };
   } catch (e) { console.warn('[LiveMatrix] cache read threw', e); return null; }
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// [p7y] PER-SEASON STORE MATRICES — for the display-season view only
+// ──────────────────────────────────────────────────────────────────────────
+// The app's tier→store maps (window._tierToStoreCount / _tierToStores) are the
+// CONFIG season's matrix and stay that way: Config Status, the generator, Stock
+// Status and Depth all compare against it. When the grid is toggled to another
+// season, the Season block's Store Count and the Store Group popover read THAT
+// season's matrix from here instead — Lauren's app serves one roster per
+// quarter (HO26 → Q4 2026), and door openings/closings/reassignments differ.
+//
+// Source order per season:
+//   1. embedded in the parse bundle / published snapshot (extraMatrixPayloads)
+//   2. live bridge — publisher sessions only; readers never open the iframe
+//   3. Supabase store_matrix cache (written by every successful live fetch)
+//   4. none → 'unavailable'. Deliberately NO fallback to the config-season
+//      matrix: a visible "?" beats a plausible wrong-season number.
+// Raw payloads are kept and adapted lazily against the CURRENT STORE_CODE_MAP,
+// so a rebuild with a different Store Codes file can't leave stale counts.
+// ══════════════════════════════════════════════════════════════════════════
+const SEASON_MX = {};   // seasonId → { state, payload, source, asOf, error, adapted, codeMapRef, promise }
+const SEASON_MX_LOADER_WAIT_MS = 4000;   // extra wait for the NS fetch at folder load, after the CS fetch
+
+function _smEntry(id) { return SEASON_MX[id] || (SEASON_MX[id] = { state: 'idle' }); }
+
+function registerSeasonMatrix(id, payload, source, asOf) {
+  const e = _smEntry(id);
+  e.payload = payload; e.source = source; e.asOf = asOf || null;
+  e.error = null; e.state = 'ready'; e.adapted = null; e.codeMapRef = null;
+  // Carry it in the parse bundle so the next publish ships it to readers.
+  try {
+    const P = window._lastParsed;
+    if (P) {
+      P.extraMatrixPayloads = P.extraMatrixPayloads || {};
+      P.extraMatrixPayloads[id] = { payload: payload, source: source, asOf: e.asOf };
+    }
+  } catch (_) {}
+  return e;
+}
+
+// { state:'ready'|'loading'|'idle'|'unavailable', tierToStoreCount, tierToStores, source, asOf, config }
+function seasonMatrixFor(id) {
+  if (!id || id === CONFIG_SEASON || id === ALL_SEASONS) {
+    const pv = window._matrixProvenance || {};
+    return { state: 'ready', config: true,
+      tierToStoreCount: window._tierToStoreCount || {}, tierToStores: window._tierToStores || {},
+      source: pv.source || 'none', asOf: pv.asOf || null };
+  }
+  const e = SEASON_MX[id];
+  if (!e || e.state !== 'ready') return { state: e ? e.state : 'idle', error: e ? e.error : null };
+  if (!e.adapted || e.codeMapRef !== STORE_CODE_MAP) {
+    e.adapted = adaptMatrixPayload(e.payload, STORE_CODE_MAP);
+    e.codeMapRef = STORE_CODE_MAP;
+  }
+  return { state: 'ready', config: false,
+    tierToStoreCount: e.adapted.tierToStoreCount, tierToStores: e.adapted.tierToStores,
+    source: e.source, asOf: e.asOf };
+}
+
+function _isReaderSession() { return ((window._matrixProvenance || {}).source) === 'snapshot'; }
+
+function ensureSeasonMatrix(id) {
+  if (!id || id === CONFIG_SEASON || id === ALL_SEASONS) return Promise.resolve(seasonMatrixFor(id));
+  const e = _smEntry(id);
+  if (e.state === 'ready') return Promise.resolve(seasonMatrixFor(id));
+  if (e.promise) return e.promise;
+  e.state = 'loading'; e.error = null;
+  e.promise = (async function () {
+    const emb = window._lastParsed && window._lastParsed.extraMatrixPayloads
+             && window._lastParsed.extraMatrixPayloads[id];
+    if (emb && emb.payload && Array.isArray(emb.payload.groups)) {
+      registerSeasonMatrix(id, emb.payload, _isReaderSession() ? 'snapshot' : (emb.source || 'snapshot'), emb.asOf);
+      return;
+    }
+    if (!_isReaderSession() && !e.skipLive) {
+      try {
+        const p = await fetchLiveMatrix(id);
+        registerSeasonMatrix(id, p, 'live', new Date().toISOString());
+        cacheLiveMatrix(id, p);   // fire-and-forget — this is what readers fall back to
+        return;
+      } catch (err) {
+        e.error = String((err && err.message) || err);
+        console.warn('[SeasonMatrix] live fetch failed for ' + id + ' — ' + e.error);
+      }
+    }
+    const c = await readCachedMatrix(id);
+    if (c && c.payload && Array.isArray(c.payload.groups)) {
+      registerSeasonMatrix(id, c.payload, 'cache', c.fetchedAt);
+      return;
+    }
+    e.state = 'unavailable';
+    e.error = e.error || ('no ' + id + ' matrix in the snapshot or the Supabase cache');
+  })().then(function () {
+    e.promise = null;
+    if (e.state === 'loading') e.state = 'unavailable';   // defensive
+    const m = seasonMatrixFor(id);
+    console.log('[SeasonMatrix] ' + id + ' → ' + (m.state === 'ready'
+      ? 'ready (' + m.source + (m.asOf ? ', ' + m.asOf : '') + ') — ' + Object.keys(m.tierToStoreCount).length + ' groups'
+      : 'UNAVAILABLE — ' + e.error));
+    seasonMatrixChanged(id);
+    return m;
+  }, function (err) {
+    e.promise = null; e.state = 'unavailable'; e.error = String((err && err.message) || err);
+    seasonMatrixChanged(id);
+    return seasonMatrixFor(id);
+  });
+  return e.promise;
+}
+
+// Repaint whatever is showing this season now that its matrix landed/failed.
+function seasonMatrixChanged(id) {
+  try {
+    if (typeof ALL_ROWS !== 'undefined' && ALL_ROWS && ALL_ROWS.length
+        && seasonViewKey() === id && typeof applyFiltersAndRender === 'function') applyFiltersAndRender();
+  } catch (e) { console.warn('[SeasonMatrix] grid repaint failed', e); }
+  try {
+    if (typeof DD_SKU !== 'undefined' && DD_SKU && typeof ddSeasonNow === 'function'
+        && ddSeasonNow() === id && typeof openDrilldown === 'function') openDrilldown(DD_SKU);
+  } catch (e) { console.warn('[SeasonMatrix] panel repaint failed', e); }
+}
+
+// Called by buildFromParsed: adopt payloads that rode in with the bundle, then
+// warm the NS matrix in the background (it's the season people toggle to).
+function seasonMatricesOnBuild(P) {
+  const x = (P && P.extraMatrixPayloads) || {};
+  Object.keys(x).forEach(function (id) {
+    if (x[id] && x[id].payload && Array.isArray(x[id].payload.groups)) {
+      const e = _smEntry(id);
+      if (e.state !== 'ready' || e.payload !== x[id].payload) {
+        registerSeasonMatrix(id, x[id].payload, _isReaderSession() ? 'snapshot' : (x[id].source || 'live'), x[id].asOf);
+      }
+    }
+  });
+  if (SEASONS.ns && SEASONS.ns !== CONFIG_SEASON) setTimeout(function () { ensureSeasonMatrix(SEASONS.ns); }, 0);
+}
+
+// Store count for `tier` in season `key`, with WHY when there is no number.
+//   ok          group exists in that season's matrix (count may legitimately be 0)
+//   nomatch     label not found in the matrix (typo / label drift / undefined group)
+//   nonalloc    ONLINE ONLY, PARTNERSHIP, … — never has stores by design
+//   sentinel    NONE / CF override sentinels
+//   notier      no store group for this season
+//   loading / unavailable   matrix not (yet) available for that season
+// Lookup key is trim().toUpperCase() — IDENTICAL to cs_store_ct's, so the
+// config season reproduces cs_store_ct exactly and a label cs_store_ct can't
+// resolve is reported as nomatch rather than papered over.
+function seasonStoreCountInfo(key, tier) {
+  const t = String(tier || '').trim();
+  if (!t) return { count: null, state: 'notier' };
+  const up = t.toUpperCase();
+  if (up === 'NONE' || up === 'CF' || up === 'CARRY FORWARD') return { count: null, state: 'sentinel' };
+  if (NON_ALLOC_TIERS.has(up)) return { count: null, state: 'nonalloc' };
+  const m = seasonMatrixFor(key);
+  if (m.state !== 'ready') return { count: null, state: m.state === 'unavailable' ? 'unavailable' : 'loading' };
+  const map = m.tierToStoreCount || {};
+  if (Object.prototype.hasOwnProperty.call(map, up)) return { count: map[up] || 0, state: 'ok' };
+  const nk = normGroupKey(t);
+  const note = (nk !== up && Object.prototype.hasOwnProperty.call(map, nk))
+    ? 'close match: "' + nk + '" (' + (map[nk] || 0) + ' stores) — PST label differs only by punctuation'
+    : '';
+  return { count: null, state: 'nomatch', note: note };
+}
+
+// What filters / CSV / the audit see for the Season-block Store Count.
+function mxStoreCtLabel(r) {
+  switch (r.v_mx_state) {
+    case 'ok':          return r.v_mx_store_ct;
+    case 'nomatch':     return 'Not in matrix';
+    case 'nonalloc':    return 'Non-allocating';
+    case 'loading':     return 'Loading';
+    case 'unavailable': return 'Matrix unavailable';
+    default:            return '';
+  }
+}
+
+function renderMxStoreCtCell(r, seasonKey) {
+  const key = seasonKey || seasonViewKey();
+  const st = r.v_mx_state;
+  const src = (function () { const m = seasonMatrixFor(key); return m.state === 'ready'
+    ? key + ' matrix · ' + (m.source || '?') + (m.asOf ? ' · ' + String(m.asOf).slice(0, 10) : '') : ''; })();
+  if (st === 'ok') {
+    const n = r.v_mx_store_ct || 0;
+    return n === 0
+      ? `<span class="pill pill-red" title="&quot;${sgEsc(r.v_tier)}&quot; exists in the ${sgEsc(key)} matrix but has 0 stores (${sgEsc(src)})">0</span>`
+      : `<span title="${sgEsc(src)}">${n.toLocaleString()}</span>`;
+  }
+  if (st === 'nomatch') return `<span class="pill pill-orange" title="&quot;${sgEsc(r.v_tier)}&quot; is not a group in the ${sgEsc(key)} matrix${r.v_mx_note ? ' — ' + sgEsc(r.v_mx_note) : ''}">Not in matrix</span>`;
+  if (st === 'nonalloc') return `<span class="muted-cell" title="Non-allocating group — no stores by design">n/a</span>`;
+  if (st === 'loading') return `<span class="muted-cell" title="Loading the ${sgEsc(key)} store matrix…">…</span>`;
+  if (st === 'unavailable') {
+    const e = SEASON_MX[key]; const why = e && e.error ? e.error : 'not loaded';
+    return `<span class="muted-cell" title="${sgEsc(key)} matrix unavailable — ${sgEsc(why)}. Counts are NOT borrowed from ${sgEsc(CONFIG_SEASON)}.">?</span>`;
+  }
+  return `<span class="muted-cell">—</span>`;
+}
+
+// Console audit: every store group with 0 stores or no matrix match, for a season.
+//   zeroStoreGroups('HO26')            → prints and returns the list
+//   zeroStoreGroups('HO26', {all:true}) → include every group, not just problems
+window.zeroStoreGroups = async function zeroStoreGroups(season, opts) {
+  opts = opts || {};
+  season = String(season || seasonViewKey()).trim().toUpperCase();
+  const m = await ensureSeasonMatrix(season);
+  if (!m || m.state !== 'ready') {
+    const e = SEASON_MX[season];
+    console.log('[zeroStoreGroups] ' + season + ' matrix unavailable — ' + ((e && e.error) || 'not loaded'));
+    return [];
+  }
+  const groups = {};
+  (ALL_ROWS || []).forEach(function (row) {
+    const v = seasonProjection(row, season);
+    if (!v.v_hasPST || !v.v_tier) return;
+    const k = v.v_tier;
+    const g = groups[k] || (groups[k] = { group: k, state: v.v_mx_state, count: v.v_mx_store_ct, note: v.v_mx_note || '', skus: [], delivs: {} });
+    g.skus.push(row.sku);
+    if (v.v_deliv1) g.delivs[v.v_deliv1] = (g.delivs[v.v_deliv1] || 0) + 1;
+  });
+  const out = Object.values(groups)
+    .filter(function (g) { return opts.all || g.state === 'nomatch' || (g.state === 'ok' && g.count === 0); })
+    .sort(function (a, b) { return (a.state === b.state ? 0 : a.state === 'nomatch' ? -1 : 1) || b.skus.length - a.skus.length; });
+  const L = ['[zeroStoreGroups] ' + season + ' · matrix ' + m.source + (m.asOf ? ' ' + String(m.asOf).slice(0, 10) : '')
+    + ' · ' + out.length + ' group(s)' + (opts.all ? '' : ' with 0 stores or no match')];
+  out.forEach(function (g) {
+    const what = g.state === 'nomatch' ? 'NOT IN MATRIX' : g.state === 'ok' ? g.count + ' stores' : g.state;
+    L.push('  ' + what.padEnd(14) + ' ' + g.group + '  — ' + g.skus.length + ' SKU(s) · ' +
+      Object.keys(g.delivs).map(function (d) { return d + ':' + g.delivs[d]; }).join(', ') +
+      (g.note ? '\n' + ' '.repeat(18) + g.note : '') +
+      '\n' + ' '.repeat(18) + 'e.g. ' + g.skus.slice(0, 6).join(' ') + (g.skus.length > 6 ? ' …' : ''));
+  });
+  if (!out.length) L.push('  none — every ' + season + ' store group resolves to ≥1 store');
+  console.log(L.join('\n'));
+  return out.map(function (g) { return { group: g.group, state: g.state, stores: g.count, skuCount: g.skus.length, skus: g.skus, note: g.note }; });
+};
+window.seasonMatrixStatus = function () {
+  const L = ['[SeasonMatrix] config ' + CONFIG_SEASON + ': ' + ((window._matrixProvenance || {}).source || 'none')];
+  Object.keys(SEASON_MX).forEach(function (id) {
+    const e = SEASON_MX[id];
+    L.push('  ' + id + ': ' + e.state + (e.source ? ' (' + e.source + (e.asOf ? ', ' + e.asOf : '') + ')' : '') + (e.error ? ' — ' + e.error : ''));
+  });
+  console.log(L.join('\n'));
+};
 
 // Console helper: full A/B dump as copy-pasteable text (no console.table,
 // which is invisible to console filters). Safe to call any time after a load.
@@ -2667,6 +2912,12 @@ function seasonProjection(row, key){
   v.v_final_buy    = g('final_buy');
   v.v_weeks_bought = g('weeks_bought');
   v.v_hasPST       = !!s.hasPST;   // namespaced so it can't shadow a season slice's own hasPST
+  // [p7y] Store Count follows the displayed season's EFFECTIVE Store Group,
+  // read from THAT season's matrix. cs_store_ct is untouched (config math).
+  var mx = seasonStoreCountInfo(key, v.v_tier);
+  v.v_mx_store_ct  = mx.count;
+  v.v_mx_state     = mx.state;
+  v.v_mx_note      = mx.note || '';
   return v;
 }
 function projectSeasonView(row){
@@ -3197,6 +3448,13 @@ async function loadAllFiles(files) {
   setProgress(66, 'Fetching live Store Matrix…');
   let matrixPayload = null, matrixSource = 'none', matrixAsOf = null, matrixError = null;
   let matrixFresh = false;
+  // [p7y] NS matrix, fetched IN PARALLEL with the config season's so it costs
+  // ~no load time. Bridge calls are isolated by requestId, so two iframes are safe.
+  const _nsMxId = String(SEASONS.ns || '').trim();
+  const _nsMxFetch = (_nsMxId && _nsMxId !== _seasonId)
+    ? fetchLiveMatrix(_nsMxId).then(function (p) { return { ok: true, p: p, at: new Date().toISOString() }; },
+                                    function (e) { return { ok: false, e: String((e && e.message) || e) }; })
+    : null;
   try {
     matrixPayload = await fetchLiveMatrix(_seasonId);
     matrixSource  = 'live';
@@ -3225,6 +3483,41 @@ async function loadAllFiles(files) {
     }
   }
 
+  // [p7y] Give the NS fetch a short grace after the CS fetch settled, so the
+  // auto-publish below usually carries it. If it's slower, it still lands in
+  // the background (and in the Supabase cache readers fall back to).
+  const extraMatrixPayloads = {};
+  if (_nsMxFetch) {
+    const _r = await Promise.race([_nsMxFetch, new Promise(function (res) { setTimeout(function () { res(null); }, SEASON_MX_LOADER_WAIT_MS); })]);
+    if (_r && _r.ok) {
+      extraMatrixPayloads[_nsMxId] = { payload: _r.p, source: 'live', asOf: _r.at };
+      cacheLiveMatrix(_nsMxId, _r.p);
+      console.log('[SeasonMatrix] ' + _nsMxId + ' live fetch OK at load — ' + (_r.p.groups || []).length + ' groups');
+    } else if (_r && !_r.ok) {
+      console.warn('[SeasonMatrix] ' + _nsMxId + ' live fetch failed at load — ' + _r.e + ' (will try the Supabase cache on demand)');
+      const _e = _smEntry(_nsMxId); _e.skipLive = true; _e.error = _r.e;
+    } else {
+      console.log('[SeasonMatrix] ' + _nsMxId + ' still fetching — continuing load; it will land in the background');
+      // Park the in-flight request on the entry so ensureSeasonMatrix() (the
+      // build's NS warm-up, or a toggle) waits on THIS call instead of opening
+      // a second iframe.
+      const _e = _smEntry(_nsMxId);
+      _e.state = 'loading';
+      _e.promise = _nsMxFetch.then(function (r2) {
+        _e.promise = null;
+        if (r2 && r2.ok) {
+          registerSeasonMatrix(_nsMxId, r2.p, 'live', r2.at);
+          cacheLiveMatrix(_nsMxId, r2.p);
+          seasonMatrixChanged(_nsMxId);
+          return seasonMatrixFor(_nsMxId);
+        }
+        _e.state = 'idle'; _e.skipLive = true;   // live already failed once — go straight to the cache
+        _e.error = r2 ? r2.e : 'live fetch failed';
+        return ensureSeasonMatrix(_nsMxId);
+      });
+    }
+  }
+
   setProgress(70, 'Reading Safety Stock…');
   const ssRows = fSS ? await readCSV(fSS) : [];
 
@@ -3237,6 +3530,7 @@ async function loadAllFiles(files) {
     pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     wipRows, storeRows, ssRows, syrupIARows, syrupRPRows, syrupCfgRows,
     matrixPayload, matrixSource, matrixAsOf, matrixError, matrixFresh,
+    extraMatrixPayloads,   // [p7y] { seasonId: {payload, source, asOf} } — display-season matrices
     _globals: {
       MASTER_SIZES: window.MASTER_SIZES || {},
       SEASONS: { cs: SEASONS.cs, ns: SEASONS.ns, ps: SEASONS.ps },
@@ -3287,6 +3581,8 @@ async function buildFromParsed(P) {
     matrixAsOf: P.matrixAsOf || null, matrixError: P.matrixError || null,
     matrixFresh: !!P.matrixFresh
   });
+  // [p7y] adopt bundled per-season matrices + warm NS (after buildLookups set provenance)
+  try { seasonMatricesOnBuild(P); } catch (e) { console.warn('[SeasonMatrix] build hook failed', e); }
   // Expose flowCalMap globally so computeLateList can resolve alloc dates for any season
   window._flowCalMap = lookups.flowCalMap;
   window._invOnline  = lookups.invOnline;   // SKU → online OH (SUMIFS from ISR INV Pull)
@@ -7235,6 +7531,7 @@ function setFilter(type, val) {
     Object.keys(COL_FILTERS).forEach(cid => { if (cid.indexOf('v_') === 0) delete COL_FILTERS[cid]; });
     document.querySelectorAll('#seasonFilters .filter-chip').forEach(c => c.classList.toggle('on', c.dataset.season===val));
     buildTableHeader();  // header season label + cleared filter buttons
+    ensureSeasonMatrix(seasonViewKey());   // [p7y] repaints itself when the matrix lands
   }
   PAGE = 1;
   applyFiltersAndRender();
@@ -7330,6 +7627,7 @@ function getFilterValue(r, colId) {
     return 'Off';
   }
   if (colId === 'has_note') return getNoteIndex().set.has(r.sku) ? 'Has note' : '';
+  if (colId === 'v_mx_store_ct') return mxStoreCtLabel(r);   // [p7y] "0" vs "Not in matrix" are separate filter values
   return r[colId];
 }
 
@@ -7808,7 +8106,9 @@ function sgEsc(s){
 // `tier`  = the group name to look up in the matrix.
 // `deliv` = the effective delivery for this row (picks MAY vs JUN_JUL).
 // Sentinels (None / CF) and blanks are NOT made clickable — they aren't groups.
-function sgValueSpan(displayHtml, tier, deliv, extraStyle, extraClass){
+// [p7y] `season` (optional): read that season's matrix in the popover. Omitted
+// = config season, which is every pre-p7y caller.
+function sgValueSpan(displayHtml, tier, deliv, extraStyle, extraClass, season){
   const t  = String(tier||'').trim();
   const up = t.toUpperCase();
   const isSentinel = !t || up==='NONE' || up==='CF' || up==='CARRY FORWARD';
@@ -7817,7 +8117,7 @@ function sgValueSpan(displayHtml, tier, deliv, extraStyle, extraClass){
   if (isSentinel) return `<span class="${(extraClass||'').trim()}"${style}>${displayHtml}</span>`;
   return `<span class="sg-clickable${xc}"${style}`
     + ` title="Click to see the stores in &quot;${sgEsc(t)}&quot;"`
-    + ` onclick="event.stopPropagation();showStoreGroupPopover(event,'${sgEsc(t)}','${sgEsc(deliv||'')}')">`
+    + ` onclick="event.stopPropagation();showStoreGroupPopover(event,'${sgEsc(t)}','${sgEsc(deliv||'')}','${sgEsc(season||'')}')">`
     + `${displayHtml}</span>`;
 }
 
@@ -7836,11 +8136,29 @@ function hideStoreGroupPopover(){
   const el = document.getElementById('sgPopover');
   if (el) el.style.display = 'none';
 }
-function showStoreGroupPopover(evt, tier, deliv){
+function showStoreGroupPopover(evt, tier, deliv, season){
   const el = ensureSgPopover();
   const up = String(tier||'').trim().toUpperCase();
-  const storesMap = ((typeof window.getTierToStores === 'function') ? window.getTierToStores(deliv) : {}) || {};
-  const countMap  = ((typeof window.getTierToStoreCount === 'function') ? window.getTierToStoreCount(deliv) : {}) || {};
+  // [p7y] season-aware: a non-config season reads its own matrix.
+  const _sk = String(season||'').trim();
+  const _useSeason = !!_sk && _sk !== CONFIG_SEASON && _sk !== ALL_SEASONS;
+  const _sm = _useSeason ? seasonMatrixFor(_sk) : null;
+  if (_useSeason && _sm.state !== 'ready') {
+    ensureSeasonMatrix(_sk);
+    el.innerHTML = '<div class="sgp-head"><div><div class="sgp-title">'+sgEsc(tier)+'</div>'
+      + '<div class="sgp-sub">'+sgEsc(_sk)+' matrix '+(_sm.state==='unavailable'?'unavailable':'loading…')+'</div></div>'
+      + '<button class="sgp-close" title="Close" onclick="hideStoreGroupPopover()">\u00D7</button></div>'
+      + '<div class="sgp-empty">'+(_sm.state==='unavailable'
+          ? 'No '+sgEsc(_sk)+' store matrix is available (not in the snapshot, live fetch failed, nothing cached). Counts are not borrowed from '+sgEsc(CONFIG_SEASON)+'.'
+          : 'Fetching the '+sgEsc(_sk)+' store matrix — click again in a moment.')+'</div>';
+    el.style.display = 'flex'; el.style.left = (evt.clientX + 4) + 'px'; el.style.top = (evt.clientY + 6) + 'px';
+    return;
+  }
+  const storesMap = _useSeason ? (_sm.tierToStores || {})
+    : (((typeof window.getTierToStores === 'function') ? window.getTierToStores(deliv) : {}) || {});
+  const countMap  = _useSeason ? (_sm.tierToStoreCount || {})
+    : (((typeof window.getTierToStoreCount === 'function') ? window.getTierToStoreCount(deliv) : {}) || {});
+  const _inMatrix = Object.prototype.hasOwnProperty.call(countMap, up);
 
   let stores = (storesMap[up] || []).slice();
   stores = [...new Set(stores)].sort((a,b)=>String(a).localeCompare(String(b)));
@@ -7857,15 +8175,19 @@ function showStoreGroupPopover(evt, tier, deliv){
   } else if (count>0){
     listHtml = '<div class="sgp-empty">'+count+' store(s) in this group, but individual store '
              + 'names weren\u2019t detected in the Store Matrix name column.</div>';
+  } else if (_inMatrix) {
+    // [p7y] split the two zero cases the old message lumped together
+    listHtml = '<div class="sgp-empty">\u201C'+sgEsc(tier)+'\u201D is a group in the '
+             + (_useSeason ? sgEsc(_sk)+' ' : '') + 'Store Matrix, but it has 0 open stores.</div>';
   } else {
-    listHtml = '<div class="sgp-empty">\u201C'+sgEsc(tier)+'\u201D isn\u2019t a tier group in the '
-             + 'Store Matrix, or it currently has 0 open stores.</div>';
+    listHtml = '<div class="sgp-empty">\u201C'+sgEsc(tier)+'\u201D isn\u2019t a group in the '
+             + (_useSeason ? sgEsc(_sk)+' ' : '') + 'Store Matrix (label mismatch, typo, or not defined for this season).</div>';
   }
 
   el.innerHTML =
     '<div class="sgp-head"><div>'
     + '<div class="sgp-title">'+sgEsc(tier)+'</div>'
-    + '<div class="sgp-sub">'+count+' store'+(count===1?'':'s')+' \u00B7 deliv '+sgEsc(delivLabel)+'</div>'
+    + '<div class="sgp-sub">'+count+' store'+(count===1?'':'s')+' \u00B7 deliv '+sgEsc(delivLabel)+(_useSeason?' \u00B7 '+sgEsc(_sk)+' matrix':'')+'</div>'
     + '</div><button class="sgp-close" title="Close" onclick="hideStoreGroupPopover()">\u00D7</button></div>'
     + listHtml;
 
@@ -8144,12 +8466,12 @@ function renderPage() {
         const deliv = row.v_deliv1;
         if (row.v_tier_ovr) {
           return `<td title="PST: ${sgEsc(row.v_tier_pst)||'—'} · Override: ${sgEsc(eff)}">
-            ${sgValueSpan(eff, eff, deliv, 'color:var(--orange);font-weight:500', 'sg-trunc')}
+            ${sgValueSpan(eff, eff, deliv, 'color:var(--orange);font-weight:500', 'sg-trunc', seasonViewKey())}
             <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span>
           </td>`;
         }
         if (!eff) return `<td><span class="muted-cell">—</span></td>`;
-        return `<td>${sgValueSpan(eff, eff, deliv, '', 'sg-trunc')}</td>`;
+        return `<td>${sgValueSpan(eff, eff, deliv, '', 'sg-trunc', seasonViewKey())}</td>`;   // [p7y] season-aware popover
       }
       // Prev. Store Group — the pre-override PST tier, shown ONLY for overridden
       // rows (blank otherwise, so the column stays scannable). Rendered full-size
@@ -8238,6 +8560,7 @@ function renderPage() {
         const safe = String(v).replace(/"/g, '&quot;');
         return `<td title="${safe}"><span style="color:#2563eb;font-size:11px">${v.length > 60 ? v.slice(0, 57) + '…' : v}</span></td>`;
       }
+      if (id === 'v_mx_store_ct') return `<td class="num" style="font-family:var(--mono);font-size:11px">${renderMxStoreCtCell(row)}</td>`;   // [p7y]
       if (id === 'cs_store_ct') return `<td class="num" style="font-family:var(--mono);font-size:11px">${v ? Number(v).toLocaleString() : '<span class="muted-cell">—</span>'}</td>`;
       if (id === 'config_store_ct') return `<td class="num" style="font-family:var(--mono);font-size:11px">${(v || v === 0) ? Number(v).toLocaleString() : '<span class="muted-cell">—</span>'}</td>`;
       if (id === 'cs_size_scale') return `<td><span class="pill pill-muted">${v}</span></td>`;
@@ -8361,6 +8684,7 @@ function ddSyncToDisplaySeason(){
 function ddSetSeason(code){
   if (!DD_SKU) return;
   DD_SEASON = code;
+  ensureSeasonMatrix(code);   // [p7y]
   openDrilldown(DD_SKU);
 }
 function ddSeasonNow(){
@@ -8603,7 +8927,11 @@ function openDrilldown(sku) {
     const ddRows = [];
     if (!ddIsConfig) {
       ddRows.push(['Delivery', ddS.deliv1 || '—']);
-      ddRows.push(['Store Group (Tier)', ddS.tier ? sgValueSpan(sgEsc(ddS.tier), ddS.tier, (ddS.deliv1 || row.deliv_ow || row.cs_deliv1)) : '—']);
+      ddRows.push(['Store Group (Tier)', ddS.tier ? sgValueSpan(sgEsc(ddS.tier), ddS.tier, (ddS.deliv1 || row.deliv_ow || row.cs_deliv1), '', '', ddSeasonKey) : '—']);
+      // [p7y] that season's matrix count, with the same states as the grid
+      { const _pv = seasonProjection(row, ddSeasonKey);
+        ddRows.push(['Store Count (' + ddSeasonKey + ' matrix)',
+          ddS.tier ? renderMxStoreCtCell(_pv, ddSeasonKey) : '—']); }
       ddRows.push(['On-Time', ddS.ontime || '—']);
     }
 
@@ -9379,10 +9707,10 @@ function refreshDependentCells(tr, row) {
       const deliv = row.v_deliv1;
       if (row.v_tier_ovr) {
         cell.innerHTML = `<span title="PST: ${sgEsc(row.v_tier_pst)||'—'} · Override: ${sgEsc(eff)}">`
-          + sgValueSpan(eff, eff, deliv, 'color:var(--orange);font-weight:500', 'sg-trunc')
+          + sgValueSpan(eff, eff, deliv, 'color:var(--orange);font-weight:500', 'sg-trunc', seasonViewKey())
           + `<span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span></span>`;
       } else if (!eff) { cell.innerHTML = '<span class="muted-cell">—</span>'; }
-      else { cell.innerHTML = sgValueSpan(eff, eff, deliv, '', 'sg-trunc'); }
+      else { cell.innerHTML = sgValueSpan(eff, eff, deliv, '', 'sg-trunc', seasonViewKey()); }   // [p7y]
     }
     if (id === 'v_deliv1') {
       const eff = (row.v_deliv1 || '').trim();
@@ -9436,6 +9764,7 @@ function refreshDependentCells(tr, row) {
         cell.innerHTML = `<span style="color:${color};font-weight:500;font-size:11px">${label}</span>`;
       }
     }
+    if (id === 'v_mx_store_ct') { cell.innerHTML = renderMxStoreCtCell(row); }   // [p7y] tier override → count
     if (id === 'cs_store_ct') {
       cell.innerHTML = row.cs_store_ct ? Number(row.cs_store_ct).toLocaleString() : '<span class="muted-cell">—</span>';
     }
@@ -10995,6 +11324,8 @@ function csvCellsFor(row, id) {
       return [idx && idx.set.has(row.sku) ? 'Yes' : 'No'];
     } catch (e) { return ['']; }
   }
+
+  if (id === 'v_mx_store_ct') return [mxStoreCtLabel(row) ?? ''];   // [p7y]
 
   const map = CSV_VALUE_OVERRIDE[id];
   const raw = row[id] ?? '';
