@@ -1070,7 +1070,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count (p7y)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category (p7z)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -2033,6 +2033,8 @@ const COLS = [
   // the Stock Status count as the default-visible one; that column is now
   // "Config Store Count" (always the config season — it drives Config Status).
   ['Season','v_mx_store_ct','Store Count',true,true,false],
+  // [p7z] Matrix category of the displayed season's Store Group (Vibe, Climate, …).
+  ['Season','v_mx_category','Group Category',true,false,false],
   // Strategy-note indicator — shows a dot when the SKU carries ≥1 config-season
   // strategy note (Notes only; overrides are already visible via their own
   // columns). Hover the dot to read the notes. Not tied to display-season data;
@@ -2410,6 +2412,7 @@ function seasonMatrixFor(id) {
     const pv = window._matrixProvenance || {};
     return { state: 'ready', config: true,
       tierToStoreCount: window._tierToStoreCount || {}, tierToStores: window._tierToStores || {},
+      tierToCategory: window._tierToCategory || {}, categoryOrder: window._categoryOrder || [],
       source: pv.source || 'none', asOf: pv.asOf || null };
   }
   const e = SEASON_MX[id];
@@ -2420,6 +2423,7 @@ function seasonMatrixFor(id) {
   }
   return { state: 'ready', config: false,
     tierToStoreCount: e.adapted.tierToStoreCount, tierToStores: e.adapted.tierToStores,
+    tierToCategory: e.adapted.tierToCategory || {}, categoryOrder: e.adapted.categoryOrder || [],
     source: e.source, asOf: e.asOf };
 }
 
@@ -2515,16 +2519,43 @@ function seasonStoreCountInfo(key, tier) {
   if (!t) return { count: null, state: 'notier' };
   const up = t.toUpperCase();
   if (up === 'NONE' || up === 'CF' || up === 'CARRY FORWARD') return { count: null, state: 'sentinel' };
-  if (NON_ALLOC_TIERS.has(up)) return { count: null, state: 'nonalloc' };
+  if (NON_ALLOC_TIERS.has(up)) {
+    // [p7z] still report a category if the label happens to be a matrix group
+    const _m0 = seasonMatrixFor(key);
+    return { count: null, state: 'nonalloc', category: (_m0.state === 'ready' && (_m0.tierToCategory || {})[up]) || '' };
+  }
   const m = seasonMatrixFor(key);
   if (m.state !== 'ready') return { count: null, state: m.state === 'unavailable' ? 'unavailable' : 'loading' };
   const map = m.tierToStoreCount || {};
-  if (Object.prototype.hasOwnProperty.call(map, up)) return { count: map[up] || 0, state: 'ok' };
+  const cmap = m.tierToCategory || {};
+  if (Object.prototype.hasOwnProperty.call(map, up)) return { count: map[up] || 0, state: 'ok', category: cmap[up] || '' };
   const nk = normGroupKey(t);
   const note = (nk !== up && Object.prototype.hasOwnProperty.call(map, nk))
     ? 'close match: "' + nk + '" (' + (map[nk] || 0) + ' stores) — PST label differs only by punctuation'
     : '';
   return { count: null, state: 'nomatch', note: note };
+}
+
+// [p7z] Group Category shown/filtered/exported. Blank only when there is no
+// store group at all, so no SKU silently drops out of a category filter.
+function mxCategoryLabel(mx) {
+  if (mx.category) return mx.category;
+  switch (mx.state) {
+    case 'ok':          return 'Uncategorized';
+    case 'nomatch':     return 'Not in matrix';
+    case 'nonalloc':    return 'Non-allocating';
+    case 'loading':     return 'Loading';
+    case 'unavailable': return 'Matrix unavailable';
+    default:            return '';
+  }
+}
+function renderMxCategoryCell(r) {
+  const v = r.v_mx_category || '';
+  if (!v) return '<span class="muted-cell">—</span>';
+  if (v === 'Not in matrix') return `<span class="pill pill-orange" title="&quot;${sgEsc(r.v_tier)}&quot; is not a group in the ${sgEsc(seasonViewKey())} matrix">Not in matrix</span>`;
+  if (v === 'Uncategorized' || v === 'Non-allocating' || v === 'Loading' || v === 'Matrix unavailable')
+    return `<span class="muted-cell" style="font-style:italic">${sgEsc(v === 'Loading' ? '…' : v)}</span>`;
+  return `<span class="pill pill-muted">${sgEsc(v)}</span>`;
 }
 
 // What filters / CSV / the audit see for the Season-block Store Count.
@@ -2577,7 +2608,7 @@ window.zeroStoreGroups = async function zeroStoreGroups(season, opts) {
     const v = seasonProjection(row, season);
     if (!v.v_hasPST || !v.v_tier) return;
     const k = v.v_tier;
-    const g = groups[k] || (groups[k] = { group: k, state: v.v_mx_state, count: v.v_mx_store_ct, note: v.v_mx_note || '', skus: [], delivs: {} });
+    const g = groups[k] || (groups[k] = { group: k, state: v.v_mx_state, count: v.v_mx_store_ct, note: v.v_mx_note || '', category: v.v_mx_category || '', skus: [], delivs: {} });
     g.skus.push(row.sku);
     if (v.v_deliv1) g.delivs[v.v_deliv1] = (g.delivs[v.v_deliv1] || 0) + 1;
   });
@@ -2588,14 +2619,43 @@ window.zeroStoreGroups = async function zeroStoreGroups(season, opts) {
     + ' · ' + out.length + ' group(s)' + (opts.all ? '' : ' with 0 stores or no match')];
   out.forEach(function (g) {
     const what = g.state === 'nomatch' ? 'NOT IN MATRIX' : g.state === 'ok' ? g.count + ' stores' : g.state;
-    L.push('  ' + what.padEnd(14) + ' ' + g.group + '  — ' + g.skus.length + ' SKU(s) · ' +
+    L.push('  ' + what.padEnd(14) + ' ' + g.group + (g.category && g.state === 'ok' ? ' [' + g.category + ']' : '') + '  — ' + g.skus.length + ' SKU(s) · ' +
       Object.keys(g.delivs).map(function (d) { return d + ':' + g.delivs[d]; }).join(', ') +
       (g.note ? '\n' + ' '.repeat(18) + g.note : '') +
       '\n' + ' '.repeat(18) + 'e.g. ' + g.skus.slice(0, 6).join(' ') + (g.skus.length > 6 ? ' …' : ''));
   });
   if (!out.length) L.push('  none — every ' + season + ' store group resolves to ≥1 store');
   console.log(L.join('\n'));
-  return out.map(function (g) { return { group: g.group, state: g.state, stores: g.count, skuCount: g.skus.length, skus: g.skus, note: g.note }; });
+  return out.map(function (g) { return { group: g.group, category: g.category, state: g.state, stores: g.count, skuCount: g.skus.length, skus: g.skus, note: g.note }; });
+};
+// [p7z] Raw shape check for groupCategories (for when the adapter reads 0).
+window.matrixCategoryDiag = function (season) {
+  const id = season || CONFIG_SEASON;
+  const p = (id === CONFIG_SEASON) ? window._matrixPayload : (SEASON_MX[id] && SEASON_MX[id].payload);
+  if (!p) { console.log('[matrixCategoryDiag] no payload loaded for ' + id); return; }
+  const gc = p.groupCategories;
+  const kind = Array.isArray(gc) ? 'array' : (gc && typeof gc === 'object') ? 'object' : typeof gc;
+  const sample = Array.isArray(gc) ? gc.slice(0, 3) : (gc && typeof gc === 'object') ? Object.fromEntries(Object.entries(gc).slice(0, 3)) : gc;
+  const parsed = matrixGroupCategories(p).tierToCategory;
+  console.log('[matrixCategoryDiag] ' + id + ' · groupCategories is ' + kind + ' · sample: ' + JSON.stringify(sample)
+    + '\n  categoryOrder: ' + JSON.stringify(p.categoryOrder)
+    + '\n  parsed: ' + Object.keys(parsed).length + ' groups · e.g. ' + JSON.stringify(Object.fromEntries(Object.entries(parsed).slice(0, 5))));
+};
+// [p7z] SKU counts per Group Category for a season (what the column filter will offer).
+window.categorySummary = async function (season) {
+  season = String(season || seasonViewKey()).trim().toUpperCase();
+  await ensureSeasonMatrix(season);
+  const n = {};
+  (ALL_ROWS || []).forEach(function (row) {
+    const v = seasonProjection(row, season);
+    if (!v.v_hasPST || !v.v_tier) return;
+    const c = v.v_mx_category || '(blank)'; n[c] = (n[c] || 0) + 1;
+  });
+  const m = seasonMatrixFor(season); const order = (m && m.categoryOrder) || [];
+  const rank = function (c) { const i = order.indexOf(c); return i === -1 ? 1e6 : i; };
+  const keys = Object.keys(n).sort(function (a, b) { return rank(a) - rank(b) || n[b] - n[a]; });
+  console.log('[categorySummary] ' + season + '\n' + keys.map(function (k) { return '  ' + String(n[k]).padStart(5) + '  ' + k; }).join('\n'));
+  return n;
 };
 window.seasonMatrixStatus = function () {
   const L = ['[SeasonMatrix] config ' + CONFIG_SEASON + ': ' + ((window._matrixProvenance || {}).source || 'none')];
@@ -2775,8 +2835,50 @@ window.matrixDiff = function matrixDiff(mode) {
   return rows;
 };
 
+// [p7z] Group → category from the payload's `groupCategories` (+ `categoryOrder`).
+// The field has always been in Lauren's payload; nothing read it before p7z.
+// Accepts both plausible directions, detected by value type:
+//   { "<group>": "<category>" }          group → category
+//   { "<category>": ["<group>", …] }     category → groups
+//   [ {group|name, category}, … ] / [ [group, category], … ]
+// Keys are normGroupKey'd exactly like `groups`, so they line up with the counts.
+// A group in more than one category joins them in categoryOrder order (" / ").
+function matrixGroupCategories(payload) {
+  const cats = {};
+  const gc = payload && payload.groupCategories;
+  const add = function (g, c) {
+    const k = normGroupKey(g);
+    const cs = String(c == null ? '' : c).trim();
+    if (!k || !cs) return;
+    const a = cats[k] || (cats[k] = []);
+    if (a.indexOf(cs) === -1) a.push(cs);
+  };
+  if (Array.isArray(gc)) {
+    gc.forEach(function (e) {
+      if (Array.isArray(e)) add(e[0], e[1]);
+      else if (e && typeof e === 'object') add(e.group != null ? e.group : (e.name != null ? e.name : e.label),
+                                               e.category != null ? e.category : e.cat);
+    });
+  } else if (gc && typeof gc === 'object') {
+    Object.keys(gc).forEach(function (k) {
+      const v = gc[k];
+      if (Array.isArray(v)) v.forEach(function (g) { add(g, k); });
+      else if (v && typeof v === 'object') add(k, v.category != null ? v.category : v.name);
+      else add(k, v);
+    });
+  }
+  const order = Array.isArray(payload && payload.categoryOrder) ? payload.categoryOrder.map(function (c) { return String(c).trim(); }) : [];
+  const rank = function (c) { const i = order.indexOf(c); return i === -1 ? 1e6 : i; };
+  const out = {};
+  Object.keys(cats).forEach(function (k) {
+    out[k] = cats[k].slice().sort(function (a, b) { return rank(a) - rank(b) || a.localeCompare(b); }).join(' / ');
+  });
+  return { tierToCategory: out, categoryOrder: order };
+}
+
 // Map the tool's with_tiers payload onto the two globals the whole app reads.
 // Shape is byte-identical to parseStoreMatrix's return so no consumer changes.
+// [p7z] …plus tierToCategory / categoryOrder, which no pre-p7z consumer reads.
 function adaptMatrixPayload(payload, codeMap) {
   const tierToStores = {}, tierToStoreCount = {};
   const collisions = [], gatedOut = [];
@@ -2811,7 +2913,16 @@ function adaptMatrixPayload(payload, codeMap) {
   if (collisions.length) {
     console.warn('[LiveMatrix] ⚠ group labels collide after normalization — last wins:', collisions);
   }
-  return { tierToStoreCount: tierToStoreCount, tierToStores: tierToStores };
+  // [p7z] categories
+  const _gc = matrixGroupCategories(payload);
+  const _nCat = Object.keys(_gc.tierToCategory).length;
+  console.log('[LiveMatrix] categories: ' + _nCat + ' of ' + Object.keys(tierToStores).length + ' groups categorized'
+    + (_gc.categoryOrder.length ? ' · order: ' + _gc.categoryOrder.join(', ') : ''));
+  if (payload && payload.groupCategories && !_nCat) {
+    console.warn('[LiveMatrix] ⚠ payload has groupCategories but none could be read — run matrixCategoryDiag()');
+  }
+  return { tierToStoreCount: tierToStoreCount, tierToStores: tierToStores,
+           tierToCategory: _gc.tierToCategory, categoryOrder: _gc.categoryOrder };
 }
 
 // The ONLY place season identity is derived. Given a chosen current season,
@@ -2918,6 +3029,7 @@ function seasonProjection(row, key){
   v.v_mx_store_ct  = mx.count;
   v.v_mx_state     = mx.state;
   v.v_mx_note      = mx.note || '';
+  v.v_mx_category  = mxCategoryLabel(mx);   // [p7z] plain string — filters/CSV pass it through
   return v;
 }
 function projectSeasonView(row){
@@ -4685,6 +4797,8 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
   // tier→store lookups; delivery-month routing is gone (one matrix per season).
   window._tierToStoreCount = _m.tierToStoreCount;
   window._tierToStores     = _m.tierToStores;
+  window._tierToCategory   = _m.tierToCategory || {};   // [p7z]
+  window._categoryOrder    = _m.categoryOrder  || [];   // [p7z]
 
   // ── Matrix routing helpers ─────────────────────────────────────────────
   // Single source of truth for "which matrix does this delivery use?"
@@ -8561,6 +8675,7 @@ function renderPage() {
         return `<td title="${safe}"><span style="color:#2563eb;font-size:11px">${v.length > 60 ? v.slice(0, 57) + '…' : v}</span></td>`;
       }
       if (id === 'v_mx_store_ct') return `<td class="num" style="font-family:var(--mono);font-size:11px">${renderMxStoreCtCell(row)}</td>`;   // [p7y]
+      if (id === 'v_mx_category') return `<td>${renderMxCategoryCell(row)}</td>`;   // [p7z]
       if (id === 'cs_store_ct') return `<td class="num" style="font-family:var(--mono);font-size:11px">${v ? Number(v).toLocaleString() : '<span class="muted-cell">—</span>'}</td>`;
       if (id === 'config_store_ct') return `<td class="num" style="font-family:var(--mono);font-size:11px">${(v || v === 0) ? Number(v).toLocaleString() : '<span class="muted-cell">—</span>'}</td>`;
       if (id === 'cs_size_scale') return `<td><span class="pill pill-muted">${v}</span></td>`;
@@ -8931,7 +9046,8 @@ function openDrilldown(sku) {
       // [p7y] that season's matrix count, with the same states as the grid
       { const _pv = seasonProjection(row, ddSeasonKey);
         ddRows.push(['Store Count (' + ddSeasonKey + ' matrix)',
-          ddS.tier ? renderMxStoreCtCell(_pv, ddSeasonKey) : '—']); }
+          ddS.tier ? renderMxStoreCtCell(_pv, ddSeasonKey) : '—']);
+        ddRows.push(['Group Category', ddS.tier ? sgEsc(_pv.v_mx_category || '—') : '—']); }   // [p7z]
       ddRows.push(['On-Time', ddS.ontime || '—']);
     }
 
@@ -9765,6 +9881,7 @@ function refreshDependentCells(tr, row) {
       }
     }
     if (id === 'v_mx_store_ct') { cell.innerHTML = renderMxStoreCtCell(row); }   // [p7y] tier override → count
+    if (id === 'v_mx_category') { cell.innerHTML = renderMxCategoryCell(row); }  // [p7z] tier override → category
     if (id === 'cs_store_ct') {
       cell.innerHTML = row.cs_store_ct ? Number(row.cs_store_ct).toLocaleString() : '<span class="muted-cell">—</span>';
     }
