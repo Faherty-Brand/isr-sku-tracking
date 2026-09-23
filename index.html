@@ -1070,7 +1070,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink (p7z3)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover (p7z4)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -14096,8 +14096,7 @@ tr.nf-strow-shifted  td.nf-pin{background:#DBEAFE}
 .eol-days.soon{color:var(--orange);font-weight:600}
 .eol-chk{cursor:pointer}
 /* [p7z3] Tier / Notes columns + sink divider */
-.eol-tier{font-family:var(--mono);font-size:11px;white-space:nowrap}
-.eol-tier-ow{font-family:var(--mono);font-size:9px;letter-spacing:.04em;color:var(--accent);margin-left:5px;border:1px solid var(--accent);border-radius:4px;padding:0 3px;background:var(--accent-bg);cursor:help}
+.eol-tier-ow{color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px}
 .eol-note{display:flex;align-items:center;gap:5px;max-width:240px;cursor:pointer}
 .eol-note-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
 .eol-note:hover .eol-note-txt{text-decoration:underline;text-decoration-color:var(--dim)}
@@ -16960,8 +16959,23 @@ tr.nf-strow-shifted {background:#DBEAFE}
         : '';
       var tier   = effTier(r);
       var tierOw = tierIsOw(r);
-      var tierCell = '<span class="eol-tier">' + esc(tier || '\u2014') + '</span>'
-        + (tierOw ? '<span class="eol-tier-ow" title="Tier override \u2014 PST tier is ' + esc(r.cs_tier || '(blank)') + '">OW</span>' : '');
+      // [p7z4] Modeled on NF Review's Store Tier: the tier name opens the shared
+      // member-store popover (sgValueSpan → showStoreGroupPopover), keyed to the
+      // SKU's effective delivery so the store list matches the config pipeline.
+      // Overrides follow the main grid's convention — orange text + "(ow)", PST
+      // tier in the cell tooltip — so an override reads the same on every tab.
+      var tierDeliv = String(r.deliv_ow || r.cs_deliv1 || '').trim();
+      var tierCell;
+      if (!tier) {
+        tierCell = '<span class="muted-cell">\u2014</span>';
+      } else if (typeof sgValueSpan === 'function') {
+        tierCell = sgValueSpan(esc(tier), tier, tierDeliv,
+                     tierOw ? 'color:var(--orange);font-weight:500' : '', 'sg-trunc')
+          + (tierOw ? '<span class="eol-tier-ow">(ow)</span>' : '');
+      } else {
+        tierCell = esc(tier) + (tierOw ? '<span class="eol-tier-ow">(ow)</span>' : '');
+      }
+      var tierTip = tierOw ? ' title="PST: ' + esc(r.cs_tier || '\u2014') + ' \u00b7 Override: ' + esc(tier) + '"' : '';
       var nts = notesOf(r.sku);
       var noteCell = nts.length
         ? '<div class="eol-note" title="' + esc(nts.map(function(n){ return '\u2022 ' + n.text; }).join('\n')) + '"'
@@ -16985,7 +16999,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
         + '<td class="l"><div class="nf-colordesc" title="' + esc(r.color_desc) + '">' + esc(r.color_desc || '\u2014') + '</div></td>'
         + '<td class="l">' + esc(r.division || '\u2014') + '</td>'
         + '<td class="l"><span class="pill ' + (isMd ? 'pill-markdown' : 'pill-muted') + '">' + esc(isMd ? 'MD' : 'FP') + '</span></td>'
-        + '<td class="l">' + tierCell + '</td>'
+        + '<td class="l"' + tierTip + '>' + tierCell + '</td>'
         + '<td class="nf-num">' + fmtN(r.config_store_ct) + '</td>'
         + '<td class="l">' + noteCell + '</td>'
         + '<td class="nf-num">' + esc(r.config_syrup_end || '\u2014') + '</td>'
@@ -17349,7 +17363,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     _eolLm.addEventListener('click', function(e){ if (e.target === _eolLm) eolCloseLookup(); });
   }
 
-  console.log('[EOL] End-of-lifecycle module ready [eol-review p7z3]');
+  console.log('[EOL] End-of-lifecycle module ready [eol-review p7z4]');
 })();
 </script>
 
