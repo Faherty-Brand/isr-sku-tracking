@@ -1070,7 +1070,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover (p7z4)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow (p7z5)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -14467,6 +14467,11 @@ tr.nf-strow-shifted {background:#DBEAFE}
     // the flat row.tier_ow mirror, so NF, the Late List and the main grid agree.
     var _ovrTier = String(getOWFor(sku, NF_SEASON, 'tier_ow') || '').trim();
     var _tierOverridden = !!_ovrTier && _ovrTier.toUpperCase() !== 'NONE';
+    // [p7z5] Keep the PST tier for display. The override flag shown in the cell
+    // requires a real difference (case-insensitive) so a no-op override does
+    // not paint orange — same rule as the main grid's v_tier_ovr.
+    var pstTier = baseTier;
+    var tierOwShown = _tierOverridden && _ovrTier.toUpperCase() !== pstTier.toUpperCase();
     if (_tierOverridden) baseTier = _ovrTier;
     // When retiered, use the override tier's footprint for the store count (not
     // the original tier's planned count) so depth & New Rec reflect the new tier.
@@ -14543,6 +14548,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
       sizeScale: slice.size_scale||'',
       sizeCt: sizeCt,
       baseTier: baseTier, altTier: altTier, effTier: (altTier||baseTier),
+      pstTier: pstTier, tierOw: tierOwShown,
       iaRec: iaRec, tierOH: tierOH,
       plgOH: num(row.plg_oh),
       baseStoreCt: baseStoreCt, stores: stores,
@@ -14845,6 +14851,13 @@ tr.nf-strow-shifted {background:#DBEAFE}
     // sentinels (None / CF / blank) as a plain non-clickable span.
     storetier: function(r){
       if (!r.baseTier) return '<td class="l">—</td>';
+      // [p7z5] Overrides read the same on every tab: orange + "(ow)", with the
+      // PST tier in the tooltip (main grid v_tier convention).
+      if (r.tierOw) {
+        return '<td class="l" title="PST: '+nfEsc(r.pstTier||'—')+' · Override: '+nfEsc(r.baseTier)+'">'
+          + sgValueSpan(nfEsc(r.baseTier), r.baseTier, r.delivRaw, 'color:var(--orange);font-weight:500')
+          + '<span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span></td>';
+      }
       return '<td class="l">'+sgValueSpan(nfEsc(r.baseTier), r.baseTier, r.delivRaw)+'</td>';
     },
     alttier: function(r){ return '<td class="l">'+nfTierSelect(r)+'</td>'; },
