@@ -1070,7 +1070,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category (p7z2)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink (p7z3)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1573,6 +1573,10 @@ setTimeout(function(){
                title="Forward window in days. Expired SKUs always appear regardless of this value."
                onchange="eolSetHorizon(this.value)">
       </div>
+      <label class="nf-ctrl eol-sink-ctrl" title="Move SKUs that are out of season (no CS delivery), marked down, or blocked by an MD / DROP note below everything else. Only changes the order — filters, stats and selection are unaffected.">
+        <input type="checkbox" id="eolSink" class="eol-chk" onchange="eolSetSink(this.checked)" checked>
+        <span class="nf-ctrl-lbl">Sink out of szn / MD</span>
+      </label>
       <div class="nf-ctrl">
         <span class="nf-ctrl-lbl">Search</span>
         <input class="nf-ftext" id="eolSearch" type="text" placeholder="SKU / style / color…" style="max-width:170px"
@@ -14091,6 +14095,16 @@ tr.nf-strow-shifted  td.nf-pin{background:#DBEAFE}
 .eol-days.past{color:var(--red);font-weight:600}
 .eol-days.soon{color:var(--orange);font-weight:600}
 .eol-chk{cursor:pointer}
+/* [p7z3] Tier / Notes columns + sink divider */
+.eol-tier{font-family:var(--mono);font-size:11px;white-space:nowrap}
+.eol-tier-ow{font-family:var(--mono);font-size:9px;letter-spacing:.04em;color:var(--accent);margin-left:5px;border:1px solid var(--accent);border-radius:4px;padding:0 3px;background:var(--accent-bg);cursor:help}
+.eol-note{display:flex;align-items:center;gap:5px;max-width:240px;cursor:pointer}
+.eol-note-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.eol-note:hover .eol-note-txt{text-decoration:underline;text-decoration-color:var(--dim)}
+.eol-note-dot{flex:0 0 auto;width:8px;height:8px;border-radius:2px;background:#dc2626}
+.eol-note-more{flex:0 0 auto;font-family:var(--mono);font-size:9px;color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:0 3px}
+.nf-table tbody tr.eol-sink-div td{background:var(--bg);border-top:2px solid var(--border);padding:5px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);text-align:left}
+.eol-sink-ctrl{cursor:pointer;display:flex;align-items:center;gap:6px}
 .eol-manual{font-family:var(--mono);font-size:9px;letter-spacing:.04em;color:var(--muted);margin-left:5px;border:1px solid var(--border);border-radius:4px;padding:0 3px}
 .nf-tier-sel{max-width:150px;font-family:var(--mono);font-size:10.5px;padding:3px 4px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
 .nf-tier-sel.alt{border-color:var(--purple);background:var(--purple-bg);color:var(--purple);font-weight:600}
@@ -16482,6 +16496,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
   var EOL_ROWS      = [];        // last built universe (render + bulk read this)
   var EOL_FILT      = {};        // column id -> filter value ('min~max' for numerics)
   var EOL_LOOKUP    = new Set(); // multi-SKU lookup; non-empty REPLACES the universe
+  // [p7z3] Sink toggle. Per-viewer preference, so localStorage rather than
+  // Supabase — it changes nobody else's view and nothing downstream reads it.
+  var EOL_SINK_KEY  = 'isr_eol_sink';
+  var EOL_SINK      = true;
+  try { var _sk = localStorage.getItem(EOL_SINK_KEY); if (_sk === '0') EOL_SINK = false; } catch(e){}
+  var EOL_NOTES     = {};        // sku -> [{ts,text}] newest first; rebuilt per eolBuild
 
   function _today(){ var d = new Date(); d.setHours(0,0,0,0); return d; }
   function _days(a, b){ return Math.round((a - b) / 86400000); }
@@ -16525,6 +16545,49 @@ tr.nf-strow-shifted {background:#DBEAFE}
     return (typeof ALL_ROWS !== 'undefined' && Array.isArray(ALL_ROWS)) ? ALL_ROWS : [];
   }
 
+  // ── [p7z3] Tier / notes / sink helpers ──────────────────────────────────
+  // Effective tier uses the SAME resolution as computeAllRows, the Configs
+  // Generator and the Late List (tier_ow || cs_tier). Anything cleverer here
+  // would let this tab show a tier the config pipeline is not actually using.
+  function effTier(r){ return String((r.tier_ow || r.cs_tier || '')).trim(); }
+  function tierIsOw(r){
+    var ow = String(r.tier_ow || '').trim();
+    return !!ow && ow.toUpperCase() !== String(r.cs_tier || '').trim().toUpperCase();
+  }
+
+  // Config-season notes, read once per build (getNotesStore parses
+  // localStorage — doing it per row would be one parse per SKU). Season key
+  // mirrors showNotePopover so the inline cell and the popover always agree.
+  function buildNotesMap(){
+    var out = {};
+    try {
+      if (typeof getNotesStore !== 'function' || typeof getNotesFor !== 'function') return out;
+      var season = (typeof CONFIG_SEASON !== 'undefined' && CONFIG_SEASON) ? CONFIG_SEASON
+                 : (typeof notesSeasonKey === 'function' ? notesSeasonKey() : '');
+      var store = getNotesStore();
+      Object.keys(store).forEach(function(sku){
+        var arr = getNotesFor(store, sku, season);
+        if (arr && arr.length) out[sku] = arr.slice().sort(function(a,b){ return b.ts - a.ts; });
+      });
+    } catch(e){ console.warn('[EOL] notes read failed', e); }
+    return out;
+  }
+  function notesOf(sku){ return EOL_NOTES[sku] || []; }
+  function notesText(sku){
+    return notesOf(sku).map(function(n){ return String(n.text); }).join('\n');
+  }
+
+  // Sunk = out of season (status 'N/A: Out of Szn, MD', i.e. no CS delivery),
+  // OR priced Markdown, OR Blocked (MD / DROP note). Blocked is included so it
+  // stays at the very bottom: the sunk group keeps the normal rank order, and
+  // Blocked is last in that order.
+  function isSunk(e){
+    var r = e.row;
+    return e.blocked
+        || r.fp_md === 'Markdown'
+        || String(r.status || '').indexOf('Out of Szn') >= 0;
+  }
+
   // Build one universe entry. Gating is the caller's job so the lookup path can
   // admit a SKU the horizon would reject while still classifying it identically.
   function eolEntry(r, today){
@@ -16562,6 +16625,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   }
 
   function eolBuild(){
+    EOL_NOTES = buildNotesMap();
     var today = _today();
     var horizonEnd = new Date(today.getTime() + EOL_HORIZON * 86400000);
     var out = [];
@@ -16623,6 +16687,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
     color: { type:'text',   get:function(e){ return e.row.color_desc; } },
     div:   { type:'select', get:function(e){ return e.row.division; } },
     fpmd:  { type:'select', get:function(e){ return e.row.fp_md === 'Markdown' ? 'MD' : 'FP'; } },
+    tier:  { type:'select', get:function(e){ return effTier(e.row); } },
+    notes: { type:'text',   get:function(e){ return notesText(e.sku); } },
     days:  { type:'num',    get:function(e){ return e.days; } },
     state: { type:'select', get:function(e){ return e.state; } },
     // Not a value match — an "is it set, and how" filter, which is what you
@@ -16747,7 +16813,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function eolVisible(){
     var q = EOL_QUERY.trim().toLowerCase();
     var lookupOn = EOL_LOOKUP.size > 0;
-    return EOL_ROWS.filter(function(e){
+    var list = EOL_ROWS.filter(function(e){
       // The view segment is a shortcut over the standing universe. A lookup
       // replaced that universe on purpose, so applying the segment on top
       // would silently hide SKUs the user explicitly asked to see.
@@ -16762,6 +16828,15 @@ tr.nf-strow-shifted {background:#DBEAFE}
       return (String(r.sku||'') + ' ' + String(r.style_desc||'') + ' ' + String(r.color_desc||'') + ' ' + String(r.style||''))
         .toLowerCase().indexOf(q) >= 0;
     });
+    // [p7z3] Stable partition, not a re-sort: each half keeps eolBuild's
+    // state → end date → SKU order, so "sorted by expiry" still holds within
+    // the live group and within the sunk group.
+    if (EOL_SINK) {
+      var top = [], sunk = [];
+      list.forEach(function(e){ (isSunk(e) ? sunk : top).push(e); });
+      list = top.concat(sunk);
+    }
+    return list;
   }
 
   function eolSetFilter(id, val){
@@ -16795,6 +16870,9 @@ tr.nf-strow-shifted {background:#DBEAFE}
     ['Color',       'color', false],
     ['Div',         'div',   false],
     ['FP/MD',       'fpmd',  false],
+    ['Tier',        'tier',  false],
+    ['Cfg Ct',      'cfgct', true ],
+    ['Notes',       'notes', false],
     ['Cfg End',     'end',   false],
     ['Days',        'days',  true ],
     ['State',       'state', false],
@@ -16809,7 +16887,6 @@ tr.nf-strow-shifted {background:#DBEAFE}
     ['Turn',        'turn',  true ],
     ['In-Stock',    'stock', false],
     ['Next In-DC',  'indc',  false],
-    ['Cfg Ct',      'cfgct', true ],
   ];
 
   function statePill(e){
@@ -16870,14 +16947,36 @@ tr.nf-strow-shifted {background:#DBEAFE}
     }
     empty.style.display = 'none';
 
-    body.innerHTML = list.map(function(e){
+    var sinkAt = -1, sinkCt = 0;
+    if (EOL_SINK) {
+      list.forEach(function(e, i){ if (isSunk(e)) { sinkCt++; if (sinkAt < 0) sinkAt = i; } });
+    }
+
+    body.innerHTML = list.map(function(e, i){
       var r = e.row;
+      var divider = (i === sinkAt)
+        ? '<tr class="eol-sink-div"><td colspan="' + COLS.length + '">\u2193 Out of season / MD \u00b7 ' + sinkCt
+          + ' SKU' + (sinkCt === 1 ? '' : 's') + '</td></tr>'
+        : '';
+      var tier   = effTier(r);
+      var tierOw = tierIsOw(r);
+      var tierCell = '<span class="eol-tier">' + esc(tier || '\u2014') + '</span>'
+        + (tierOw ? '<span class="eol-tier-ow" title="Tier override \u2014 PST tier is ' + esc(r.cs_tier || '(blank)') + '">OW</span>' : '');
+      var nts = notesOf(r.sku);
+      var noteCell = nts.length
+        ? '<div class="eol-note" title="' + esc(nts.map(function(n){ return '\u2022 ' + n.text; }).join('\n')) + '"'
+            + ' onclick="event.stopPropagation();showNotePopover(event,\'' + esc(r.sku) + '\')">'
+            + '<span class="eol-note-dot"></span>'
+            + '<span class="eol-note-txt">' + esc(nts[0].text) + '</span>'
+            + (nts.length > 1 ? '<span class="eol-note-more">+' + (nts.length - 1) + '</span>' : '')
+            + '</div>'
+        : '<span class="muted-cell">\u2014</span>';
       var daysCls = e.days == null ? '' : (e.days < 0 ? ' past' : (e.days <= EOL_HORIZON ? ' soon' : ''));
       var daysTxt = e.days == null ? '\u2014' : (e.days < 0 ? e.days + 'd' : '+' + e.days + 'd');
       var owDisp  = fmtEndOWDisplay(e.ow);
       var isMd    = r.fp_md === 'Markdown';
 
-      return '<tr>'
+      return divider + '<tr>'
         + '<td class="l nf-pin"><input type="checkbox" class="eol-chk" data-sku="' + esc(r.sku) + '"'
             + (EOL_SEL[r.sku] ? ' checked' : '') + (e.blocked ? ' disabled' : '')
             + ' onclick="eolToggle(this)"></td>'
@@ -16886,6 +16985,9 @@ tr.nf-strow-shifted {background:#DBEAFE}
         + '<td class="l"><div class="nf-colordesc" title="' + esc(r.color_desc) + '">' + esc(r.color_desc || '\u2014') + '</div></td>'
         + '<td class="l">' + esc(r.division || '\u2014') + '</td>'
         + '<td class="l"><span class="pill ' + (isMd ? 'pill-markdown' : 'pill-muted') + '">' + esc(isMd ? 'MD' : 'FP') + '</span></td>'
+        + '<td class="l">' + tierCell + '</td>'
+        + '<td class="nf-num">' + fmtN(r.config_store_ct) + '</td>'
+        + '<td class="l">' + noteCell + '</td>'
         + '<td class="nf-num">' + esc(r.config_syrup_end || '\u2014') + '</td>'
         + '<td class="eol-days' + daysCls + '">' + esc(daysTxt) + '</td>'
         + '<td class="l">' + statePill(e) + '</td>'
@@ -16903,7 +17005,6 @@ tr.nf-strow-shifted {background:#DBEAFE}
         + '<td class="nf-num">' + esc(r.store_turn === '' || r.store_turn == null ? '\u2014' : r.store_turn) + '</td>'
         + '<td class="l">' + esc(r.in_stock || '\u2014') + '</td>'
         + '<td class="nf-num">' + esc(r.xs_pend_disp || '\u2014') + '</td>'
-        + '<td class="nf-num">' + fmtN(r.config_store_ct) + '</td>'
         + '</tr>';
     }).join('');
   }
@@ -17071,6 +17172,12 @@ tr.nf-strow-shifted {background:#DBEAFE}
     document.getElementById('eolHorizon').value = EOL_HORIZON;
     eolRefresh();
   }
+  function eolSetSink(on){
+    EOL_SINK = !!on;
+    try { localStorage.setItem(EOL_SINK_KEY, EOL_SINK ? '1' : '0'); } catch(e){}
+    var cb = document.getElementById('eolSink'); if (cb) cb.checked = EOL_SINK;
+    var v = eolVisible(); renderBody(v); renderBulk(v);
+  }
   // Deliberately does NOT call eolRefresh: this fires on every keystroke and a
   // head re-render would blow away focus mid-word. The filter row's own inputs
   // use onchange (blur/Enter) and can afford the full refresh.
@@ -17229,14 +17336,20 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.eolBulkApply     = eolBulkApply;
   window.eolBulkClear     = eolBulkClear;
   window.eolCopySkus      = eolCopySkus;
+  window.eolSetSink       = eolSetSink;
   window._eolBuild        = eolBuild;   // exposed for the test harness
+  window._eolVisible      = eolVisible; // exposed for the test harness
+
+  // Reflect the stored sink preference in the checkbox (markup defaults to on).
+  var _eolSinkCb = document.getElementById('eolSink');
+  if (_eolSinkCb) _eolSinkCb.checked = EOL_SINK;
 
   var _eolLm = document.getElementById('eolLookupModal');
   if (_eolLm && _eolLm.addEventListener) {
     _eolLm.addEventListener('click', function(e){ if (e.target === _eolLm) eolCloseLookup(); });
   }
 
-  console.log('[EOL] End-of-lifecycle module ready [eol-review p7u3]');
+  console.log('[EOL] End-of-lifecycle module ready [eol-review p7z3]');
 })();
 </script>
 
