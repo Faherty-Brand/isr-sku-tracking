@@ -832,6 +832,12 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     injectPanel();
     if (!cloudConfigured()){ setStatus('off'); return; }
     setStatus(window.cloudReady ? 'on' : 'error');
+    // [p7z6] Idempotent: cloudStart runs on every buildFromParsed (snapshot load,
+    // folder load, rebuilds). Channels persist across rebuilds, so subscribe once.
+    // Re-calling SB.channel(topic) returns the already-joined channel in current
+    // supabase-js, and .on() after subscribe() throws.
+    if (window._cloudSubbed) return;
+    window._cloudSubbed = true;
     try {
       window.SB.channel('isr-overrides')
         .on('postgres_changes', { event: '*', schema: 'public', table: OVERRIDES_TABLE }, function(p){
@@ -844,7 +850,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
           applyRemoteNotes(row.sku, p.new ? (p.new.data || {}) : {});
         }).subscribe();
       console.log('[Cloud] live updates subscribed');
-    } catch(e){ console.warn('[Cloud] subscribe failed', e); }
+    } catch(e){ window._cloudSubbed = false; console.warn('[Cloud] subscribe failed', e); }
   };
 
   // ---- One-time: push everything on THIS machine up to the shared store ----
@@ -1070,7 +1076,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + nf-drop-depth (p7z6)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once (p7z6)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1143,7 +1149,9 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     } catch(e){ console.warn('[Snapshot] load failed — falling back to folder load', e); return false; }
   };
 
+  var _snapSubbed = false;  // [p7z6] subscribe once; snapshot loads can repeat
   function watchSnapshots(){
+    if (_snapSubbed) return; _snapSubbed = true;
     try {
       window.SB.channel('isr-snap').on('postgres_changes', { event:'*', schema:'public', table:SNAP_TABLE }, function(p){
         if (Date.now() - justPublished < 8000) return; // ignore our own publish
@@ -4279,86 +4287,34 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
 
   console.log(`[LCW] Parsed — Online SKUs: ${Object.keys(lcwOnline).length}, Retail SKUs: ${Object.keys(lcwRetail).length}`);
 
-  // ── Newness Log ──  [p7z6]
-  // Pivot export: title row, then headers — Date, Sku, Gender, Category,
-  // Description, Color, Sum of Quantity (units), Distinct Count of To Location
-  // (stores). One row per Date × SKU.
-  //
-  // [p7z6] Columns are resolved BY HEADER NAME. The old parser read fixed
-  // positions (r[6] = Month+Week, r[7] = Total); the log later lost its
-  // Month+Week column, which shifted Total into r[6] and left every SKU's
-  // `total` parsing as 0. That went unnoticed only because nothing read it.
-  //
-  // [p7z6] Every entry is KEPT (entries[]), not just the latest. 105 SKUs carry
-  // a primary drop plus small follow-ups (e.g. 607u→28 stores, then 23u→1).
-  //   date / week — UNCHANGED semantics: most recent entry, a real date always
-  //                 beating a null one. alloc_date, the NF release gate, SS Off
-  //                 Date and On-Time all read this, so it must not move.
-  //   total       — now the SUM of units across entries (was: latest entry).
-  //   primary     — the largest-units entry (ties → earliest). NF Released
-  //                 depth is primary units ÷ primary stores, so numerator and
-  //                 denominator describe the same drop.
-  //   firstDate   — earliest dated entry (NF Released "Drop Date").
-  // Rows without a real SKU are skipped: the pivot's Grand Total, blank-SKU
-  // raw lines that pivot as "0", and time-valued junk cells.
-  const newnessMap = {}; // SKU → {date, total, week, entries, primary, firstDate, stores}
+  // ── Newness Log ──
+  // Headers row 1 (index 1): Date, Sku, Gender, Category, Description, Color, Month+Week, Total
+  const newnessMap = {}; // SKU → {date, total, week}
   let newnessHeaderIdx = -1;
   for (let i = 0; i < Math.min(4, newnessRows.length); i++) {
     if (newnessRows[i] && String(newnessRows[i][0]||'').toLowerCase().includes('date')) {
       newnessHeaderIdx = i; break;
     }
   }
-  const _nlHdr = newnessHeaderIdx >= 0
-    ? (newnessRows[newnessHeaderIdx] || []).map(h => String(h||'').trim().toLowerCase())
-    : [];
-  const _nlCol = (tests, fallback) => {
-    for (const t of tests) { const i = _nlHdr.findIndex(h => t(h)); if (i >= 0) return i; }
-    return fallback;
-  };
-  const NL_DATE  = _nlCol([h => h === 'date', h => h.includes('date')], 0);
-  const NL_SKU   = _nlCol([h => h === 'sku', h => h.includes('sku')], 1);
-  const NL_UNITS = _nlCol([h => h === 'total', h => h.includes('sum of quantity'),
-                           h => h === 'units' || h === 'quantity' || h === 'qty'], -1);
-  const NL_STORES= _nlCol([h => h.includes('distinct count'), h => h.includes('store count'),
-                           h => h === 'stores' || h === 'store ct' || h === 'store count',
-                           h => h.includes('to location')], -1);
-  const NL_WEEK  = _nlCol([h => h.includes('month') || h.includes('week')], -1);
-  const _nlNum = v => { const n = parseFloat(String(v == null ? '' : v).replace(/[,\s]/g, '')); return isFinite(n) ? n : 0; };
-  const _nlIsSku = s => !!s && /[a-z]/i.test(s) && !/^(grand\s+)?total$/i.test(s) && !/^\d{1,2}:\d{2}/.test(s);
-  let _nlSkipped = 0;
+  // Log first 3 data rows to show raw values and parse results
   for (let i = newnessHeaderIdx + 1; i < newnessRows.length; i++) {
     const r = newnessRows[i];
-    if (!r) continue;
-    const sku = String(r[NL_SKU] == null ? '' : r[NL_SKU]).trim();
-    if (!_nlIsSku(sku)) { if (String(r[NL_SKU]||r[NL_DATE]||'').trim()) _nlSkipped++; continue; }
-    const date   = r[NL_DATE] ? parseXLDate(r[NL_DATE]) : null;
-    const units  = NL_UNITS  >= 0 ? _nlNum(r[NL_UNITS])  : 0;
-    const stores = NL_STORES >= 0 ? (String(r[NL_STORES]||'').trim() === '' ? null : _nlNum(r[NL_STORES])) : null;
-    const week   = NL_WEEK   >= 0 ? String(r[NL_WEEK] || '').trim() : '';
-    const e = newnessMap[sku] || (newnessMap[sku] = {date:null, total:0, week:'', entries:[], primary:null, firstDate:null, stores:null, _seen:false});
-    // [nf-release-p6h] latest-date rule preserved exactly: the first row seeds;
-    // after that a real date replaces a null one or an earlier one.
-    if (!e._seen || (date && (!e.date || date > e.date))) { e.date = date; e.week = week; }
-    e._seen = true;
-    e.total += units;
-    const ent = {ts: (date instanceof Date && !isNaN(date)) ? date.getTime() : null, units, stores};
-    e.entries.push(ent);
-    if (ent.ts !== null && (e.firstDate === null || ent.ts < e.firstDate.getTime())) e.firstDate = date;
-    const p = e.primary;
-    if (!p || units > p.units || (units === p.units && ent.ts !== null && (p.ts === null || ent.ts < p.ts))) e.primary = ent;
+    if (!r || !r[1]) continue;
+    const sku = String(r[1]).trim();
+    const date = r[0] ? parseXLDate(r[0]) : null;
+    // Strip thousands separators before parseFloat (raw:false xlsx values)
+    const totalRaw = r[7] == null ? '' : String(r[7]).replace(/[, \s]/g, '');
+    const total = parseFloat(totalRaw) || 0;
+    const week = String(r[6] || '').trim();
+    // Keep most recent entry.
+    // [nf-release-p6h] Previously: `date && newnessMap[sku].date && date > ...`
+    // — if the FIRST row for a SKU had a blank Date cell, newnessMap[sku].date
+    // was null (falsy), so no later dated row could ever replace it and the SKU
+    // stayed permanently date-less. Now a real date always beats a null one.
+    if (!newnessMap[sku] || (date && (!newnessMap[sku].date || date > newnessMap[sku].date))) {
+      newnessMap[sku] = {date, total, week};
+    }
   }
-  for (const k in newnessMap) {
-    const e = newnessMap[k];
-    delete e._seen;
-    e.entries.sort((a, b) => (a.ts === null) - (b.ts === null) || (a.ts || 0) - (b.ts || 0));
-    e.stores = e.primary ? e.primary.stores : null;
-  }
-  window._nlCols = {date:NL_DATE, sku:NL_SKU, units:NL_UNITS, stores:NL_STORES, week:NL_WEEK};
-  console.log('[Newness] cols → date:'+NL_DATE+' sku:'+NL_SKU+' units:'+NL_UNITS+' stores:'+NL_STORES
-    + ' | SKUs: '+Object.keys(newnessMap).length
-    + ' | multi-entry: '+Object.values(newnessMap).filter(e => e.entries.length > 1).length
-    + ' | skipped non-SKU rows: '+_nlSkipped
-    + (NL_STORES < 0 ? ' | ⚠ no store-count column — NF Released drop depth will be blank' : ''));
 
   // ── Flow Calendar ──
   // Col A (0) = Season, Col B (1) = Flow Month code, Col I (8) = Allocation Drop Date
@@ -5913,22 +5869,6 @@ function computeAllRows(lookups) {
       // round-trip. NF parses no display strings.
       in_newness: !!newnessEntry,
       newness_ts: (alloc_date instanceof Date && !isNaN(alloc_date)) ? alloc_date.getTime() : null,
-      // [p7z6] Drop-depth facts from the Newness Log (NF Released view).
-      // Source facts only — no user edit changes them, so recomputeRowDerived
-      // has nothing to mirror (no two-site parity obligation). Plain numbers /
-      // arrays so they stay JSON-safe like newness_ts.
-      //   nl_units    — units across ALL log entries
-      //   nl_drops    — number of log entries (Date × SKU rows)
-      //   nl_first_ts — earliest dated entry
-      //   nl_p_*      — the PRIMARY (largest) entry: units, stores, date
-      //   nl_entries  — [[ts, units, stores], …] oldest first, for the tooltip
-      nl_units:    newnessEntry ? newnessEntry.total : 0,
-      nl_drops:    newnessEntry ? newnessEntry.entries.length : 0,
-      nl_first_ts: (newnessEntry && newnessEntry.firstDate) ? newnessEntry.firstDate.getTime() : null,
-      nl_p_units:  (newnessEntry && newnessEntry.primary) ? newnessEntry.primary.units : 0,
-      nl_p_stores: (newnessEntry && newnessEntry.primary) ? newnessEntry.primary.stores : null,
-      nl_p_ts:     (newnessEntry && newnessEntry.primary) ? newnessEntry.primary.ts : null,
-      nl_entries:  newnessEntry ? newnessEntry.entries.map(e => [e.ts, e.units, e.stores]) : [],
       deliv_alloc_ts: (deliv_alloc_date instanceof Date && !isNaN(deliv_alloc_date)) ? deliv_alloc_date.getTime() : null,
       newness_proj,
       deliv_alloc_date: deliv_alloc_date ? fmtDate4(deliv_alloc_date) : '',
@@ -14265,12 +14205,6 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function nfEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
   function num(v){ var n = parseFloat(v); return isFinite(n) ? n : 0; }
   function round1(n){ return Math.round(n*10)/10; }
-  // [p7z6] epoch ms → M/D/YY (log dates are day-granular; null → '').
-  function nfDropDate(ts){
-    if (ts == null || !isFinite(ts)) return '';
-    var d = new Date(ts);
-    return (d.getMonth()+1)+'/'+d.getDate()+'/'+String(d.getFullYear()).slice(2);
-  }
   function monthKey(s){
     s = String(s||'').trim().toLowerCase().replace(/_\d+$/,'');
     if (!s) return '';
@@ -14609,29 +14543,6 @@ tr.nf-strow-shifted {background:#DBEAFE}
     // Realized footprint vs the intended tier footprint.
     var actCoverage = stores > 0 ? actStores/stores : 0;
 
-    // ---- DROP depth (Released view)  [p7z6] --------------------------------
-    // Released now answers "how deep did it land AT DROP?" from the Newness Log,
-    // not from today's on-hand (which sales and replen have already moved).
-    //   dropUnits    = units across every log entry (primary + follow-ups)
-    //   dropStores   = stores in the PRIMARY entry (log's distinct store count)
-    //   dropDepth    = primary units ÷ primary stores — both from the SAME drop.
-    //                  Follow-ups are excluded from depth on purpose: most are
-    //                  1–3 store top-ups, and mixing all-entry units with
-    //                  primary stores overstates depth whenever a follow-up
-    //                  reached a store the primary didn't.
-    //   dropPerSize  = dropDepth ÷ size count (even-spread; the log has no size
-    //                  dimension). Same basis the Pending view uses for Per Size.
-    //   dropReach    = dropStores ÷ tier stores (intended footprint reached).
-    // A log row with no store count leaves depth / per size / reach blank
-    // rather than guessing a denominator.
-    var dropStores  = (row.nl_p_stores != null && num(row.nl_p_stores) > 0) ? num(row.nl_p_stores) : 0;
-    var dropPUnits  = num(row.nl_p_units);
-    var dropUnits   = num(row.nl_units);
-    var dropDepth   = dropStores > 0 ? dropPUnits/dropStores : 0;
-    var dropPerSize = (dropDepth > 0 && sizeCt > 0) ? dropDepth/sizeCt : 0;
-    var dropReach   = (dropStores > 0 && stores > 0) ? dropStores/stores : 0;
-    var dropEntries = Array.isArray(row.nl_entries) ? row.nl_entries : [];
-
     return {
       sku: sku,
       desc: (row.style_desc||'') + (row.color_desc? ' — '+row.color_desc : ''),
@@ -14662,11 +14573,6 @@ tr.nf-strow-shifted {background:#DBEAFE}
       actUnits: actUnits, actStores: actStores, actDepth: actDepth,
       actPerSize: actPerSize, actCoverage: actCoverage,
       actMin: (actMin === null ? 0 : actMin), actMax: (actMax === null ? 0 : actMax),
-      // [p7z6] drop depth (Released view) — see nfCompute.
-      dropUnits: dropUnits, dropPUnits: dropPUnits, dropStores: dropStores,
-      dropDepth: dropDepth, dropPerSize: dropPerSize, dropReach: dropReach,
-      drops: num(row.nl_drops), dropEntries: dropEntries,
-      dropDate: nfDropDate(row.nl_first_ts), dropPDate: nfDropDate(row.nl_p_ts), dropPTs: (row.nl_p_ts == null ? null : row.nl_p_ts),
       status: dropped ? 'released' : (stored.status || 'pending'),
       autoReleased: dropped,
       logLocked: dropped,
@@ -14741,15 +14647,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     actdepth:   { type:'min',    get:function(r){ return r.actDepth; } },
     actpersize: { type:'min',    get:function(r){ return r.actPerSize; } },
     // Coverage as a whole percent so the filter reads "≥ 60" not "≥ 0.6".
-    actcoverage:{ type:'min',    get:function(r){ return r.stores>0 ? r.actCoverage*100 : null; } },
-    // ---- Released-view drop depth  [p7z6] ----
-    dropdate:   { type:'select', get:function(r){ return r.dropDate; } },
-    drops:      { type:'num',    get:function(r){ return r.drops; } },
-    dropstores: { type:'num',    get:function(r){ return r.dropStores; } },
-    dropreach:  { type:'min',    get:function(r){ return r.dropStores>0 && r.stores>0 ? r.dropReach*100 : null; } },
-    dropunits:  { type:'num',    get:function(r){ return r.dropUnits; } },
-    dropdepth:  { type:'min',    get:function(r){ return r.dropDepth; } },
-    droppersize:{ type:'min',    get:function(r){ return r.dropPerSize; } }
+    actcoverage:{ type:'min',    get:function(r){ return r.stores>0 ? r.actCoverage*100 : null; } }
   };
 
   // ---- distinct non-empty values for a filter spec (drives select options) ----
@@ -14870,28 +14768,21 @@ tr.nf-strow-shifted {background:#DBEAFE}
     // tiles carry no information. Show distribution quality instead — the actual
     // question on a dropped SKU is "did it land where and as deep as intended?".
     if (NF_MODE === 'released'){
-      // [p7z6] Drop-quality tiles from the Newness Log (was: INV Pull on-hand).
-      // Averages are over SKUs WITH a store count, so rows logged before the
-      // count existed don't drag the average toward zero — they're counted in
-      // their own tile instead.
-      var withCt = 0, noCt = 0, under = 0, unitTot = 0, depthSum = 0, reachSum = 0, reachN = 0, multi = 0;
+      var withInv = 0, noInv = 0, under = 0, unitTot = 0, depthSum = 0, covSum = 0, covN = 0;
       recs.forEach(function(r){
-        unitTot += r.dropUnits;
-        if (r.drops > 1) multi++;
-        if (r.dropStores > 0){ withCt++; depthSum += r.dropDepth;
-          if (r.stores > 0){ reachSum += r.dropReach; reachN++; if (r.dropReach < 0.6) under++; } }
-        else noCt++;
+        if (r.actStores > 0){ withInv++; depthSum += r.actDepth; unitTot += r.actUnits; }
+        else noInv++;
+        if (r.stores > 0){ covSum += r.actCoverage; covN++; if (r.actCoverage < 0.6) under++; }
       });
-      var avgDepth = withCt > 0 ? depthSum/withCt : 0;
-      var avgReach = reachN > 0 ? reachSum/reachN : 0;
+      var avgDepth = withInv > 0 ? depthSum/withInv : 0;
+      var avgCov   = covN > 0 ? covSum/covN : 0;
       el.innerHTML =
         nfStat(recs.length, 'Released SKUs', 'var(--purple)') +
-        nfStat(unitTot.toLocaleString(), 'Dropped Units', 'var(--text)') +
-        nfStat(round1(avgDepth), 'Avg Drop Depth', 'var(--text)') +
-        nfStat(Math.round(avgReach*100)+'%', 'Avg Reach', 'var(--text)') +
-        nfStat(under, 'Under 60% Reach', under?'var(--red)':'var(--muted)') +
-        nfStat(multi, 'Multi-drop', multi?'var(--text)':'var(--muted)') +
-        nfStat(noCt, 'No Store Count', noCt?'var(--orange)':'var(--muted)');
+        nfStat(unitTot.toLocaleString(), 'Store Units', 'var(--text)') +
+        nfStat(round1(avgDepth), 'Avg Act Depth', 'var(--text)') +
+        nfStat(Math.round(avgCov*100)+'%', 'Avg Coverage', 'var(--text)') +
+        nfStat(under, 'Under 60% Cov', under?'var(--red)':'var(--muted)') +
+        nfStat(noInv, 'No Store Stock', noInv?'var(--orange)':'var(--muted)');
       return;
     }
     var c = {pending:0,accepted:0,released:0,shifted:0,hold:0}, light=0, omni=0;
@@ -14924,23 +14815,15 @@ tr.nf-strow-shifted {background:#DBEAFE}
   // Released: actual store footprint and depth, measured from the ISR INV Pull.
   // 'Per Size' is DERIVED (actual depth ÷ size count) — the INV Pull has no size
   // dimension — and is marked with a ˚ so it reads as an estimate, not a fact.
-  // [p7z6] Rebuilt around the Newness Log: depth AT DROP, not today's on-hand.
-  // The INV Pull set (act*) is retired from this grid but its compute and
-  // renderers are kept — nfShowStoreDepth and the side panel still use the
-  // per-store on-hand, and restoring a column is a one-line change here.
-  var NF_COLS_RELEASED_INV = [   // retired p7z6 — kept for reference/restore
-    ['actstores','Act Stores',''],['actcoverage','Coverage',''],
-    ['actunits','Store Units',''],['actdepth','Act Depth',''],['actpersize','Per Size ˚',''],
-    ['actrange','Range','l'],['ia','Syrup IA',''],['plg','PLG OH','']
-  ];
   var NF_COLS_RELEASED = [
     ['sku','SKU','l'],['styledesc','Style Description','l'],['colordesc','Color','l'],
     ['div','Div','l'],['cat','Category','l'],
-    ['deliv','Deliv','l'],['dropdate','Drop Date','l'],['drops','Drops',''],['size','Size','l'],
+    ['deliv','Deliv','l'],['dropped','Dropped','l'],['size','Size','l'],
     ['storetier','Store Tier','l'],['stores','Tier Stores',''],
-    ['dropstores','Drop Stores',''],['dropreach','Reach',''],
-    ['dropunits','Dropped Units',''],['dropdepth','Drop Depth',''],['droppersize','Per Size',''],
-    ['retailbuy','Retail Buy',''],
+    ['actstores','Act Stores',''],['actcoverage','Coverage',''],
+    ['actunits','Store Units',''],['actdepth','Act Depth',''],['actpersize','Per Size ˚',''],
+    ['actrange','Range','l'],
+    ['ia','Syrup IA',''],['plg','PLG OH',''],['retailbuy','Retail Buy',''],
     ['status','Status','l'],['notes','Notes','l']
   ];
   function nfCols(){ return NF_MODE === 'released' ? NF_COLS_RELEASED : NF_COLS_PENDING; }
@@ -15033,50 +14916,6 @@ tr.nf-strow-shifted {background:#DBEAFE}
         + ' sizes, i.e. an even-spread assumption. The ISR INV Pull has no size dimension, '
         + 'so true per-size on-hand cannot be computed from current inputs.">'
         + round1(r.actPerSize)+'</td>';
-    },
-    // ---- Released-view drop depth  [p7z6] ----
-    dropdate: function(r){ return '<td class="l" style="font-family:var(--mono);font-size:10.5px">'+nfEsc(r.dropDate||'—')+'</td>'; },
-    drops: function(r){
-      if (!(r.drops > 0)) return '<td class="nf-num">—</td>';
-      var marked = false;
-      var lines = r.dropEntries.map(function(e){
-        var isP = !marked && e[0] === r.dropPTs && num(e[1]) === r.dropPUnits;
-        if (isP) marked = true;
-        return (nfDropDate(e[0])||'no date')+': '+num(e[1]).toLocaleString()+'u → '
-          + (e[2]==null ? '? stores' : e[2]+' store'+(e[2]===1?'':'s')) + (isP ? '  ← primary' : '');
-      });
-      var tip = 'Newness Log entries (oldest first):&#10;' + lines.map(nfEsc).join('&#10;')
-        + (r.drops > 1 ? '&#10;&#10;Drop Depth uses the primary entry only.' : '');
-      return '<td class="nf-num"'+(r.drops>1?' style="font-weight:600"':'')+' title="'+tip+'">'+r.drops+'</td>';
-    },
-    dropstores: function(r){
-      return '<td class="nf-num" title="Distinct stores in the primary drop (Newness Log store count).">'
-        + (r.dropStores>0 ? r.dropStores.toLocaleString() : '—') + '</td>';
-    },
-    dropreach: function(r){
-      if (!(r.dropStores > 0) || !r.stores) return '<td class="nf-num">—</td>';
-      var pct = Math.round(r.dropReach*100);
-      var col = pct < 60 ? 'var(--red)' : pct < 85 ? 'var(--orange)' : 'var(--green)';
-      var tip = r.dropStores+' drop stores of '+r.stores+' tier stores.'
-        + (pct > 100 ? ' Over 100% — the drop reached stores outside the current tier (e.g. a tier change after drop).' : '');
-      return '<td class="nf-num" style="color:'+col+'" title="'+nfEsc(tip)+'">'+pct+'%</td>';
-    },
-    dropunits: function(r){
-      var tip = r.drops > 1
-        ? 'All '+r.drops+' log entries. Primary: '+r.dropPUnits.toLocaleString()+'u; follow-ups: '+(r.dropUnits-r.dropPUnits).toLocaleString()+'u.'
-        : 'Units in the Newness Log.';
-      return '<td class="nf-num" title="'+nfEsc(tip)+'">'+(r.dropUnits>0 ? r.dropUnits.toLocaleString() : '—')+'</td>';
-    },
-    dropdepth: function(r){
-      if (!(r.dropDepth>0)) return '<td class="nf-num" title="No store count on the log entry.">—</td>';
-      return '<td class="nf-cur" title="'+nfEsc('Primary drop'+(r.dropPDate?' '+r.dropPDate:'')+': '
-        + r.dropPUnits.toLocaleString()+'u ÷ '+r.dropStores+' stores'+(r.drops>1?' (follow-ups excluded)':'')+'.')+'">'
-        + round1(r.dropDepth)+'</td>';
-    },
-    droppersize: function(r){
-      if (!(r.dropPerSize>0)) return '<td class="nf-num">—</td>';
-      return '<td class="nf-num" title="'+nfEsc('Drop depth '+round1(r.dropDepth)+' ÷ '+r.sizeCt+' sizes (even spread).')+'">'
-        + round1(r.dropPerSize)+'</td>';
     },
     actrange: function(r){
       if (!r.actStores) return '<td class="l">—</td>';
@@ -15206,7 +15045,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
       var sub = document.getElementById('nfSubtitle');
       var nf = nfActiveFilterCount();
       var scope = (NF_MODE === 'released')
-        ? 'Released (dropped per Newness Log) · depth at drop'
+        ? 'Released (dropped per Newness Log) · actual depth'
         : (NF_SEASON===CONFIG_SEASON?'IA-eligible':'Newness (excl. CF)');
       if (sub) sub.textContent = scope + ' · excl. non-alloc tiers · '+NF_SEASON+' · '+recs.length+' of '+allRecs.length+' SKUs'+(nf?(' · '+nf+' filter'+(nf>1?'s':'')+' active'):'');
       if (!_nfCloudInit){ _nfCloudInit = true; nfCloudInit(); }
@@ -15329,11 +15168,6 @@ tr.nf-strow-shifted {background:#DBEAFE}
       }
       var why = nfReason(r);
       L.push('[NF] '+r.sku+' — status: '+r.status+(r.autoReleased?' (auto)':''));
-      // [p7z6] drop-depth inputs, so a surprising Drop Depth can be traced to its log rows.
-      if (r.drops > 0) L.push('  log: '+r.drops+' entr'+(r.drops>1?'ies':'y')+' · '+r.dropUnits+'u total · primary '
-        + (r.dropPDate||'no date')+' '+r.dropPUnits+'u → '+(r.dropStores||'?')+' stores'
-        + (r.dropDepth>0 ? ' · depth '+round1(r.dropDepth)+' · per size '+round1(r.dropPerSize)+' ('+r.sizeCt+' sizes)' : ' · no store count')
-        + '  ['+r.dropEntries.map(function(e){ return (nfDropDate(e[0])||'?')+':'+e[1]+'/'+(e[2]==null?'?':e[2]); }).join(', ')+']');
       L.push('  in Newness Log : '+(r.inLog?'yes':'no'));
       L.push('  log drop date  : '+nfFmtTs(r.logTs));
       L.push('  own Flow Cal   : '+nfFmtTs(r.ownTs));
@@ -15700,20 +15534,17 @@ tr.nf-strow-shifted {background:#DBEAFE}
     // exporting Target/New Rec for a SKU that has already dropped invites the
     // planned figure being read as what shipped.
     if (NF_MODE === 'released'){
-      // [p7z6] Drop depth from the Newness Log. 'Drop Entries' lists every log
-      // row (date:units/stores) so follow-ups excluded from depth stay visible.
-      head = ['SKU','Style Description','Color','Division','Category','Delivery','Drop Date','Drops','Size Set','Size Ct',
-        'Store Tier','Tier Stores','Drop Stores','Reach %','Dropped Units','Primary Units','Drop Depth',
-        'Per Size','Drop Entries','Retail Buy','Status','Notes'];
+      head = ['SKU','Style Description','Color','Division','Category','Delivery','Dropped','Size Set','Size Ct',
+        'Store Tier','Tier Stores','Actual Stores','Coverage %','Store Units','Actual Depth',
+        'Per Size (derived)','Min/Store','Max/Store','Syrup IA','PLG OH','Retail Buy','Status','Notes'];
       lines = [head.join(',')];
       recs.forEach(function(r){
-        var ents = r.dropEntries.map(function(e){ return (nfDropDate(e[0])||'?')+':'+num(e[1])+'/'+(e[2]==null?'?':e[2]); }).join('; ');
         lines.push([
-          r.sku, r.styleDesc, r.colorDesc, r.division, r.category, r.deliv, r.dropDate||'', r.drops,
-          r.sizeScale, r.sizeCt, r.baseTier||'', r.stores, r.dropStores||'',
-          (r.dropStores>0 && r.stores>0 ? Math.round(r.dropReach*100)+'%' : ''), r.dropUnits, r.dropPUnits,
-          (r.dropDepth>0 ? round1(r.dropDepth) : ''), (r.dropPerSize>0 ? round1(r.dropPerSize) : ''), ents,
-          r.retail, NF_STATUS_LABEL[r.status], r.note || ''
+          r.sku, r.styleDesc, r.colorDesc, r.division, r.category, r.deliv, r.droppedDate||'',
+          r.sizeScale, r.sizeCt, r.baseTier||'', r.stores, r.actStores,
+          (r.stores>0?Math.round(r.actCoverage*100)+'%':''), r.actUnits, round1(r.actDepth),
+          round1(r.actPerSize), r.actMin, r.actMax, r.iaRec, r.plgOH, r.retail,
+          NF_STATUS_LABEL[r.status], r.note || ''
         ].map(q).join(','));
       });
     } else {
