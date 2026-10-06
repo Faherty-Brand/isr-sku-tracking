@@ -1077,7 +1077,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns (p7z9)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix (p7z9b)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -2200,14 +2200,15 @@ let SEASONS = {cs:'', ns:'', ps:''};
 // ════════════════════════════════════════════════════════
 // Baked-in, ordered oldest -> newest. Extend the tail as new seasons approach;
 // nothing else needs to change. (SP=Spring, SU=Summer, FA=Fall, HO=Holiday.)
-const SEASON_SEQUENCE = [
-  'SU25','FA25','HO25',
-  'SP26','SU26','FA26','HO26',
-  'SP27','SU27','FA27','HO27',
-  'SP28','SU28','FA28','HO28',
-  'SP29','SU29','FA29','HO29',
-  'SP30','SU30','FA30','HO30',
-];
+// [p7z9b] Generated rather than typed out, so the rolling window (and with it
+// the NS matrix fetch, NS tier override and NS config lane) never silently runs
+// out of next seasons. Starts at SU25 exactly as the hand-written list did;
+// runs through HO49. Order is SP → SU → FA → HO within each year.
+const SEASON_SEQUENCE = (function () {
+  const out = [];
+  for (let y = 25; y <= 49; y++) ['SP', 'SU', 'FA', 'HO'].forEach(function (q) { out.push(q + String(y).padStart(2, '0')); });
+  return out.slice(out.indexOf('SU25'));
+})();
 
 // The publisher-set current (CS) season. Persisted via snapshot _globals so
 // viewers inherit whatever the publisher last shipped.
@@ -2856,6 +2857,7 @@ async function refreshLiveMatrix() {
   const payload = csRes.p;
 
   P.matrixPayload = payload;
+  P.matrixSeason  = season;   // [p7z9b]
   P.matrixSource  = 'live';
   P.matrixAsOf    = new Date().toISOString();
   P.matrixFresh   = true;
@@ -3078,6 +3080,7 @@ function applyCurrentSeason(cs, opts) {
     if (ns) SEASON_REGISTRY.push({ id: ns, label: ns, role: 'ns' });
   }
   CONFIG_SEASON = SEASONS.cs;
+  try { if (SEASONS.cs) localStorage.setItem('isr_current_season', SEASONS.cs); } catch (_) {}   // [p7z9b]
   EXTRA_DISPLAY_SEASONS = computeExtraDisplaySeasons(SEASONS.cs);
   if (!opts.preserveDisplay) DISPLAY_SEASON = CONFIG_SEASON;
   // Keep grid column group labels in sync with the live seasons.
@@ -3092,6 +3095,15 @@ function applyCurrentSeason(cs, opts) {
   return SEASONS;
 }
 
+// [p7z9b] Initialize from the last current season this browser saw (set by a
+// snapshot restore or a working-season change), falling back to the baked
+// default. Without this, a session whose shared snapshot failed to load would
+// fall back to the folder loader on the BAKED season — and its auto-publish
+// would roll the whole team back to it after a real season change.
+try {
+  const _savedSzn = localStorage.getItem('isr_current_season');
+  if (_savedSzn && SEASON_SEQUENCE.indexOf(_savedSzn) !== -1) CURRENT_SEASON = _savedSzn;
+} catch (_) {}
 // Initialize identity from the default current season.
 applyCurrentSeason(CURRENT_SEASON);
 
@@ -3795,6 +3807,7 @@ async function loadAllFiles(files) {
     pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     wipRows, storeRows, ssRows, syrupIARows, syrupRPRows, syrupCfgRows,
     matrixPayload, matrixSource, matrixAsOf, matrixError, matrixFresh,
+    matrixSeason: _seasonId,   // [p7z9b] which season matrixPayload belongs to
     extraMatrixPayloads,   // [p7y] { seasonId: {payload, source, asOf} } — display-season matrices
     _globals: {
       MASTER_SIZES: window.MASTER_SIZES || {},
@@ -3816,6 +3829,56 @@ async function loadAllFiles(files) {
 // SHARED BUILD — used by the folder loader AND the published-snapshot reader.
 // Takes the 12 parsed input arrays and produces the live app, identically.
 // ════════════════════════════════════════════════════════
+
+// ── [p7z9b] Keep the CONFIG matrix pinned to the CURRENT season ─────────────
+// The bundle's matrixPayload is the working season's matrix and the next
+// season's rides in extraMatrixPayloads. Before p7z9b the payload carried no
+// season stamp, so changing the working season (FA26 → HO26) rebuilt HO26's
+// tier counts, Config Status and Syrup output from the FA26 matrix still
+// sitting in matrixPayload — while the correct HO26 matrix sat unused in the
+// NS slot. Now every payload is stamped with its season, and on a mismatch:
+//   • the old working-season matrix moves into extraMatrixPayloads (it is now
+//     a PS/display season, so its view keeps working), and
+//   • the new working season's matrix is PROMOTED from extraMatrixPayloads
+//     (it was the NS one) — no refetch needed in the normal one-step roll.
+// If there's nothing to promote, matrixPayload is cleared (counts go empty,
+// loudly) rather than silently using another season's groups; the
+// working-season change handler fetches it live / from cache first.
+// Unstamped bundles (snapshots published before p7z9b) are attributed to the
+// season in their own _globals — the season they were loaded under.
+function reconcileConfigMatrix(P) {
+  if (!P) return true;
+  const cs = String(SEASONS.cs || '').trim();
+  if (!P.matrixSeason) P.matrixSeason = cs;
+  // Bound the bundle: only matrices for seasons the app can still show ride
+  // along, so snapshot size doesn't grow by one matrix per season roll.
+  if (P.extraMatrixPayloads) {
+    const keep = new Set(SEASON_REGISTRY.map(function (x) { return x.id; }).concat(EXTRA_DISPLAY_SEASONS || []));
+    Object.keys(P.extraMatrixPayloads).forEach(function (k) { if (!keep.has(k) && k !== P.matrixSeason) delete P.extraMatrixPayloads[k]; });
+  }
+  if (P.matrixSeason === cs) return true;
+  const old = P.matrixSeason;
+  P.extraMatrixPayloads = P.extraMatrixPayloads || {};
+  if (P.matrixPayload && Array.isArray(P.matrixPayload.groups) && !P.extraMatrixPayloads[old]) {
+    P.extraMatrixPayloads[old] = { payload: P.matrixPayload, source: P.matrixSource || 'live', asOf: P.matrixAsOf || null };
+  }
+  const prom = P.extraMatrixPayloads[cs];
+  if (prom && prom.payload && Array.isArray(prom.payload.groups)) {
+    P.matrixPayload = prom.payload; P.matrixSource = prom.source || 'live'; P.matrixAsOf = prom.asOf || null;
+    P.matrixError = null; P.matrixFresh = true;
+    delete P.extraMatrixPayloads[cs];
+    console.log('[LiveMatrix] working season ' + old + ' → ' + cs + ': promoted the ' + cs + ' matrix (' + P.matrixSource
+      + (P.matrixAsOf ? ', ' + String(P.matrixAsOf).slice(0, 10) : '') + ') to the config matrix; ' + old + ' kept as a display season.');
+    P.matrixSeason = cs;
+    return true;
+  }
+  console.error('[LiveMatrix] ✖ no ' + cs + ' matrix available — config tier counts cleared rather than reusing the '
+    + old + ' matrix. Hit "↻ Live matrix" on the Store Matrix tab.');
+  P.matrixPayload = null; P.matrixSource = 'none'; P.matrixAsOf = null; P.matrixFresh = false;
+  P.matrixError = 'no ' + cs + ' matrix loaded'; P.matrixSeason = cs;
+  return false;
+}
+
 async function buildFromParsed(P) {
   window._lastParsed = P;
   // Restore the few globals the file-reading stage would normally set, so a
@@ -3838,6 +3901,7 @@ async function buildFromParsed(P) {
       if (P._globals.STORE_CODE_MAP) STORE_CODE_MAP = Object.freeze(P._globals.STORE_CODE_MAP);
     } catch(e){ console.warn('[Build] could not restore globals', e); }
   }
+  try { reconcileConfigMatrix(P); } catch (e) { console.warn('[LiveMatrix] reconcile failed', e); }   // [p7z9b]
   setProgress(83, 'Building lookup tables…');
   const lookups = buildLookups({
     pstRows: P.pstRows, invRows: P.invRows, lcwRows: P.lcwRows, newnessRows: P.newnessRows, flowCalRows: P.flowCalRows,
@@ -7828,6 +7892,9 @@ function onWorkingSeasonChange(sel) {
     'When you publish, everyone on the team inherits ' + next + ' as the current season.'
   );
   if (!ok) { sel.value = CURRENT_SEASON; return; }
+  // [p7z9b] Stamp the matrix with the season it was loaded for BEFORE the window
+  // slides, so reconcileConfigMatrix can tell it no longer matches.
+  if (window._lastParsed && !window._lastParsed.matrixSeason) window._lastParsed.matrixSeason = CURRENT_SEASON;
   applyCurrentSeason(next);
   // Persist into the cached parse so the rebuild below (and the next publish)
   // reflect the new window instead of restoring the old one from _globals.
@@ -7842,7 +7909,28 @@ function onWorkingSeasonChange(sel) {
     if (typeof showToast === 'function') showToast('Current season → ' + next + ' · publish to share');
   };
   if (window._lastParsed && typeof buildFromParsed === 'function') {
-    Promise.resolve(buildFromParsed(window._lastParsed)).then(done).catch(function(e){
+    // [p7z9b] Make sure the new working season's own matrix is in place first:
+    // promoted from the NS slot when we have it, else live, else cache.
+    const P = window._lastParsed;
+    const prep = (async function () {
+      if (reconcileConfigMatrix(P)) return;
+      try {
+        P.matrixPayload = await fetchLiveMatrix(next);
+        P.matrixSource = 'live'; P.matrixAsOf = new Date().toISOString(); P.matrixFresh = true; P.matrixError = null;
+        cacheLiveMatrix(next, P.matrixPayload);
+        console.log('[LiveMatrix] fetched the ' + next + ' matrix for the new working season');
+      } catch (err) {
+        const c = await readCachedMatrix(next);
+        if (c && c.payload) {
+          P.matrixPayload = c.payload; P.matrixSource = 'cache'; P.matrixAsOf = c.fetchedAt; P.matrixFresh = true; P.matrixError = null;
+          console.warn('[LiveMatrix] ' + next + ' live fetch failed — using the cached matrix from ' + c.fetchedAt);
+        } else {
+          console.error('[LiveMatrix] ✖ no ' + next + ' matrix (live or cached) — tier counts will be empty until "↻ Live matrix" succeeds.');
+        }
+      }
+      P.matrixSeason = next;
+    })();
+    prep.then(function () { return buildFromParsed(P); }).then(done).catch(function(e){
       console.warn('[season] rebuild failed', e); done();
     });
   } else {
