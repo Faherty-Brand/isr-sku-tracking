@@ -1077,7 +1077,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs (p7z8)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns (p7z9)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1528,7 +1528,7 @@ setTimeout(function(){
         <button class="sm-seg-btn" id="smSegStores" onclick="smSetView('stores')">Stores ▸ Groups</button>
       </div>
       <button class="sm-action-btn" onclick="smCopyMembers()">⎘ Copy members</button>
-      <button class="sm-action-btn" onclick="smRefreshLive(this)" title="Re-pull group membership from the live Store Matrix app and recompute every row">↻ Live matrix</button>
+      <button class="sm-action-btn" onclick="smRefreshLive(this)" title="Re-pull group membership for the working AND next season from the live Store Matrix app and recompute every row">↻ Live matrix</button>
     </div>
   </div>
 
@@ -2800,15 +2800,60 @@ async function refreshLiveMatrix() {
   const before = window._tierToStores
     ? JSON.parse(JSON.stringify(window._tierToStores)) : {};
 
-  console.log('[LiveMatrix] refreshing ' + season + ' from the live Store Matrix…');
-  let payload;
-  try {
-    payload = await fetchLiveMatrix(season);
-  } catch (err) {
-    const msg = String((err && err.message) || err);
-    console.error('[LiveMatrix] refresh failed — nothing changed. ' + msg);
-    return { ok: false, reason: msg };
+  // [p7z9] Refresh the NEXT season's matrix in the same click. Before p7z9 this
+  // button only re-pulled the working season, and the NS matrix was fetched once
+  // per folder load and then reused (buildFromParsed re-registers the payload
+  // already embedded in the bundle) — so edits made in the Store Matrix app to
+  // the NS season never reached the ISR without a full Refresh Data. Both
+  // fetches run in parallel; each season succeeds or fails on its own, and a
+  // failure leaves that season's current matrix untouched.
+  const nsId = (SEASONS.ns && SEASONS.ns !== season) ? String(SEASONS.ns).trim() : '';
+  const _nsBeforeM = nsId ? seasonMatrixFor(nsId) : null;
+  const nsBefore = (_nsBeforeM && _nsBeforeM.state === 'ready')
+    ? JSON.parse(JSON.stringify(_nsBeforeM.tierToStores || {})) : {};
+  const nsWasReady = !!(_nsBeforeM && _nsBeforeM.state === 'ready');
+
+  console.log('[LiveMatrix] refreshing ' + season + (nsId ? ' + ' + nsId : '') + ' from the live Store Matrix…');
+  const _wrap = pr => pr.then(p => ({ ok: true, p: p }), err => ({ ok: false, e: String((err && err.message) || err) }));
+  const [csRes, nsRes] = await Promise.all([
+    _wrap(fetchLiveMatrix(season)),
+    nsId ? _wrap(fetchLiveMatrix(nsId)) : Promise.resolve(null),
+  ]);
+
+  // ── NS season ──
+  let nsOut = null;
+  if (nsId && nsRes) {
+    if (nsRes.ok) {
+      const _e = _smEntry(nsId);
+      _e.skipLive = false; _e.promise = null;
+      registerSeasonMatrix(nsId, nsRes.p, 'live', new Date().toISOString());   // also rewrites P.extraMatrixPayloads[nsId]
+      cacheLiveMatrix(nsId, nsRes.p);
+      const nsAfter = (seasonMatrixFor(nsId).tierToStores) || {};
+      const nsDelta = computeMembershipDelta(nsBefore, nsAfter);
+      window._matrixDeltaNS = { generatedAt: new Date().toISOString(), season: nsId,
+        basis: nsWasReady ? 'previous load → this refresh' : 'not loaded → this refresh', rows: nsDelta };
+      nsOut = { id: nsId, ok: true, changed: nsWasReady ? nsDelta.length : null,
+        groups: (nsRes.p.groups || []).length, stores: (nsRes.p.stores || []).length };
+      console.log('[LiveMatrix] ' + nsId + ' refreshed — ' + nsOut.groups + ' groups, ' + nsOut.stores + ' stores · '
+        + (nsWasReady ? nsDelta.length + ' group(s) changed (matrixDiff("ns") for the table)' : 'was not loaded before'));
+    } else {
+      nsOut = { id: nsId, ok: false, reason: nsRes.e };
+      console.error('[LiveMatrix] ' + nsId + ' refresh failed — keeping the ' + nsId + ' matrix already loaded. ' + nsRes.e);
+    }
   }
+
+  if (!csRes.ok) {
+    const msg = csRes.e;
+    console.error('[LiveMatrix] ' + season + ' refresh failed — nothing changed for ' + season + '. ' + msg);
+    if (nsOut && nsOut.ok) {
+      // NS still landed: repaint everything that reads it without a full rebuild.
+      seasonMatrixChanged(nsId);
+      try { if (typeof applyFiltersAndRender === 'function') applyFiltersAndRender(); } catch (_) {}
+      if (typeof smRefresh === 'function') { try { smRefresh(); } catch (_) {} }
+    }
+    return { ok: !!(nsOut && nsOut.ok), cs: { id: season, ok: false, reason: msg }, ns: nsOut, reason: msg };
+  }
+  const payload = csRes.p;
 
   P.matrixPayload = payload;
   P.matrixSource  = 'live';
@@ -2835,8 +2880,9 @@ async function refreshLiveMatrix() {
         + (r.removed.length ? '  -[' + r.removed.join(', ') + ']' : ''));
     });
   }
+  if (nsOut && nsOut.ok) seasonMatrixChanged(nsId);   // [p7z9] panel / NS views
   if (typeof smRefresh === 'function') { try { smRefresh(); } catch (_) {} }
-  return { ok: true, changed: delta.length };
+  return { ok: true, changed: delta.length, cs: { id: season, ok: true, changed: delta.length }, ns: nsOut };
 }
 
 // Console helper. Defaults to the most recent refresh delta; pass 'file' to
@@ -2854,6 +2900,13 @@ window.matrixDiff = function matrixDiff(mode) {
     }
     rows = computeMembershipDelta(ab.fileMembers, ab.liveMembers);
     basis = 'folder file → live'; season = ab.season || '';
+  } else if (mode === 'ns') {   // [p7z9]
+    const d = window._matrixDeltaNS;
+    if (!d) {
+      console.log('[matrixDiff] no next-season refresh has run yet this session. Hit "↻ Live matrix" on the Store Matrix tab.');
+      return;
+    }
+    rows = d.rows; basis = d.basis; season = d.season;
   } else {
     const d = window._matrixDelta;
     if (!d) {
@@ -16862,24 +16915,24 @@ tr.nf-strow-shifted {background:#DBEAFE}
     catch (e) { res = { ok:false, reason: String(e && e.message || e) }; }
     if (btn) { btn.disabled = false; btn.textContent = label || '↻ Live matrix'; }
     var el = document.getElementById('smWarn');
-    if (!res || !res.ok) {
-      if (el) {
-        el.style.display = '';
-        el.innerHTML = '<div><b>Live matrix refresh failed.</b> Nothing was changed — '
-          + 'you are still on the matrix from your last load. '
-          + smEsc(String((res && res.reason) || 'unknown error')) + '</div>';
-      }
+    if (!el) return;
+    el.style.display = '';
+    // [p7z9] One line per season — each refreshes (or fails) independently.
+    function line(r, diffArg){
+      if (!r) return '';
+      if (!r.ok) return '<div><b>' + smEsc(r.id) + ': refresh failed</b> — still on the matrix from your last load. '
+        + smEsc(String(r.reason || 'unknown error')) + '</div>';
+      if (r.changed == null) return '<div><b>' + smEsc(r.id) + ':</b> loaded from the live app (it wasn\'t loaded before).</div>';
+      return r.changed
+        ? '<div><b>' + smEsc(r.id) + ': ' + r.changed + ' group(s) changed.</b> Run <code>matrixDiff(' + diffArg + ')</code> in the console for the added/removed table.</div>'
+        : '<div><b>' + smEsc(r.id) + ':</b> refreshed — no membership changes.</div>';
+    }
+    if (!res || (!res.cs && !res.ok)) {
+      el.innerHTML = '<div><b>Live matrix refresh failed.</b> Nothing was changed — '
+        + smEsc(String((res && res.reason) || 'unknown error')) + '</div>';
       return;
     }
-    if (el && !res.changed) {
-      el.style.display = '';
-      el.innerHTML = '<div>Live matrix refreshed — <b>no membership changes</b>.</div>';
-    } else if (el) {
-      el.style.display = '';
-      el.innerHTML = '<div>Live matrix refreshed — <b>' + res.changed
-        + ' group(s) changed</b>. Run <code>matrixDiff()</code> in the console for the '
-        + 'added/removed table.</div>';
-    }
+    el.innerHTML = line(res.cs, '') + line(res.ns, '"ns"');
   }
 
   function smRefresh(){
