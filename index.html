@@ -1078,7 +1078,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow (p7z10)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season (p7z11)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1529,6 +1529,7 @@ setTimeout(function(){
       <div class="sm-subtitle" id="smSubtitle">Current-season store groups · read-only</div>
     </div>
     <div class="sm-header-actions">
+      <div class="sm-seg" id="smSeasonSeg" title="Which season's Store Matrix to explore. The working season is marked •"></div>
       <div class="sm-seg" id="smViewSeg">
         <button class="sm-seg-btn active" id="smSegGroups" onclick="smSetView('groups')">Groups ▸ Stores</button>
         <button class="sm-seg-btn" id="smSegStores" onclick="smSetView('stores')">Stores ▸ Groups</button>
@@ -1551,7 +1552,7 @@ setTimeout(function(){
           <button class="sm-sort-btn" id="smSortAz" onclick="smSetSort('az')">A–Z</button>
         </div>
         <button class="sm-unused-btn active" id="smUnusedBtn" onclick="smToggleUnused()"
-                title="Hide store groups with no SKUs assigned in the current season">Used only</button>
+                title="Hide store groups with no SKUs assigned in the selected season">Used only</button>
       </div>
       <div class="sm-rail-list" id="smRailList"></div>
     </div>
@@ -2613,6 +2614,9 @@ function seasonMatrixChanged(id) {
     if (typeof DD_SKU !== 'undefined' && DD_SKU && typeof ddSeasonNow === 'function'
         && ddSeasonNow() === id && typeof openDrilldown === 'function') openDrilldown(DD_SKU);
   } catch (e) { console.warn('[SeasonMatrix] panel repaint failed', e); }
+  try {   // [p7z11] Store Matrix tab, when it is showing this season
+    if (typeof window.smSeasonMatrixChanged === 'function') window.smSeasonMatrixChanged(id);
+  } catch (e) { console.warn('[SeasonMatrix] Store Matrix tab repaint failed', e); }
 }
 
 // Called by buildFromParsed: adopt payloads that rode in with the bundle, then
@@ -14707,6 +14711,15 @@ ${'</' + 'script>'}
    stat tiles and warn banner use. */
 .sm-coverage{margin:0 24px 12px}
 .sm-coverage:empty{display:none}
+/* [p7z11] collapsible coverage panel + season seg */
+.sm-cov-toggle{margin-left:auto;border:1px solid var(--border);background:var(--surface);border-radius:7px;
+  font-family:var(--mono);font-size:10px;padding:3px 9px;cursor:pointer;color:var(--muted)}
+.sm-cov-toggle:hover{border-color:var(--accent);color:var(--accent)}
+.sm-cov-chip.bad.click{cursor:pointer}
+.sm-coverage.min .sm-cov-head{margin:0}
+.sm-cov-sec{max-height:190px;overflow:auto}
+.sm-seg-btn .sm-szn-dot{margin-left:3px}
+.sm-seg-btn.loading{opacity:.6}
 .sm-cov-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;margin:0 0 7px}
 .sm-cov-h-t{font-family:var(--mono);font-size:9px;letter-spacing:.1em;
   text-transform:uppercase;color:var(--muted)}
@@ -16571,6 +16584,48 @@ tr.nf-strow-shifted {background:#DBEAFE}
   var SM_HIDE_UNUSED = true;
   var SM_SORT = 'size';     // 'size' | 'az'
   var SM_DATA = null;
+  // [p7z11] Which season's matrix the tab explores. null = follow the working
+  // (config) season, so a season roll moves the tab with it. An explicit pick
+  // that falls out of the season list after a roll reverts to null.
+  var SM_SEASON = null;
+  // [p7z11] Coverage panel minimized? Persisted per browser.
+  var SM_COV_MIN = false;
+  try { SM_COV_MIN = localStorage.getItem('isr_sm_cov_min') === '1'; } catch(e){}
+
+  function smCfg(){ return (typeof CONFIG_SEASON !== 'undefined' && CONFIG_SEASON) ? CONFIG_SEASON : ''; }
+  // Same order/membership as the grid toggle and the SKU panel: extra display
+  // seasons, then PS / CS / NS.
+  function smSeasonIds(){
+    var ex = (typeof EXTRA_DISPLAY_SEASONS !== 'undefined' && EXTRA_DISPLAY_SEASONS) ? EXTRA_DISPLAY_SEASONS : [];
+    var reg = (typeof SEASON_REGISTRY !== 'undefined' && SEASON_REGISTRY) ? SEASON_REGISTRY.map(function(x){ return x.id; }) : [];
+    return ex.concat(reg).filter(function(v, i, a){ return v && a.indexOf(v) === i; });
+  }
+  function smSeason(){
+    if (SM_SEASON && smSeasonIds().indexOf(SM_SEASON) === -1) SM_SEASON = null;
+    return SM_SEASON || smCfg();
+  }
+  function smIsCfg(){ return smSeason() === smCfg(); }
+  // Matrix for the selected season: { state, tierToStores, tierToStoreCount, source, asOf, error }
+  function smMatrix(){
+    var id = smSeason();
+    if (smIsCfg() || typeof seasonMatrixFor !== 'function') {
+      var pv = window._matrixProvenance || {};
+      var t2s = {}, cnt = {};
+      try { t2s = (typeof window.getTierToStores === 'function') ? (window.getTierToStores() || {}) : (window._tierToStores || {}); }
+      catch(e){ t2s = window._tierToStores || {}; }
+      try { cnt = (typeof window.getTierToStoreCount === 'function') ? (window.getTierToStoreCount() || {}) : (window._tierToStoreCount || {}); }
+      catch(e){ cnt = window._tierToStoreCount || {}; }
+      return { state:'ready', config:true, tierToStores:t2s, tierToStoreCount:cnt,
+               source: pv.source || 'none', asOf: pv.asOf || null, error: pv.error || null };
+    }
+    var m = seasonMatrixFor(id) || { state:'idle' };
+    if (m.state !== 'ready') {
+      var e = (typeof SEASON_MX !== 'undefined' && SEASON_MX[id]) || {};
+      return { state: m.state, config:false, tierToStores:{}, tierToStoreCount:{}, error: m.error || e.error || null };
+    }
+    return { state:'ready', config:false, tierToStores: m.tierToStores || {}, tierToStoreCount: m.tierToStoreCount || {},
+             source: m.source, asOf: m.asOf, error:null };
+  }
 
   function smEsc(s){
     return String(s == null ? '' : s)
@@ -16581,18 +16636,17 @@ tr.nf-strow-shifted {background:#DBEAFE}
 
   // ── Build the membership model ────────────────────────────────────────────
   function smBuild(){
-    var t2s = {};
-    try {
-      t2s = (typeof window.getTierToStores === 'function')
-        ? (window.getTierToStores() || {})
-        : (window._tierToStores || {});
-    } catch(e){ t2s = window._tierToStores || {}; }
-    var counts = {};
-    try {
-      counts = (typeof window.getTierToStoreCount === 'function')
-        ? (window.getTierToStoreCount() || {})
-        : (window._tierToStoreCount || {});
-    } catch(e){ counts = window._tierToStoreCount || {}; }
+    // [p7z11] Selected season's matrix, not always the config season's.
+    var _mx = smMatrix();
+    // Only kick a fetch from 'idle'. An 'unavailable' season must NOT re-fetch
+    // here: the failure repaints the tab, which would rebuild, which would
+    // fetch again — an endless retry loop.
+    if (_mx.state === 'idle' && typeof ensureSeasonMatrix === 'function') {
+      try { ensureSeasonMatrix(smSeason()); } catch(e){}   // lands via smSeasonMatrixChanged
+      _mx = smMatrix();   // now 'loading' (or 'ready' if it was embedded)
+    }
+    var t2s = _mx.tierToStores || {};
+    var counts = _mx.tierToStoreCount || {};
 
     var groups = [];              // {name, set, size, nonAlloc, countOnly}
     var byGroup = Object.create(null);
@@ -16664,6 +16718,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var avgGroups = totalStores ? stores.reduce(function(s,x){ return s + x.size; }, 0) / totalStores : 0;
 
     return {
+      season: smSeason(), isConfig: smIsCfg(), mx: _mx,
       groups: groups, byGroup: byGroup, stores: stores,
       byStore: stores.reduce(function(a,s){ a[s.name] = s; return a; }, Object.create(null)),
       namesResolved: namesResolved, sigCount: sigs.size,
@@ -16687,7 +16742,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
   // typeof guard covers the pre-data-load case.
   function smSkuIndex(){
     var rows = (typeof ALL_ROWS !== 'undefined' && Array.isArray(ALL_ROWS)) ? ALL_ROWS : [];
-    var season = (typeof CONFIG_SEASON !== 'undefined' && CONFIG_SEASON) ? CONFIG_SEASON : '';
+    var season = smSeason();
+    var isCfg = smIsCfg();
     var byTier = Object.create(null);
     var tieredTotal = 0;
 
@@ -16696,7 +16752,10 @@ tr.nf-strow-shifted {background:#DBEAFE}
       if (season && typeof llSeasonTier === 'function') {
         try { t = llSeasonTier(r, season); } catch(e){ t = ''; }
       }
-      if (!t) t = String((r.tier_ow || r.cs_tier || '')).trim().toUpperCase();
+      // [p7z11] The flat cs_* fallback is the CONFIG season's tier — only valid
+      // when the tab is on that season. Elsewhere it would file current-season
+      // tiers under a past/next season's groups.
+      if (!t && isCfg) t = String((r.tier_ow || r.cs_tier || '')).trim().toUpperCase();
       if (!t) return;
       if (!byTier[t]) byTier[t] = [];
       byTier[t].push({
@@ -16704,7 +16763,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
         style: r.style_desc || '',
         color: r.color_desc || '',
         division: r.division || '',
-        deliv: r.cs_deliv1 || '',
+        deliv: isCfg ? (r.cs_deliv1 || '')
+             : ((typeof effDelivFor === 'function' ? effDelivFor(r, season) : '') || ''),
         ia: +r.syrup_ia || 0,
       });
       tieredTotal++;
@@ -16775,8 +16835,16 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (!el) return;
     var msgs = [];
     // [live-matrix-v1] provenance first — everything below is read through it.
-    var _prov = window._matrixProvenance || null;
-    if (_prov && _prov.source === 'none') {
+    // [p7z11] …for whichever season the tab is showing.
+    var _prov = d.isConfig ? (window._matrixProvenance || null) : d.mx;
+    if (!d.isConfig && d.mx.state === 'loading') {
+      msgs.push('<b>Loading the ' + smEsc(d.season) + ' store matrix\u2026</b> It will appear here when it lands.');
+    } else if (!d.isConfig && (d.mx.state === 'unavailable' || d.mx.state === 'idle')) {
+      msgs.push('<b>No ' + smEsc(d.season) + ' store matrix is available</b>'
+        + (d.mx.error ? ' (' + smEsc(d.mx.error) + ')' : '')
+        + '. It isn\u2019t in the snapshot or the shared cache, and the live Store Matrix app '
+        + 'didn\u2019t return it. Nothing is borrowed from ' + smEsc(smCfg()) + '.');
+    } else if (_prov && _prov.source === 'none') {
       msgs.push('<b>No store matrix could be loaded.</b> The live Store Matrix app was '
         + 'unreachable and no cached copy exists'
         + (_prov.error ? ' (' + smEsc(_prov.error) + ')' : '')
@@ -16795,7 +16863,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
         + 'numbers exactly. Load from the folder for the current live matrix.');
     }
     if (!d.groups.length) {
-      msgs.push('<b>No store matrix loaded.</b> Load the season\u2019s Store Matrix file from Data Pulls, then hit Refresh.');
+      if (d.isConfig || d.mx.state === 'ready')
+        msgs.push('<b>No store matrix loaded.</b> Load the season\u2019s Store Matrix file from Data Pulls, then hit Refresh.');
     } else if (!d.namesResolved) {
       msgs.push('<b>Store names could not be resolved from the matrix</b> (the parser did not find a store-name column). '
               + 'Group counts are available, but the Stores \u25B8 Groups lens and all membership detail are unavailable. '
@@ -17084,7 +17153,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var el = document.getElementById('smSubtitle');
     if (!el) return;
     var d = SM_DATA;
-    var szn = (typeof CONFIG_SEASON !== 'undefined' && CONFIG_SEASON) ? CONFIG_SEASON : 'current season';
+    var szn = d.season || 'current season';   // [p7z11] selected season
+    if (!d.isConfig) szn += ' (working season ' + smCfg() + ')';
     // [p7q3] Say how many groups are hidden, so "202 groups" never silently
     // becomes "46 groups" with no explanation for where the rest went.
     var unused = d.groups.filter(function(g){ return !(g.skuCount || 0); }).length;
@@ -17110,18 +17180,32 @@ tr.nf-strow-shifted {background:#DBEAFE}
     // the app really resolved. Non-alloc is classified FIRST — otherwise the
     // ~40% of SKUs that are intentionally 0-store drown out the few that are
     // genuinely broken, which is exactly what happened during the FA26 cutover.
+    // [p7z11] On any other season there is no cs_store_ct to read, so the count
+    // comes from seasonStoreCountInfo — the same resolver behind the grid's
+    // Season-block Store Count, so the two still can't disagree.
     var rows = (typeof ALL_ROWS !== 'undefined' && ALL_ROWS) ? ALL_ROWS : [];
-    if (!rows.length) { el.innerHTML = ''; return; }
+    if (!rows.length) { el.innerHTML = ''; el.classList.remove('min'); return; }
+    var d = SM_DATA || {}, season = smSeason(), isCfg = smIsCfg();
+    if (!isCfg && (!d.mx || d.mx.state !== 'ready')) { el.innerHTML = ''; el.classList.remove('min'); return; }
 
     var byTier = {};
     rows.forEach(function(r){
       if (!r) return;
-      var eff = String(r.tier_ow || r.cs_tier || '').trim().toUpperCase();
+      var eff, viaOw, c;
+      if (isCfg) {
+        eff = String(r.tier_ow || r.cs_tier || '').trim().toUpperCase();
+        viaOw = !!r.tier_ow;
+      } else {
+        eff = (typeof effTierFor === 'function') ? effTierFor(r, season) : '';
+        viaOw = !!String((typeof getOWFor === 'function' ? getOWFor(r.sku, season, 'tier_ow') : '') || '').trim();
+      }
       if (!eff) return;
+      if (!isCfg && (eff === 'CF' || eff === 'CARRY FORWARD')) return;   // sentinel, not a group
       if (!byTier[eff]) byTier[eff] = { tier: eff, skus: 0, ct: 0, viaOw: 0 };
       byTier[eff].skus++;
-      if (r.tier_ow) byTier[eff].viaOw++;
-      var c = Number(r.cs_store_ct || 0);
+      if (viaOw) byTier[eff].viaOw++;
+      if (isCfg) c = Number(r.cs_store_ct || 0);
+      else { var info = seasonStoreCountInfo(season, eff); c = Number(info.count || 0); }
       if (c > byTier[eff].ct) byTier[eff].ct = c;
     });
 
@@ -17140,37 +17224,65 @@ tr.nf-strow-shifted {background:#DBEAFE}
     // [p7r] One chip per bucket instead of a single dot-separated mono run, so
     // the counts stay legible and wrap cleanly at narrow widths.
     var chip = function(n, label, skus, bad){
-      return '<span class="sm-cov-chip' + (bad ? ' bad' : '') + '"><b>' + num(n) + '</b> '
+      return '<span class="sm-cov-chip' + (bad ? ' bad' + (SM_COV_MIN ? ' click' : '') : '') + '"'
+           + (bad && SM_COV_MIN ? ' data-sm-act="covtoggle" title="Show the unresolved tiers"' : '')
+           + '><b>' + num(n) + '</b> '
            + label + ' <i>· ' + num(skus) + ' SKUs</i></span>';
     };
+    // [p7z11] Minimize: the chip row stays (so the red "unresolved" count is
+    // never hidden), only the detail table collapses.
+    var tog = '<button class="sm-cov-toggle" data-sm-act="covtoggle" title="'
+      + (SM_COV_MIN ? 'Expand the tier coverage detail' : 'Collapse to a single line') + '">'
+      + (SM_COV_MIN ? '\u25B8 Show details' : '\u25BE Minimize') + '</button>';
     var head = '<div class="sm-cov-head">'
       + '<span class="sm-cov-h-t">Tier coverage</span>'
-      + '<span class="sm-cov-szn">' + smEsc(String(CONFIG_SEASON)) + '</span>'
+      + '<span class="sm-cov-szn">' + smEsc(String(season)) + '</span>'
       + chip(ok.length, ok.length === 1 ? 'tier resolving' : 'tiers resolving', sum(ok), false)
       + chip(nonAlloc.length, 'non-allocating', sum(nonAlloc), false)
       + (missing.length ? chip(missing.length, 'unresolved', sum(missing), true) : '')
+      + tog
       + '</div>';
+
+    el.classList.toggle('min', SM_COV_MIN);
+    if (SM_COV_MIN) { el.innerHTML = head; return; }
 
     var body = '';
     if (missing.length) {
       body += '<div class="sm-cov-sec"><div class="sm-cov-sec-t">'
         + (missing.length === 1 ? 'This tier has' : 'These tiers have')
-        + ' no matching group in the Store Matrix</div>'
+        + ' no matching group in the ' + smEsc(String(season)) + ' Store Matrix</div>'
         + '<table class="sm-cov-tbl"><tr><th>SKUs</th><th>Via override</th><th>Tier</th></tr>'
         + missing.map(function(t){
             return '<tr><td>' + num(t.skus) + '</td><td>' + (t.viaOw ? num(t.viaOw) : '—') + '</td><td>'
                  + smEsc(t.tier) + '</td></tr>'; }).join('')
-        + '</table><div class="sm-cov-note">These SKUs allocate to zero stores, and the '
-        + 'Configs Generator emits nothing for them. Either the group needs to be created in the '
-        + 'Store Matrix app, or the tier value is a typo.</div></div>';
+        + '</table><div class="sm-cov-note">'
+        + (isCfg
+            ? 'These SKUs allocate to zero stores, and the Configs Generator emits nothing for them. '
+            : 'In ' + smEsc(String(season)) + ' these SKUs resolve to zero stores. ')
+        + 'Either the group needs to be created in the Store Matrix app, or the tier value is a typo.</div></div>';
     } else {
       body += '<div class="sm-cov-ok">Every tier in use resolves to a store group.</div>';
     }
     el.innerHTML = head + body;
   }
 
+  function smRenderSeasonSeg(){
+    var el = document.getElementById('smSeasonSeg');
+    if (!el) return;
+    var ids = smSeasonIds(), cur = smSeason(), cfg = smCfg();
+    if (ids.length < 2) { el.innerHTML = ''; el.style.display = 'none'; return; }
+    el.style.display = '';
+    el.innerHTML = ids.map(function(id){
+      var st = (id === cfg || typeof seasonMatrixFor !== 'function') ? 'ready' : (seasonMatrixFor(id) || {}).state;
+      return '<button class="sm-seg-btn' + (id === cur ? ' active' : '') + (st === 'loading' ? ' loading' : '')
+           + '" data-sm-act="season" data-sm-season="' + smEsc(id) + '" title="Explore the ' + smEsc(id) + ' store matrix'
+           + (id === cfg ? ' (working season)' : '') + '">' + smEsc(id)
+           + (id === cfg ? '<span class="sm-szn-dot">\u2022</span>' : '') + '</button>';
+    }).join('');
+  }
+
   function smRenderAll(){
-    smRenderSubtitle(); smRenderStats(); smRenderWarn(); smRenderCoverage(); smRenderRail(); smRenderDetail();
+    smRenderSeasonSeg(); smRenderSubtitle(); smRenderStats(); smRenderWarn(); smRenderCoverage(); smRenderRail(); smRenderDetail();
   }
 
   // ── Public handlers ───────────────────────────────────────────────────────
@@ -17215,6 +17327,31 @@ tr.nf-strow-shifted {background:#DBEAFE}
     }
     if (!SM_SEL) SM_SEL = smDefaultSel();
     smRenderAll();
+  }
+  // [p7z11] Season switch. Keeps the selected group/store if it exists in the
+  // new season's matrix (smRefresh drops it otherwise).
+  function smSetSeason(id){
+    if (!id) return;
+    SM_SEASON = (id === smCfg()) ? null : id;
+    // Clicking a season whose matrix previously failed is an explicit retry.
+    try {
+      if (typeof SEASON_MX !== 'undefined' && SEASON_MX[id] && SEASON_MX[id].state === 'unavailable') {
+        SEASON_MX[id].state = 'idle'; SEASON_MX[id].skipLive = false;
+      }
+    } catch(e){}
+    smRefresh();
+  }
+  function smToggleCov(){
+    SM_COV_MIN = !SM_COV_MIN;
+    try { localStorage.setItem('isr_sm_cov_min', SM_COV_MIN ? '1' : '0'); } catch(e){}
+    smRenderCoverage();
+  }
+  // Called from seasonMatrixChanged when a season's matrix lands or fails.
+  function smSeasonMatrixChanged(id){
+    var panel = document.getElementById('smPanel');
+    if (!panel || panel.style.display === 'none') return;
+    if (id === smSeason()) smRefresh();
+    else smRenderSeasonSeg();
   }
   function smToggleUnused(){
     SM_HIDE_UNUSED = !SM_HIDE_UNUSED;
@@ -17303,7 +17440,13 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var t = e.target;
     if (!t || !t.closest) return;
     var act = t.closest('[data-sm-act]');
-    if (act) { if (act.getAttribute('data-sm-act') === 'copyskus') smCopySkus(); return; }
+    if (act) {
+      var a = act.getAttribute('data-sm-act');
+      if (a === 'copyskus') smCopySkus();
+      else if (a === 'covtoggle') smToggleCov();
+      else if (a === 'season') smSetSeason(act.getAttribute('data-sm-season'));
+      return;
+    }
     var hit = t.closest('[data-sm-key]');
     if (!hit) return;
     var key = hit.getAttribute('data-sm-key');
@@ -17315,6 +17458,9 @@ tr.nf-strow-shifted {background:#DBEAFE}
   if (_smPanel && _smPanel.addEventListener) _smPanel.addEventListener('click', smOnClick);
 
   window.smRefresh      = smRefresh;
+  window.smSetSeason    = smSetSeason;
+  window.smToggleCov    = smToggleCov;
+  window.smSeasonMatrixChanged = smSeasonMatrixChanged;
   window.smRefreshLive  = smRefreshLive;
   window.smToggleUnused = smToggleUnused;
   window.smSetView      = smSetView;
@@ -17326,7 +17472,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.smCopySkus     = smCopySkus;
   window._smBuild       = smBuild;   // exposed for the test harness
 
-  console.log('[SM] Store Matrix module ready [store-matrix-v1]');
+  console.log('[SM] Store Matrix module ready [store-matrix-v1 + p7z11 season/cov-min]');
 })();
 </script>
 
