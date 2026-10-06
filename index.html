@@ -1078,7 +1078,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season (p7z11)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover (p7z12)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -8969,7 +8969,7 @@ function renderPage() {
         const prev = (row.v_tier_prev || '').trim();
         if (!prev) return `<td><span class="muted-cell">—</span></td>`;
         const inner = sgValueSpan(prev, prev, row.v_deliv1_pst,
-          'color:var(--muted);text-decoration:line-through', 'sg-trunc');
+          'color:var(--muted);text-decoration:line-through', 'sg-trunc', seasonViewKey());   // [p7z12]
         return `<td title="Original PST Store Group (before override)">${inner}</td>`;
       }
       // Season view: Delivery (v_deliv1) — mirrors v_tier, with None sentinel.
@@ -9258,7 +9258,10 @@ function openDrilldown(sku) {
       })()],
       ['Store Group', (function(){
         const eff  = (V.v_tier || '').trim();
-        const disp = eff ? sgValueSpan(sgEsc(eff), eff, V.v_deliv1, V.v_tier_ovr?'color:var(--orange);font-weight:500':'') : '—';
+        // [p7z12] Pass ddSeasonKey so the popover reads the SAME season's matrix
+        // as this row's value. Omitting it fell back to CONFIG_SEASON, so on the
+        // HO26 toggle the popover listed FA26 members (25 vs the grid's 27).
+        const disp = eff ? sgValueSpan(sgEsc(eff), eff, V.v_deliv1, V.v_tier_ovr?'color:var(--orange);font-weight:500':'', '', ddSeasonKey) : '—';
         const wasHtml = V.v_tier_ovr ? ` <span style="color:var(--orange);font-weight:500">(override)</span>`
           + sgWasLine(V.v_tier_prev) : '';
         return `${disp}${wasHtml}`;
@@ -9268,9 +9271,23 @@ function openDrilldown(sku) {
       // they disagree. Side by side, a mismatch is immediately legible.
       ['Store Count', (function(){
         const t = (V.v_tier || '').trim().toUpperCase();
+        const pst = (V.v_store_ct || V.v_store_ct === 0) ? String(V.v_store_ct) : '';
+        // [p7z12] Off the working season, count from THAT season's matrix (the
+        // projection already resolved it) — same source as the grid's Store Count
+        // and the Store Group popover. getTierToStoreCount() is config-season only.
+        if (!ddIsConfig) {
+          if (!t) return '—';
+          const mxCell = renderMxStoreCtCell(V, ddSeasonKey);
+          const mtxN = (V.v_mx_state === 'ok') ? String(V.v_mx_store_ct || 0) : null;
+          const lbl = `<span style="color:var(--dim);font-size:10px">${sgEsc(ddSeasonKey)} matrix</span>`;
+          if (pst === '' || mtxN === null || pst === mtxN) return `${mxCell} ${lbl}`;
+          return `${mxCell} ${lbl}`
+               + ` <span style="color:var(--dim)">·</span> `
+               + `<span style="color:var(--orange);font-weight:500">${sgEsc(pst)}</span>`
+               + ` <span style="color:var(--dim);font-size:10px">PST</span>`;
+        }
         const cnt = t ? (window.getTierToStoreCount(V.v_deliv1) || {})[t] : null;
         const mtx = (cnt || cnt === 0) ? String(cnt) : '—';
-        const pst = (V.v_store_ct || V.v_store_ct === 0) ? String(V.v_store_ct) : '';
         if (pst === '' || pst === mtx) {
           return `${mtx} <span style="color:var(--dim);font-size:10px">matrix</span>`;
         }
