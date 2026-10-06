@@ -1077,7 +1077,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow (p7z7)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs (p7z8)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1740,6 +1740,10 @@ setTimeout(function(){
     <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:6px">
       <label style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Note text <span style="font-style:italic;text-transform:none;letter-spacing:0">(optional)</span></label>
       <textarea class="modal-textarea" id="bulkNotesText" style="height:60px" placeholder="SR2 - Prince St., Vero Beach"></textarea>
+      <div id="bulkNoteSeasonWrap" style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--muted)">
+        File note under
+        <select class="dd-edit-select" id="bulkNoteSeason" style="width:auto"></select>
+      </div>
     </div>
 
     <!-- CS Tier override section (optional) -->
@@ -1839,6 +1843,30 @@ setTimeout(function(){
     </div>
 
     <div id="configsWarnings" style="font-size:11px;color:var(--orange);margin-bottom:10px;display:none"></div>
+
+    <!-- [p7z8] NS pre-season lane — Newness only; CF retiers are held for the roll -->
+    <div id="configsNsWrap" style="display:none;border-top:2px solid var(--border);padding-top:14px;margin-top:6px">
+      <div class="modal-title" style="font-size:14px;margin-bottom:4px"><span class="configs-ns-key">NS</span> Newness — pre-season configs</div>
+      <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:10px">
+        Next-season Newness SKUs checked the way they'll be checked after the season roll: effective <span class="configs-ns-key">NS</span> tier (incl. NS tier overrides) against the <span class="configs-ns-key">NS</span> Store Matrix, start/end from the <span class="configs-ns-key">NS</span> delivery's Flow Cal date. Missing SKUs only need the upload rows; for Off SKUs, delete their existing Syrup rows first. CF SKUs are never emitted here — tier changes on carry-forward styles wait for the roll.
+      </div>
+      <div id="configsNsStats" style="font-size:12px;font-weight:600;margin-bottom:12px;padding:10px 12px;background:var(--surface2);border-radius:6px;color:var(--text)">—</div>
+      <div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted)">Off SKUs — delete existing rows first <span id="configsNsOffCount" style="color:var(--text);font-weight:700">(0)</span></div>
+          <button class="ia-action-btn" type="button" onclick="copyConfigsField('configsNsOffList')">📋 Copy SKUs</button>
+        </div>
+        <textarea class="modal-textarea" id="configsNsOffList" style="height:60px" readonly></textarea>
+      </div>
+      <div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted)">Upload Rows <span id="configsNsRowCount" style="color:var(--text);font-weight:700">(0)</span> <span style="font-weight:400;color:var(--muted)">— Missing + Off</span></div>
+          <button class="ia-action-btn" type="button" onclick="copyConfigsField('configsNsUploadTSV')">📋 Copy TSV</button>
+        </div>
+        <textarea class="modal-textarea" id="configsNsUploadTSV" style="height:140px;font-size:10px" readonly></textarea>
+      </div>
+      <div id="configsNsWarnings" style="font-size:11px;color:var(--orange);margin-bottom:10px;display:none"></div>
+    </div>
 
     <div class="modal-actions" style="margin-top:6px">
       <button class="modal-btn" onclick="rebuildConfigsExport()">↻ Refresh</button>
@@ -2122,6 +2150,8 @@ const COLS = [
   ['Alloc Info','newness_proj','Newness Proj',false,false,false],
   ['Alloc Info','cfg_life','IA/Replen',true,true,false],
   ['Alloc Info','config_status','Config Status',true,false,false],
+  // [p7z8] Next-season pre-season config check (Newness) / "Retier at roll" (CF).
+  ['Alloc Info','ns_cfg_status','NS Config',true,false,false],
   // cs_rp historically held PST's "Roll Out Code - Retail" but was repurposed to
   // surface the matched adjustment-note text (the prefixed note that flipped
   // config_ct_status from Off → Adjusted). Field id stays cs_rp for backward
@@ -2503,7 +2533,8 @@ function ensureSeasonMatrix(id) {
 function seasonMatrixChanged(id) {
   try {
     if (typeof ALL_ROWS !== 'undefined' && ALL_ROWS && ALL_ROWS.length
-        && seasonViewKey() === id && typeof applyFiltersAndRender === 'function') applyFiltersAndRender();
+        && (seasonViewKey() === id || (typeof owNextKey === 'function' && owNextKey() === id))   // [p7z8] NS Config needs the NS matrix
+        && typeof applyFiltersAndRender === 'function') applyFiltersAndRender();
   } catch (e) { console.warn('[SeasonMatrix] grid repaint failed', e); }
   try {
     if (typeof DD_SKU !== 'undefined' && DD_SKU && typeof ddSeasonNow === 'function'
@@ -7822,6 +7853,7 @@ function applyFiltersAndRender() {
   const typeF   = FILTER_TYPE.has('All');
 
   projectAllSeasonViews();  // Phase 2: refresh v_* view fields for the current DISPLAY_SEASON
+  try { nsCfgComputeAll(); } catch (e) { console.warn('[NSCfg] compute failed', e); }   // [p7z8]
   FILTERED = ALL_ROWS.filter(r => {
     // Multi-SKU lookup filter (highest priority)
     if (LOOKUP_SKUS.size > 0 && !LOOKUP_SKUS.has(r.sku.toUpperCase())) return false;
@@ -8001,6 +8033,10 @@ function openColFilter(colId) {
     if (b === '(Blank)') return -1;
     // For config_status, enforce a logical order rather than alphabetic:
     //   Correct → Adjusted → Off (count) → Off (date) → Off (count & date) → —
+    if (colId === 'ns_cfg_status') {   // [p7z8]
+      const ia = NS_CFG_ORDER.indexOf(a), ib = NS_CFG_ORDER.indexOf(b);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+    }
     if (colId === 'config_status') {
       const order = ['Correct', 'Adjusted', 'Off (count)', 'Off (date)', 'Off (count & date)', 'Off', '—'];
       const ia = order.indexOf(a);
@@ -8737,6 +8773,7 @@ function renderPage() {
       if (id === 'config_status') {
         return `<td>${renderConfigStatusPill(row)}</td>`;
       }
+      if (id === 'ns_cfg_status') return `<td>${renderNsCfgPill(row)}</td>`;   // [p7z8]
       if (id === 'cs_rp') {
         // Repurposed column — shows the matched adjustment-note text driving
         // an Adjusted Config Status, blank for any other state. Truncates long
@@ -9090,6 +9127,37 @@ function openDrilldown(sku) {
     })()},
   ];
 
+  // ── [p7z8] NS pre-season config (Newness) / roll-day retier (CF) ──────────
+  try { nsCfgCompute(row); } catch (e) { console.warn('[NSCfg] panel compute failed', e); }
+  let nsCfgTitle = null;
+  if (row.ns_cfg_status) {
+    const nsK = owNextKey();
+    nsCfgTitle = `${nsK} PRE-SEASON CONFIG`;
+    const nr = [];
+    nr.push(['Status', renderNsCfgPill(row)]);
+    if (row.ns_cfg_status === 'Retier at roll') {
+      nr.push(['__note__', `Carry-forward into ${nsK}. Store group changes ${sgEsc(row.ns_cfg_reason)} — held until the roll, then adjusted through replenishment. Not emitted by the pre-season generator.`]);
+    } else {
+      nr.push([`${nsK} Store Group`, sgEsc(row.ns_cfg_tier || '—')]);
+      nr.push([`${nsK} Delivery · Flow Cal alloc`, `${sgEsc(row.ns_cfg_deliv || '—')}${row.ns_cfg_aj ? ' · ' + row.ns_cfg_aj : ''}`]);
+      if (row.ns_cfg_expected != null) {
+        nr.push(['Expected Stores (' + nsK + ' matrix)', String(row.ns_cfg_expected)]);
+        nr.push(['Configured Stores (Syrup)', String(row.config_store_ct || 0)]);
+        if (row.ns_cfg_delta && /Off \(count/.test(row.ns_cfg_status)) {
+          const d = row.ns_cfg_delta;
+          nr.push(['  Δ Difference', `<span style="color:#dc2626;font-weight:500">${d > 0 ? '+' : ''}${d} (${d > 0 ? 'add stores' : 'remove stores'})</span>`]);
+        }
+      }
+      if (row.ns_cfg_calc_start) {
+        nr.push(['Calc Start → End (expected)', `${row.ns_cfg_calc_start} → ${row.ns_cfg_calc_end || '—'}`]);
+        if (row.ns_cfg_ct && row.ns_cfg_ct !== 'Missing')
+          nr.push(['Syrup Start → End (actual)', `${row.config_syrup_start || '—'} → ${row.config_syrup_end || '—'}`]);
+      }
+      if (row.ns_cfg_reason) nr.push(['Note / reason', `<span style="color:#2563eb">${sgEsc(row.ns_cfg_reason)}</span>`]);
+    }
+    sections.push({title: nsCfgTitle, rows: nr});
+  }
+
   // ── Season view (displayed season only) ──────────────────────────────────
   // season-pivot p4c: replaces the old parallel NS/PS sections. Shows the
   // season currently selected in the top toggle (or the working/config season
@@ -9188,6 +9256,7 @@ function openDrilldown(sku) {
     'SYRUP CONFIG ACCURACY': '#5a4a8a',
   };
   ddSectionColors[allocTitle] = 'var(--grp-alloc)';
+  if (nsCfgTitle) ddSectionColors[nsCfgTitle] = 'var(--grp-ns)';   // [p7z8]
   ddSectionColors[ddSeasonTitle] = (ddSeasonKey === CONFIG_SEASON) ? 'var(--grp-syrup)' : 'var(--grp-ns)';
 
   sections.forEach(({title, editable, notes, rows}) => {
@@ -9324,13 +9393,34 @@ function saveNotesStore(store) {
   invalidateNoteIndex();
   try { if (typeof cloudPushNotesDiff === 'function') cloudPushNotesDiff(store); } catch(e){}
 }
+// [p7z8] Notes can also be filed under the NEXT season, so pre-season Syrup
+// adjustments on NS Newness (SR / ADD / ADJ / DROP) are explained by the NS
+// Config check now and become ordinary config-season notes after the roll.
+// The NS block shows whenever the SKU has NS PST data or already has NS notes.
 function renderNotesSection(sku) {
+  let html = renderNotesBlock(sku, notesSeasonKey(), false);
+  const nsKey = owNextKey();
+  if (nsKey) {
+    const row = ALL_ROWS.find(r => r.sku === sku);
+    const hasNsPst = !!(row && row.seasons && row.seasons[nsKey] && row.seasons[nsKey].hasPST);
+    const hasNsNotes = getNotesFor(getNotesStore(), sku, nsKey).length > 0;
+    if (hasNsPst || hasNsNotes) {
+      html += `<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);font-size:10px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;color:var(--teal)">${nsKey} notes · pre-season</div>`;
+      html += renderNotesBlock(sku, nsKey, true);
+    }
+  }
+  return html;
+}
+function renderNotesBlock(sku, season, isNs) {
   const store = getNotesStore();
-  const season = notesSeasonKey();
   const notes = getNotesFor(store, sku, season);
+  const inpId = isNs ? `noteInput_${sku}__${season}` : `noteInput_${sku}`;
+  const seasonArg = isNs ? `,'${season}'` : '';
+  const ph = isNs ? `Add a ${season} note (SR/ADD/ADJ/DROP for pre-season configs)…`
+                  : `Add a ${season} note (MD date, tier adjustment, extraction, etc.)…`;
   let html = `<div class="dd-notes-add">
-    <textarea class="dd-notes-input" id="noteInput_${sku}" placeholder="Add a ${season} note (MD date, tier adjustment, extraction, etc.)…"></textarea>
-    <button onclick="addNote('${sku}')">Add</button>
+    <textarea class="dd-notes-input" id="${inpId}" placeholder="${ph}"></textarea>
+    <button onclick="addNote('${sku}'${seasonArg})">Add</button>
   </div>`;
   if (notes.length === 0) {
     html += `<div class="dd-notes-empty">No ${season} notes yet</div>`;
@@ -9347,7 +9437,7 @@ function renderNotesSection(sku) {
       html += `<div class="dd-note-item">
         <div class="dd-note-meta">
           <span>${dateStr}</span>
-          <button class="dd-note-del" title="Delete" onclick="deleteNote('${sku}',${actualIdx})">×</button>
+          <button class="dd-note-del" title="Delete" onclick="deleteNote('${sku}',${actualIdx}${seasonArg})">×</button>
         </div>
         <div class="dd-note-text">${safeText}</div>
       </div>`;
@@ -9355,12 +9445,12 @@ function renderNotesSection(sku) {
   }
   return html;
 }
-function addNote(sku) {
-  const inp = document.getElementById(`noteInput_${sku}`);
+function addNote(sku, seasonArg) {
+  const season = seasonArg || notesSeasonKey();   // [p7z8] optional NS target
+  const inp = document.getElementById(seasonArg ? `noteInput_${sku}__${seasonArg}` : `noteInput_${sku}`);
   if (!inp) return;
   const text = inp.value.trim();
   if (!text) return;
-  const season = notesSeasonKey();
   const store = getNotesStore();
   if (!store[sku] || Array.isArray(store[sku])) store[sku] = upgradeNotesRow(store[sku]);
   if (!store[sku][season]) store[sku][season] = [];
@@ -9372,8 +9462,8 @@ function addNote(sku) {
   ddRefreshActiveTab();
   openDrilldown(sku);
 }
-function deleteNote(sku, idx) {
-  const season = notesSeasonKey();
+function deleteNote(sku, idx, seasonArg) {
+  const season = seasonArg || notesSeasonKey();   // [p7z8]
   const store = getNotesStore();
   const arr = getNotesFor(store, sku, season);
   if (!arr || idx < 0 || idx >= arr.length) return;
@@ -10079,6 +10169,10 @@ function refreshDependentCells(tr, row) {
     if (id === 'config_status') {
       cell.innerHTML = renderConfigStatusPill(row);
     }
+    if (id === 'ns_cfg_status') {   // [p7z8]
+      try { nsCfgCompute(row); } catch (e) {}
+      cell.innerHTML = renderNsCfgPill(row);
+    }
     if (id === 'cs_rp') {
       const v = row.cs_rp;
       if (!v) { cell.innerHTML = '<span class="muted-cell">—</span>'; return; }
@@ -10182,6 +10276,18 @@ function openBulkNotesModal() {
 
   // [p7z7] Populate NS tier dropdown from the NS season's own matrix.
   { const _ns = document.getElementById('bulkNSTierSelect'); if (_ns) _ns.value = '__noop__'; }   // fresh open
+  // [p7z8] Note season target — working season by default, NS for pre-season config notes.
+  {
+    const nsSel = document.getElementById('bulkNoteSeason');
+    const wrap  = document.getElementById('bulkNoteSeasonWrap');
+    const nsK = owNextKey();
+    if (nsSel) {
+      nsSel.innerHTML = `<option value="${CONFIG_SEASON}">${CONFIG_SEASON} (working season)</option>`
+        + (nsK ? `<option value="${nsK}">${nsK} (next season · pre-season configs)</option>` : '');
+      nsSel.value = CONFIG_SEASON;
+    }
+    if (wrap) wrap.style.display = nsK ? 'flex' : 'none';
+  }
   populateBulkNSTierSelect();
 
   // Populate PS tier dropdown — same option list as CS, plus a special
@@ -11176,6 +11282,240 @@ function buildConfigsExport() {
   };
 }
 
+
+// ════════════════════════════════════════════════════════
+// [p7z8] NS PRE-SEASON CONFIG LANE
+// ════════════════════════════════════════════════════════
+// Before the season roll, next-season (NS) Newness SKUs read "Correct" in the
+// working-season Config Status because they have no working-season delivery —
+// that verdict means "nothing expected this season", not "verified". This lane
+// evaluates them the way they WILL be evaluated once the NS becomes the config
+// season, so pre-worked Syrup configs are checked (and generated) before the
+// roll instead of discovered Off the day after it.
+//
+// PARITY CONTRACT — every rule below mirrors the post-roll path:
+//   new_cf ........ computeAllRows' CF resolution, with the working season in
+//                   the PS role (tier_ow ▸ corr tier ▸ raw store tier if not a
+//                   NON_ALLOC tier; None / CF sentinels; Force IA = Newness)
+//   store set ..... effTierFor(row, NS) against the NS matrix (so the NS tier
+//                   override from p7z7 feeds this directly)
+//   dates ......... computeCalcStartDate / computeCalcEndDate / isConfigDateOff
+//                   with the NS delivery's Flow Cal alloc date, Newness Log
+//                   drop, NS pending in-DC, NS MD exit & weeks bought
+//   notes ......... the NS season's own notes (ADJ / SR / ISS / ADD / DROP),
+//                   which become config-season notes on the roll unchanged
+// CF SKUs are deliberately NOT evaluated or generated: their store set changes
+// replace a live working-season set. A CF SKU whose NS tier differs from its
+// working-season tier is labelled "Retier at roll" so the roll-day list is
+// visible in advance.
+//
+// Computed in one place (nsCfgCompute) and refreshed on every grid render, so
+// there is no second site to drift.
+const NS_CFG_ORDER = ['Missing', 'Off (count & date)', 'Off (count)', 'Off (date)', 'Not in matrix',
+  'No Flow Cal date', 'Matrix loading', 'Adjusted', 'Correct', 'Dropped', 'Retier at roll'];
+
+function nsCfgClear(row) {
+  row.ns_cfg_status = ''; row.ns_cfg_ct = ''; row.ns_cfg_dt = ''; row.ns_cfg_new_cf = '';
+  row.ns_cfg_tier = ''; row.ns_cfg_deliv = ''; row.ns_cfg_expected = null; row.ns_cfg_delta = null;
+  row.ns_cfg_reason = ''; row.ns_cfg_calc_start = ''; row.ns_cfg_calc_end = '';
+  row.ns_cfg_aj = ''; row.ns_cfg_cs_tier = '';
+}
+
+function nsCfgCompute(row, notesStore, nsKeyArg) {
+  nsCfgClear(row);
+  const nsKey = (nsKeyArg === undefined) ? owNextKey() : nsKeyArg;
+  if (!nsKey || !row || !row.seasons) return row;
+  const ns = row.seasons[nsKey];
+  if (!ns || !ns.hasPST) return row;
+  const csKey = CONFIG_SEASON;
+  const cs = row.seasons[csKey] || {};
+  const sku = row.sku;
+
+  const nsDeliv = effDelivFor(row, nsKey);
+  const nsTier  = effTierFor(row, nsKey);                 // uppercased, NS-override-aware
+  row.ns_cfg_tier = nsTier; row.ns_cfg_deliv = nsDeliv;
+
+  // ── new_cf as it will resolve after the roll (working season = its PS) ──
+  const owRaw = String(getOWFor(sku, csKey, 'tier_ow') || '').trim();
+  const owUp  = owRaw.toUpperCase();
+  const fiaOn = isForceIA(getOWFor(sku, nsKey, 'force_ia'));
+  const rawCs = String(cs.store_tier_raw || '').trim();
+  const rawCsPasses = !!rawCs && !NON_ALLOC_TIERS.has(rawCs.toUpperCase());
+  const effPs = (fiaOn || owUp === 'NONE') ? ''
+              : (owUp === 'CF' || owUp === 'CARRY FORWARD') ? '__CF__'
+              : (owRaw || String(cs.corr_tier || '').trim() || (rawCsPasses ? rawCs : ''));
+  const newCf = (!nsDeliv || !nsTier || NON_ALLOC_TIERS.has(nsTier)) ? '' : (effPs ? 'CF' : 'Newness');
+  row.ns_cfg_new_cf = newCf;
+  if (!newCf) return row;                                  // out of scope (no delivery / non-allocating)
+
+  if (newCf === 'CF') {
+    const csEff = effTierFor(row, csKey, true);
+    row.ns_cfg_cs_tier = csEff;
+    if (csEff !== '__CF__' && csEff !== nsTier) {
+      row.ns_cfg_status = 'Retier at roll';
+      row.ns_cfg_reason = (csEff || '(none)') + ' → ' + nsTier;
+    }
+    return row;
+  }
+
+  // ── Newness: NS-season notes ──
+  const adj = analyzeAdjustmentNotes(getNotesFor(notesStore || getNotesStore(), sku, nsKey));
+  if (adj.hasDrop) {
+    row.ns_cfg_status = 'Dropped'; row.ns_cfg_ct = 'Dropped'; row.ns_cfg_dt = 'Dropped';
+    row.ns_cfg_reason = (adj.matched.find(n => /^DROP\b/i.test((n.text || '').trim())) || adj.matched[0]).text;
+    return row;
+  }
+
+  // ── Expected store set (NS matrix) ──
+  const m = seasonMatrixFor(nsKey);
+  if (m.state !== 'ready') { row.ns_cfg_status = 'Matrix loading'; return row; }
+  const counts = m.tierToStoreCount || {};
+  if (!Object.prototype.hasOwnProperty.call(counts, nsTier) || !(counts[nsTier] > 0)) {
+    row.ns_cfg_status = 'Not in matrix';
+    row.ns_cfg_reason = '"' + nsTier + '" has no ' + nsKey + ' matrix stores';
+    return row;
+  }
+  const expected = counts[nsTier];
+  row.ns_cfg_expected = expected;
+
+  // ── Calculated dates (same functions the post-roll path uses) ──
+  const flow = (window._flowCalMap || {})[nsDeliv] || null;
+  const aj = (flow && flow.allocDate instanceof Date && !isNaN(flow.allocDate)) ? flow.allocDate : null;
+  if (!aj) {
+    row.ns_cfg_status = 'No Flow Cal date';
+    row.ns_cfg_reason = 'Flow Calendar has no alloc date for "' + nsDeliv + '"';
+    return row;
+  }
+  row.ns_cfg_aj = fmtDate(aj);
+  const _ah = row.alloc_date ? parseXLDate(row.alloc_date) : null;
+  const ah = (_ah && !isNaN(_ah)) ? _ah : null;
+  const _pd = row.ns_dc_pend ? parseXLDate(row.ns_dc_pend) : null;
+  const pend = (_pd && !isNaN(_pd)) ? _pd : null;
+  const calcStart = computeCalcStartDate({ new_cf: 'Newness', deliv_alloc_date: aj, alloc_date: ah, pend_indc: pend });
+  const calcEnd   = computeCalcEndDate({ calc_start: calcStart, new_cf: 'Newness',
+                      md_exit: ns.md_exit, weeks_bought: ns.weeks_bought, end_ow: '' });
+  row.ns_cfg_calc_start = calcStart ? fmtDate(calcStart) : '';
+  row.ns_cfg_calc_end   = calcEnd   ? fmtDate(calcEnd)   : '';
+
+  // ── Compare with Syrup ──
+  const hasCfg = row._cfgPresent === true || !!row._cfgStatusUpper;
+  if (!hasCfg) { row.ns_cfg_status = 'Missing'; row.ns_cfg_ct = 'Missing'; return row; }
+  const configured = row.config_store_ct || 0;
+  const delta = expected - configured;
+  row.ns_cfg_delta = delta;
+
+  let ct;
+  if (adj.hasAdj) { ct = 'Adjusted'; row.ns_cfg_reason = adj.matched[0].text; }
+  else if (adj.hasSr || adj.hasIss || adj.hasAdd) {
+    row.ns_cfg_reason = adj.matched[0].text;
+    ct = (!adj.hasUncountable && delta === adj.expectedDelta) ? 'Correct' : 'Off';
+  }
+  else ct = (configured === expected) ? 'Correct' : 'Off';
+
+  const ss = row.config_syrup_start ? parseXLDate(row.config_syrup_start) : null;
+  const se = row.config_syrup_end   ? parseXLDate(row.config_syrup_end)   : null;
+  const dtOff = isConfigDateOff({
+    new_cf: 'Newness',
+    syrup_start: (ss && !isNaN(ss)) ? ss : null, syrup_end: (se && !isNaN(se)) ? se : null,
+    calc_start: calcStart, calc_end: calcEnd,
+    deliv_alloc_date: aj, alloc_date: ah,
+    md_exit: ns.md_exit, weeks_bought: ns.weeks_bought,
+    end_ow: '', pend_indc: pend,
+  });
+  const dt = dtOff ? 'Off' : 'Correct';
+  row.ns_cfg_ct = ct; row.ns_cfg_dt = dt;
+  row.ns_cfg_status = (ct === 'Off' && dt === 'Off') ? 'Off (count & date)'
+                    : (ct === 'Off') ? 'Off (count)'
+                    : (dt === 'Off') ? 'Off (date)'
+                    : ct;                                  // Adjusted | Correct
+  return row;
+}
+
+function nsCfgComputeAll() {
+  const nsKey = owNextKey();
+  const store = nsKey ? getNotesStore() : null;
+  (ALL_ROWS || []).forEach(r => nsCfgCompute(r, store, nsKey));
+}
+
+function nsCfgIsOff(v) { return /^Off/.test(v || ''); }
+
+function renderNsCfgPill(row) {
+  const v = row.ns_cfg_status || '';
+  if (!v) return '<span class="muted-cell">—</span>';
+  const esc = x => String(x || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  const nsKey = owNextKey() || 'NS';
+  let cls = 'pill-muted', tip = '';
+  if (v === 'Missing') { cls = 'pill-orange'; tip = `${nsKey} Newness with no Syrup config yet — Generate Configs › ${nsKey} pre-season will emit rows (${row.ns_cfg_expected} stores, ${row.ns_cfg_calc_start} → ${row.ns_cfg_calc_end}).`; }
+  else if (nsCfgIsOff(v)) { cls = 'pill-red'; tip = `Syrup: ${row.config_store_ct || 0} stores, ${row.config_syrup_start || '—'} → ${row.config_syrup_end || '—'} · Expected: ${row.ns_cfg_expected} stores (${row.ns_cfg_tier}), ${row.ns_cfg_calc_start} → ${row.ns_cfg_calc_end}`; }
+  else if (v === 'Correct') { cls = 'pill-green'; tip = `Matches what ${nsKey} will expect after the roll.`; }
+  else if (v === 'Adjusted') { cls = 'pill-blue'; tip = row.ns_cfg_reason; }
+  else if (v === 'Dropped') { cls = 'pill-dropped'; tip = row.ns_cfg_reason; }
+  else if (v === 'Retier at roll') { cls = 'pill-teal'; tip = `CF — held until the roll. Store group changes ${row.ns_cfg_reason}; adjust through replenishment once ${nsKey} starts.`; }
+  else if (v === 'Not in matrix' || v === 'No Flow Cal date') { cls = 'pill-orange'; tip = row.ns_cfg_reason; }
+  return `<span class="pill ${cls}" title="${esc(tip)}">${esc(v)}</span>`;
+}
+
+// Generator for the NS lane. Actionable = Missing + Off (any flavour). Adjusted,
+// Correct, Dropped, CF are never emitted. Off SKUs are listed separately — their
+// existing Syrup rows must be deleted before the new rows are pasted.
+function buildNsConfigsExport() {
+  const nsKey = owNextKey();
+  const out = { nsKey, missing: [], off: [], uploadRows: [], warnings: [], blocked: [], retier: 0, ready: true };
+  if (!nsKey) { out.ready = false; return out; }
+  nsCfgComputeAll();
+  const m = seasonMatrixFor(nsKey);
+  if (m.state !== 'ready') { out.ready = false; out.warnings.push(`${nsKey} Store Matrix ${m.state === 'unavailable' ? 'unavailable' : 'still loading'} — refresh once it lands.`); return out; }
+  const t2s = m.tierToStores || {};
+  let noCode = 0; const unmapped = new Set(); let noDates = 0;
+  (ALL_ROWS || []).forEach(r => {
+    const v = r.ns_cfg_status;
+    if (v === 'Retier at roll') { out.retier++; return; }
+    if (v === 'Not in matrix' || v === 'No Flow Cal date') { out.blocked.push(r.sku + ' — ' + v); return; }
+    const isMissing = v === 'Missing', isOff = nsCfgIsOff(v);
+    if (!isMissing && !isOff) return;
+    const vFrom = _fmtConfigDate(r.ns_cfg_calc_start), vUntil = _fmtConfigDate(r.ns_cfg_calc_end);
+    if (!vFrom || !vUntil) { noDates++; return; }
+    const stores = t2s[r.ns_cfg_tier] || [];
+    (isMissing ? out.missing : out.off).push(r.sku);
+    stores.forEach(name => {
+      const code = STORE_CODE_MAP[name];
+      if (!code) { noCode++; unmapped.add(name); return; }
+      out.uploadRows.push({ location: code, size: '', product: r.sku, sku: '', configKey: 'eligible_replenish',
+        value: 'TRUE', validFrom: vFrom, validUntil: vUntil });
+    });
+  });
+  if (noDates) out.warnings.push(`${noDates} SKU(s) skipped — calculated start/end was empty`);
+  if (noCode) out.warnings.push(`${noCode} (SKU × store) row(s) skipped — no store code for: ${[...unmapped].join(', ')}`);
+  if (out.blocked.length) out.warnings.push(`${out.blocked.length} SKU(s) can't be generated: ${out.blocked.join('; ')}`);
+  return out;
+}
+
+function rebuildNsConfigsExport() {
+  const wrap = document.getElementById('configsNsWrap');
+  if (!wrap) return;
+  const nsKey = owNextKey();
+  if (!nsKey) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  document.querySelectorAll('.configs-ns-key').forEach(el => { el.textContent = nsKey; });
+  const res = buildNsConfigsExport();
+  const offEl = document.getElementById('configsNsOffList');
+  offEl.value = res.off.join('\n');
+  document.getElementById('configsNsOffCount').textContent = `(${res.off.length})`;
+  const includeHeader = document.getElementById('configsIncludeHeader').checked;
+  const lines = [];
+  if (includeHeader) lines.push(['location','size','product','sku','configKey','value','validFrom','validUntil'].join('\t'));
+  res.uploadRows.forEach(r => lines.push([r.location, r.size, r.product, r.sku, r.configKey, r.value, r.validFrom, r.validUntil].join('\t')));
+  document.getElementById('configsNsUploadTSV').value = lines.join('\n');
+  document.getElementById('configsNsRowCount').textContent = `(${res.uploadRows.length})`;
+  document.getElementById('configsNsStats').textContent = res.ready
+    ? `${res.missing.length} Missing + ${res.off.length} Off ${nsKey} Newness SKU${(res.missing.length + res.off.length) === 1 ? '' : 's'} → ${res.uploadRows.length} upload row${res.uploadRows.length === 1 ? '' : 's'}`
+      + (res.retier ? ` · ${res.retier} CF retier${res.retier === 1 ? '' : 's'} held for the roll (not emitted)` : '')
+    : '—';
+  const w = document.getElementById('configsNsWarnings');
+  if (res.warnings.length) { w.innerHTML = '⚠ ' + res.warnings.map(x => x.replace(/</g, '&lt;')).join('<br>⚠ '); w.style.display = 'block'; }
+  else { w.style.display = 'none'; }
+}
+
 // Re-parse a stored date string (e.g. "01/01/25") into clean M/D/YYYY
 // format for the Google Sheets paste. Returns '' on failure.
 function _fmtConfigDate(s) {
@@ -11259,6 +11599,9 @@ function rebuildConfigsExport() {
   } else {
     warnEl.style.display = 'none';
   }
+  // [p7z8] Every path that rebuilds this export (open, Refresh, header
+  // checkbox) also rebuilds the NS pre-season lane.
+  try { rebuildNsConfigsExport(); } catch (e) { console.warn('[NSCfg] export rebuild failed', e); }
 }
 
 // ── Empty-tier-override panel handlers ──────────────────────────────────────
@@ -11490,7 +11833,8 @@ function runBulkUpdate() {
     isIssNote = ADJUST_PREFIX_RE.test(text);
     const store = getNotesStore();
     const ts = Date.now();
-    const season = notesSeasonKey();
+    const _nsSel = document.getElementById('bulkNoteSeason');   // [p7z8]
+    const season = (_nsSel && _nsSel.value) ? _nsSel.value : notesSeasonKey();
     valid.forEach(sku => {
       if (!store[sku] || Array.isArray(store[sku])) store[sku] = upgradeNotesRow(store[sku]);
       if (!store[sku][season]) store[sku][season] = [];
@@ -11523,7 +11867,11 @@ function runBulkUpdate() {
 
   // Build the toast — tells the user exactly what was applied
   const parts = [];
-  if (wantNote)   parts.push(`Note added to ${noteApplied} SKU${noteApplied === 1 ? '' : 's'}`);
+  if (wantNote) {
+    const _ns = document.getElementById('bulkNoteSeason');   // [p7z8]
+    const _ssn = (_ns && _ns.value && _ns.value !== CONFIG_SEASON) ? ` (${_ns.value})` : '';
+    parts.push(`Note${_ssn} added to ${noteApplied} SKU${noteApplied === 1 ? '' : 's'}`);
+  }
   if (wantTier) {
     const verb = tierVal === '__clear__' ? 'cleared on' : 'set on';
     parts.push(`CS tier ${verb} ${tierApplied}`);
