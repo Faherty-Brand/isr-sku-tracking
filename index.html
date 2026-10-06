@@ -783,6 +783,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     if (row){
       row.tier_ow    = getOW(sku, 'tier_ow');
       row.ps_tier_ow = getOW(sku, 'ps_tier_ow');
+      row.ns_tier_ow = getOW(sku, 'ns_tier_ow');   // [p7z7]
       row.deliv_ow   = getOW(sku, 'deliv_ow');
       row.force_ia   = getOW(sku, 'force_ia');
       try {
@@ -1076,7 +1077,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once (p7z6)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow (p7z7)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1709,7 +1710,7 @@ setTimeout(function(){
   <div class="modal-box" style="width:560px;max-width:92vw">
     <div class="modal-title">Bulk Update SKUs</div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.45">
-      Apply a note, a CS tier override, a PS tier override, or any combination to many SKUs at once.
+      Apply a note, a CS / NS / PS tier override, a delivery override, or any combination to many SKUs at once.
       Empty fields are skipped.
       <br><br>
       <b style="color:var(--text)">Status outcomes by note prefix:</b><br>
@@ -1748,6 +1749,15 @@ setTimeout(function(){
         <option value="__noop__">— No tier change —</option>
         <option value="__clear__" style="font-style:italic;color:var(--orange)">⊘ Clear tier override (revert to PST tier)</option>
       </select>
+    </div>
+
+    <!-- [p7z7] NS Tier override section (optional) — hidden when no NS season -->
+    <div id="bulkNSTierWrap" style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px">
+      <label id="bulkNSTierLabel" style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">NS Tier override <span style="font-style:italic;text-transform:none;letter-spacing:0">(optional · next season's store group — becomes the CS override on the season roll)</span></label>
+      <select class="dd-edit-select" id="bulkNSTierSelect" style="width:100%">
+        <option value="__noop__">— No NS tier change —</option>
+      </select>
+      <div id="bulkNSTierNote" style="font-size:10px;color:var(--orange);margin-top:4px;display:none"></div>
     </div>
 
     <!-- PS Tier override section (optional) -->
@@ -3028,9 +3038,15 @@ function seasonProjection(row, key){
   var v = {};
   v.v_tier_pst   = pstTier;
   v.v_deliv1_pst = pstDeliv;
-  v.v_tier_ovr   = !!(isConfig && row.tier_ow && String(row.tier_ow).trim() && String(row.tier_ow).trim() !== String(pstTier).trim());
+  // [p7z7] Tier override is honored on the config season (tier_ow) AND on the
+  // next season (that season's own slot, written by ns_tier_ow). PS / extra
+  // display seasons still show raw PST, as before.
+  var tierOw = isConfig ? String(row.tier_ow || '').trim()
+             : (key && key === owNextKey()) ? String(getOWFor(row.sku, key, 'tier_ow') || '').trim()
+             : '';
+  v.v_tier_ovr   = !!(tierOw && tierOw !== String(pstTier).trim());
   v.v_deliv1_ovr = !!(isConfig && row.deliv_ow && String(row.deliv_ow).trim() && String(row.deliv_ow).trim() !== String(pstDeliv).trim());
-  v.v_tier   = v.v_tier_ovr   ? String(row.tier_ow).trim()  : pstTier;
+  v.v_tier   = v.v_tier_ovr   ? tierOw  : pstTier;
   v.v_deliv1 = v.v_deliv1_ovr ? String(row.deliv_ow).trim() : pstDeliv;
   // Pre-override ("was") values — populated ONLY when an override is active, so
   // the dedicated Prev. columns stay blank/scannable for the untouched majority
@@ -3084,6 +3100,22 @@ function owPrevKey(){
   var i = SEASON_REGISTRY.findIndex(function(sn){ return sn.id === CONFIG_SEASON; });
   return (i > 0) ? SEASON_REGISTRY[i-1].id : null;
 }
+// [p7z7] NS tier override. ns_tier_ow maps to the tier_ow of the season
+// immediately AFTER the config season — the mirror image of ps_tier_ow. No new
+// storage shape: it is just seasons[<NS>].tier_ow, so on the season roll it is
+// read back as the CS tier override with zero migration (and the old CS
+// override is read back as the PS override).
+function owNextKey(){
+  var i = SEASON_REGISTRY.findIndex(function(sn){ return sn.id === CONFIG_SEASON; });
+  var id = (i >= 0 && i < SEASON_REGISTRY.length - 1) ? SEASON_REGISTRY[i+1].id : (SEASONS.ns || null);
+  return (id && id !== CONFIG_SEASON) ? id : null;
+}
+// Which season slot + field a logical override field lives in.
+function owSlotFor(field){
+  if (field === 'ps_tier_ow') return { seasonId: owPrevKey(), f: 'tier_ow' };
+  if (field === 'ns_tier_ow') return { seasonId: owNextKey(), f: 'tier_ow' };
+  return { seasonId: owConfigKey(), f: field };
+}
 // Mirror the legacy CS(default)/PS seasons back onto flat keys for old clients.
 // force_ia joined the season-scoped set in p7g (it now drives new_cf and the
 // generated config dates, so an unscoped flag would leak across season rolls
@@ -3099,16 +3131,14 @@ function owLegacyMirror(mo){
 }
 function getOW(sku, field){
   var mo = MANUAL_OW[sku]; if (!mo) return '';
-  var seasonId = (field === 'ps_tier_ow') ? owPrevKey() : owConfigKey();
-  var f = (field === 'ps_tier_ow') ? 'tier_ow' : field;
+  var slot = owSlotFor(field), seasonId = slot.seasonId, f = slot.f;   // [p7z7]
   if (!seasonId) return '';
   return (mo.seasons && mo.seasons[seasonId] && mo.seasons[seasonId][f]) || '';
 }
 function setOW(sku, field, val){
   if (!MANUAL_OW[sku]) MANUAL_OW[sku] = {};
   var mo = MANUAL_OW[sku]; mo._owv = 2;
-  var seasonId = (field === 'ps_tier_ow') ? owPrevKey() : owConfigKey();
-  var f = (field === 'ps_tier_ow') ? 'tier_ow' : field;
+  var slot = owSlotFor(field), seasonId = slot.seasonId, f = slot.f;   // [p7z7]
   if (!seasonId) return;
   if (!mo.seasons) mo.seasons = {};
   if (!mo.seasons[seasonId]) mo.seasons[seasonId] = {};
@@ -3170,6 +3200,15 @@ function effDelivFor(row, seasonId){
   var ovr = String(getOWFor(row && row.sku, seasonId, 'deliv_ow') || '').trim();
   if (ovr.toUpperCase() === 'NONE') return '';
   return String(ovr || s.deliv1 || '').trim();
+}
+
+// [p7z7] Effective NS tier for the NS-only branch of computeStatus. Raw PST NS
+// tier unless an NS override is set; "None" blanks it. Display fields
+// (row.ns_tier) stay raw PST — this is only what Status evaluates.
+function effNsTierForStatus(sku, rawNsTier){
+  var ovr = String(getOW(sku, 'ns_tier_ow') || '').trim();
+  if (ovr.toUpperCase() === 'NONE') return '';
+  return ovr || String(rawNsTier || '');
 }
 
 // One-time, idempotent, non-destructive migration of a single override record.
@@ -5499,7 +5538,7 @@ function computeAllRows(lookups) {
       deliv_alloc_date, force_ia, syrup_ia, syrup_rp, syrupCfg,
       cs_lifecycle: cfg.lifecycle || '', omni_oh, tier_oh,
       plg_oh, effective_tier: eff_tier_for_status,
-      ns_tier: ns.corrTier || ns.storeTier || '',
+      ns_tier: effNsTierForStatus(sku, ns.corrTier || ns.storeTier || ''),   // [p7z7]
     });
 
 
@@ -5967,6 +6006,7 @@ function computeAllRows(lookups) {
       ps_deliv2: ps.delivMonth2 || '',
       ps_tier: ps.corrTier || ps.storeTier || '',  // display value (unfiltered, for drilldown PS Tier row)
       ps_tier_ow,                                  // manual override
+      ns_tier_ow: getOW(sku, 'ns_tier_ow'),        // [p7z7] next-season override
       ps_corr_tier: ps.corrTier || '',             // PST Corrected Tier (column may not exist; usually '')
       ps_store_tier_raw: ps.storeTier || '',       // PST raw Store Tier (subject to EXCLUDED_TIERS filter for CF)
       ps_rp: ps.rollout || '',
@@ -7023,7 +7063,8 @@ function computeStatus({sku, fp_md, is_md, alloc_date, new_cf, cs_deliv1, ns_del
     if (ns_deliv1) {
       // Check NS tier — exclude tiers that don't need store allocation
       const nsTierUpper = (ns_tier || '').toUpperCase();
-      if (nsTierUpper === 'WHOLESALE EXCLUSIVE' || nsTierUpper === 'PARTNERSHIP' || nsTierUpper === 'ONLINE ONLY') {
+      if (nsTierUpper === 'WHOLESALE EXCLUSIVE' || nsTierUpper === 'PARTNERSHIP' || nsTierUpper === 'ONLINE ONLY'
+          || nsTierUpper.indexOf('DO NOT ALLOCATE') !== -1) {   // [p7z7] NS drop-retier
         return 'N/A: Do Not Allocate';
       }
       return `NS Pending: ${ns_deliv1}`;
@@ -7380,7 +7421,7 @@ function recomputeRowDerived(row) {
     omni_oh: row.omni_oh || 0, tier_oh: row.tier_oh || 0,
     plg_oh: row.plg_oh || 0,
     effective_tier: eff_tier_for_status,
-    ns_tier: row.ns_tier || '',
+    ns_tier: effNsTierForStatus(row.sku, row.ns_tier || ''),   // [p7z7]
   });
 
   // 4. On-time status (depends on fresh deliv_alloc_date)
@@ -8959,6 +9000,7 @@ function openDrilldown(sku) {
       ['Delivery Override', 'deliv_ow', getOW(sku, 'deliv_ow'), 'delivery'],
       ['Tier Override (CS)', 'tier_ow', getOW(sku, 'tier_ow'), 'tier'],
       ['PS Tier Override', 'ps_tier_ow', getOW(sku, 'ps_tier_ow'), 'tier'],
+      ...(owNextKey() ? [[`Tier Override (NS · ${owNextKey()})`, 'ns_tier_ow', getOW(sku, 'ns_tier_ow'), 'tier']] : []),   // [p7z7]
       ['Force IA — "Y" (forces Newness + IA config dates)', 'force_ia', getOW(sku, 'force_ia'), 'text'],
       ['End Date OW — date, "+13w", or "INDEF"', 'end_ow', fmtEndOWDisplay(getOW(sku, 'end_ow')), 'text'],
     ]},
@@ -9072,12 +9114,19 @@ function openDrilldown(sku) {
     const ddRows = [];
     if (!ddIsConfig) {
       ddRows.push(['Delivery', ddS.deliv1 || '—']);
-      ddRows.push(['Store Group (Tier)', ddS.tier ? sgValueSpan(sgEsc(ddS.tier), ddS.tier, (ddS.deliv1 || row.deliv_ow || row.cs_deliv1), '', '', ddSeasonKey) : '—']);
-      // [p7y] that season's matrix count, with the same states as the grid
+      // [p7z7] Store Group / Store Count / Category follow the projection, which
+      // is NS-override-aware — so an NS retier shows here with its own count.
       { const _pv = seasonProjection(row, ddSeasonKey);
+        const _t  = String(_pv.v_tier || '').trim();
+        const _dv = (ddS.deliv1 || row.deliv_ow || row.cs_deliv1);
+        ddRows.push(['Store Group (Tier)', _t
+          ? sgValueSpan(sgEsc(_t), _t, _dv, _pv.v_tier_ovr ? 'color:var(--orange);font-weight:500' : '', '', ddSeasonKey)
+            + (_pv.v_tier_ovr ? ` <span style="color:var(--orange);font-weight:500">(override)</span>` + sgWasLine(_pv.v_tier_prev) : '')
+          : '—']);
+        // [p7y] that season's matrix count, with the same states as the grid
         ddRows.push(['Store Count (' + ddSeasonKey + ' matrix)',
-          ddS.tier ? renderMxStoreCtCell(_pv, ddSeasonKey) : '—']);
-        ddRows.push(['Group Category', ddS.tier ? sgEsc(_pv.v_mx_category || '—') : '—']); }   // [p7z]
+          _t ? renderMxStoreCtCell(_pv, ddSeasonKey) : '—']);
+        ddRows.push(['Group Category', _t ? sgEsc(_pv.v_mx_category || '—') : '—']); }   // [p7z]
       ddRows.push(['On-Time', ddS.ontime || '—']);
     }
 
@@ -9154,17 +9203,25 @@ function openDrilldown(sku) {
           const [lbl, field, val, inputType] = r;
           let inputHtml;
           if (inputType === 'tier') {
-            ensureTierDatalist();
-            const counts = window.getTierToStoreCount(row.deliv_ow || row.cs_deliv1);
-            const pst = row.cs_tier || '';
+            // [p7z7] NS override reads/validates against the NS season's matrix
+            // and shows the NS PST tier as its placeholder.
+            const isNsField = (field === 'ns_tier_ow');
+            const nsKey = isNsField ? owNextKey() : null;
+            const dlId = isNsField ? ensureTierDatalistFor(nsKey) : (ensureTierDatalist(), 'tierDatalist');
+            const counts = isNsField ? tierCountMapFor(nsKey)
+                                     : window.getTierToStoreCount(row.deliv_ow || row.cs_deliv1);
+            const pst = isNsField ? (row.ns_tier || '') : (row.cs_tier || '');
             const isOv = val && val !== '';
             const placeholder = pst
               ? `${pst} (PST · ${counts[pst.toUpperCase()] || 0})`
               : '— none —';
+            const nsNote = isNsField ? nsTierMatrixNote(nsKey) : '';
+            if (nsNote) setTimeout(() => { if (nsKey) ensureSeasonMatrix(nsKey); }, 0);
             inputHtml = `<input
               type="text"
               class="dd-edit${isOv?' overridden':''}"
-              list="tierDatalist"
+              list="${dlId}"
+              ${nsNote ? `title="${nsNote.replace(/&amp;/g,'&').replace(/"/g,'&quot;')}"` : ''}
               id="edit_${field}"
               value="${(val||'').replace(/"/g,'&quot;')}"
               placeholder="${placeholder.replace(/"/g,'&quot;')}"
@@ -9448,8 +9505,23 @@ function saveOverride(sku, field) {
   // Invalid input = abort save and flash the input border red so the user
   // knows what happened. Other fields skip validation since they use either
   // a constrained <select> (deliv_ow) or free text (force_ia).
-  if (field === 'tier_ow' || field === 'ps_tier_ow') {
-    const validated = validateTierInput(val);
+  // [p7z7] ns_tier_ow validates against the NS matrix and rejects the PS-only
+  // None/CF sentinels (on the roll it becomes the CS override, where those
+  // sentinels mean nothing useful).
+  if (field === 'ns_tier_ow') {
+    if (!owNextKey()) { showToast('No next season is configured — NS tier override unavailable', 2800); return; }
+    const up0 = val.toUpperCase();
+    if (up0 === 'NONE' || up0 === 'CF' || up0 === 'CARRY FORWARD') {
+      if (inputEl) {
+        inputEl.style.borderColor = 'var(--red)';
+        setTimeout(() => { inputEl.style.borderColor = ''; }, 600);
+      }
+      showToast(`"${val}" is a PS-tier sentinel — not valid for an NS tier override`, 3000);
+      return;
+    }
+  }
+  if (field === 'tier_ow' || field === 'ps_tier_ow' || field === 'ns_tier_ow') {
+    const validated = validateTierInput(val, field === 'ns_tier_ow' ? owNextKey() : undefined);
     if (validated === null) {
       if (inputEl) {
         inputEl.style.borderColor = 'var(--red)';
@@ -9504,8 +9576,8 @@ function saveOverride(sku, field) {
     // dependents (new_cf / deliv_alloc_date / status / on-time) so a delivery
     // edit also updates the in-season gate, a tier edit updates new_cf, and
     // a PS tier edit updates the CF tag.
-    if (field === 'tier_ow' || field === 'deliv_ow' || field === 'ps_tier_ow' || field === 'force_ia' || field === 'end_ow') {
-      recomputeRowDerived(row);
+    if (field === 'tier_ow' || field === 'deliv_ow' || field === 'ps_tier_ow' || field === 'ns_tier_ow' || field === 'force_ia' || field === 'end_ow') {
+      recomputeRowDerived(row);   // [p7z7] ns_tier_ow: NS-only Status branch reads the effective NS tier
       console.log(`[${field}-DD] ${sku} → "${val||'(cleared)'}" | new_cf=${row.new_cf} | status=${row.status} | newnessProj=${row.newness_proj}`);
     }
   }
@@ -9592,7 +9664,7 @@ function ensureTierDatalist() {
 // Two PS-side sentinels are also accepted (canonical casing returned):
 //   "None" → forces eff_ps_tier="" → Newness
 //   "CF"   → forces eff_ps_tier="__CF__" → CF (also accepts "Carry Forward")
-function validateTierInput(typed) {
+function validateTierInput(typed, seasonId) {
   const t = (typed || '').trim();
   if (t === '') return '';
   const upper = t.toUpperCase();
@@ -9602,10 +9674,56 @@ function validateTierInput(typed) {
   // the canonical "DO NOT ALLOCATE" so downstream (status / in-stock / config
   // suppression / EXCLUDED_TIERS) sees one consistent value.
   if (upper === 'DO NOT ALLOCATE' || upper === 'DROP') return 'DO NOT ALLOCATE';
-  const opts = getTierOptions();
+  const opts = seasonId ? getTierOptionsFor(seasonId) : getTierOptions();   // [p7z7]
   const exact = opts.find(o => o.toUpperCase() === upper);
   if (exact) return exact;
   return null; // no match — caller decides what to do
+}
+
+// ── [p7z7] Season-scoped tier lists (NS tier override) ─────────────────────
+// The config-season list (getTierOptions / tierDatalist) comes from the working
+// season's matrix. An NS override must be validated against the NS season's
+// OWN matrix — HO26 can define groups FA26 doesn't have, and vice versa. If the
+// NS matrix isn't loaded (yet / unavailable) we fall back to the config list so
+// the control still works; callers surface that with nsTierMatrixNote().
+function getTierOptionsFor(seasonId) {
+  if (!seasonId || seasonId === CONFIG_SEASON) return getTierOptions();
+  const m = seasonMatrixFor(seasonId);
+  if (m.state !== 'ready') return getTierOptions();
+  return Object.keys(m.tierToStoreCount || {}).sort((a, b) => a.localeCompare(b));
+}
+function tierCountMapFor(seasonId) {
+  if (!seasonId || seasonId === CONFIG_SEASON) return window._tierToStoreCount || {};
+  const m = seasonMatrixFor(seasonId);
+  return m.state === 'ready' ? (m.tierToStoreCount || {}) : (window._tierToStoreCount || {});
+}
+function nsTierMatrixNote(seasonId) {
+  if (!seasonId) return '';
+  const m = seasonMatrixFor(seasonId);
+  if (m.state === 'ready') return '';
+  return `${seasonId} matrix ${m.state === 'unavailable' ? 'unavailable' : 'still loading'} — tier list &amp; counts shown from ${CONFIG_SEASON}`;
+}
+// Rebuilt on every call (cheap, and the NS matrix can land after first use).
+function ensureTierDatalistFor(seasonId) {
+  if (!seasonId || seasonId === CONFIG_SEASON) { ensureTierDatalist(); return 'tierDatalist'; }
+  const id = 'tierDatalist_' + String(seasonId).replace(/[^A-Za-z0-9_]/g, '');
+  const existing = document.getElementById(id);
+  if (existing) existing.remove();
+  const dl = document.createElement('datalist');
+  dl.id = id;
+  const counts = tierCountMapFor(seasonId);
+  getTierOptionsFor(seasonId).forEach(t => {
+    const o = document.createElement('option');
+    o.value = t;
+    o.label = `${counts[t] || 0} stores`;
+    dl.appendChild(o);
+  });
+  const dna = document.createElement('option');
+  dna.value = 'DO NOT ALLOCATE';
+  dna.label = 'drop — no store allocation';
+  dl.appendChild(dna);
+  document.body.appendChild(dl);
+  return id;
 }
 
 function getFlowCalOptions() {
@@ -10062,6 +10180,10 @@ function openBulkNotesModal() {
   });
   sel.value = '__noop__';
 
+  // [p7z7] Populate NS tier dropdown from the NS season's own matrix.
+  { const _ns = document.getElementById('bulkNSTierSelect'); if (_ns) _ns.value = '__noop__'; }   // fresh open
+  populateBulkNSTierSelect();
+
   // Populate PS tier dropdown — same option list as CS, plus a special
   // "None" sentinel that forces a SKU to be Newness (mirrors Excel's
   // CJ4="None" override). Three pseudo-values at the top: __noop__,
@@ -10106,6 +10228,43 @@ function openBulkNotesModal() {
     delivSel.appendChild(o);
   });
   delivSel.value = '__noop__';
+}
+// [p7z7] NS tier dropdown. Same pseudo-values as the CS list (noop / clear /
+// drop) — not PS's None/CF sentinels. Options + counts come from the NS
+// matrix; if it's still loading we fill from the config list, show a note, and
+// repopulate once it lands (preserving the user's current pick).
+function populateBulkNSTierSelect() {
+  const wrap = document.getElementById('bulkNSTierWrap');
+  const sel  = document.getElementById('bulkNSTierSelect');
+  const note = document.getElementById('bulkNSTierNote');
+  const lbl  = document.getElementById('bulkNSTierLabel');
+  if (!wrap || !sel) return;
+  const nsKey = owNextKey();
+  if (!nsKey) { wrap.style.display = 'none'; sel.value = '__noop__'; return; }
+  wrap.style.display = '';
+  if (lbl && lbl.firstChild) lbl.firstChild.nodeValue = `NS Tier override · ${nsKey} `;
+  const prev = sel.value || '__noop__';
+  sel.innerHTML = `
+    <option value="__noop__">— No NS tier change —</option>
+    <option value="__clear__" style="font-style:italic;color:var(--orange)">⊘ Clear NS tier override (revert to ${nsKey} PST tier)</option>
+    <option value="DO NOT ALLOCATE" style="font-weight:600;color:var(--red)">🛑 Drop — Do Not Allocate</option>
+  `;
+  const counts = tierCountMapFor(nsKey);
+  getTierOptionsFor(nsKey).forEach(opt => {
+    const o = document.createElement('option');
+    o.value = opt;
+    o.textContent = `${opt} (${counts[opt] || 0} stores)`;
+    sel.appendChild(o);
+  });
+  sel.value = Array.from(sel.options).some(o => o.value === prev) ? prev : '__noop__';
+  const msg = nsTierMatrixNote(nsKey);
+  if (note) { note.innerHTML = msg ? '⚠ ' + msg : ''; note.style.display = msg ? '' : 'none'; }
+  if (msg && seasonMatrixFor(nsKey).state !== 'unavailable') {
+    ensureSeasonMatrix(nsKey).then(() => {
+      const m = document.getElementById('bulkNotesModal');
+      if (m && m.classList.contains('open')) populateBulkNSTierSelect();
+    });
+  }
 }
 function closeBulkNotesModal() {
   document.getElementById('bulkNotesModal').classList.remove('open');
@@ -11180,6 +11339,8 @@ function runBulkUpdate() {
   const text = document.getElementById('bulkNotesText').value.trim();
   const tierVal = document.getElementById('bulkTierSelect').value;
   const psTierVal = document.getElementById('bulkPSTierSelect').value;
+  const _nsSel = document.getElementById('bulkNSTierSelect');                       // [p7z7]
+  const nsTierVal = (_nsSel && owNextKey()) ? _nsSel.value : '__noop__';
   const delivVal = document.getElementById('bulkDelivSelect').value;
   const skusUpper = parseBulkSkus(raw);
 
@@ -11188,9 +11349,10 @@ function runBulkUpdate() {
   const wantNote   = !!text;
   const wantTier   = tierVal   !== '__noop__';
   const wantPSTier = psTierVal !== '__noop__';
+  const wantNSTier = nsTierVal !== '__noop__';   // [p7z7]
   const wantDeliv  = delivVal  !== '__noop__';
-  if (!wantNote && !wantTier && !wantPSTier && !wantDeliv) {
-    showToast('Nothing to apply — fill in a note, a tier/PS tier/delivery override, or any combination');
+  if (!wantNote && !wantTier && !wantPSTier && !wantNSTier && !wantDeliv) {
+    showToast('Nothing to apply — fill in a note, a CS/NS/PS tier or delivery override, or any combination');
     return;
   }
 
@@ -11271,6 +11433,24 @@ function runBulkUpdate() {
     });
   }
 
+  // ── Step 1b2: NS Tier override (if requested) [p7z7] ──────────────────────
+  // Writes seasons[<NS>].tier_ow. Doesn't touch CS store count / depth / config
+  // math (those are config-season only); recompute still runs because an
+  // NS-only SKU's Status reads the effective NS tier.
+  let nsTierApplied = 0;
+  if (wantNSTier) {
+    const isClear = nsTierVal === '__clear__';
+    valid.forEach(sku => {
+      const row = ALL_ROWS.find(r => r.sku === sku);
+      if (!row) return;
+      const v = isClear ? '' : nsTierVal;
+      setOW(sku, 'ns_tier_ow', v);
+      row.ns_tier_ow = v;
+      recomputeRowDerived(row);
+      nsTierApplied++;
+    });
+  }
+
   // ── Step 1c: Delivery override (if requested) ─────────────────────────────
   // Set or clear deliv_ow for each SKU. Delivery changes ripple through the
   // resolver's deliv_to_use → deliv_alloc_date → calc_start chain, which is
@@ -11297,7 +11477,7 @@ function runBulkUpdate() {
     });
   }
 
-  if (wantTier || wantPSTier || wantDeliv) {
+  if (wantTier || wantPSTier || wantNSTier || wantDeliv) {
     persistManualOW();
   }
 
@@ -11321,7 +11501,7 @@ function runBulkUpdate() {
     // Per-SKU config recompute for the ISS branch (no-op for non-ISS notes
     // beyond the table re-render, but cheap enough to call uniformly)
     valid.forEach(sku => recomputeConfigFlagForSku(sku));
-  } else if (wantTier || wantPSTier || wantDeliv) {
+  } else if (wantTier || wantPSTier || wantNSTier || wantDeliv) {
     // Even without a note, we need a single re-render to repaint pills
     if (typeof applyFiltersAndRender === 'function') applyFiltersAndRender();
   }
@@ -11333,7 +11513,7 @@ function runBulkUpdate() {
     const after = ALL_ROWS.find(r => r.sku === sku)?.config_status;
     if (before !== after) flippedCount++;
   });
-  console.log(`[BulkUpdate] ${valid.length} SKUs · note=${wantNote ? `"${text}"` : 'none'} · cs_tier=${wantTier ? (tierVal === '__clear__' ? 'CLEAR' : tierVal) : 'none'} · ps_tier=${wantPSTier ? (psTierVal === '__clear__' ? 'CLEAR' : psTierVal) : 'none'} · deliv=${wantDeliv ? (delivVal === '__clear__' ? 'CLEAR' : delivVal) : 'none'} · ${flippedCount} config_status flipped${skipped ? ` · ${skipped} skipped (not in tracker)` : ''}`);
+  console.log(`[BulkUpdate] ${valid.length} SKUs · note=${wantNote ? `"${text}"` : 'none'} · cs_tier=${wantTier ? (tierVal === '__clear__' ? 'CLEAR' : tierVal) : 'none'} · ps_tier=${wantPSTier ? (psTierVal === '__clear__' ? 'CLEAR' : psTierVal) : 'none'} · ns_tier(${owNextKey()||'—'})=${wantNSTier ? (nsTierVal === '__clear__' ? 'CLEAR' : nsTierVal) : 'none'} · deliv=${wantDeliv ? (delivVal === '__clear__' ? 'CLEAR' : delivVal) : 'none'} · ${flippedCount} config_status flipped${skipped ? ` · ${skipped} skipped (not in tracker)` : ''}`);
 
   closeBulkNotesModal();
   // Clear inputs so next open is fresh
@@ -11354,6 +11534,10 @@ function runBulkUpdate() {
               : psTierVal === 'CF'   ? 'set to CF on'
               : 'set on';
     parts.push(`PS tier ${verb} ${psTierApplied}`);
+  }
+  if (wantNSTier) {
+    const verb = nsTierVal === '__clear__' ? 'cleared on' : 'set on';
+    parts.push(`NS (${owNextKey()}) tier ${verb} ${nsTierApplied}`);
   }
   if (wantDeliv) {
     const verb = delivVal === '__clear__' ? 'cleared on' : `set to ${delivVal} on`;
