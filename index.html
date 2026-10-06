@@ -1077,7 +1077,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix (p7z9b)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins (p7z9c)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1144,6 +1144,11 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
       if (typeof setProgress === 'function') setProgress(15, 'Loading shared data…');
       var P = JSON.parse(pako.ungzip(b64ToBytes(res.data.blob), { to:'string' }));
       if (typeof buildFromParsed !== 'function'){ console.warn('[Snapshot] build path missing'); return false; }
+      // [p7z9c] Newest-wins between the snapshot's embedded matrices and the
+      // shared store_matrix cache (written by every live fetch / ↻ Live matrix).
+      if (typeof freshenBundleMatrices === 'function') {
+        try { await freshenBundleMatrices(P); } catch (e) { console.warn('[Snapshot] matrix freshen skipped', e); }
+      }
       await buildFromParsed(P);
       watchSnapshots();
       return true;
@@ -2418,6 +2423,64 @@ async function readCachedMatrix(seasonCode) {
     if (!data || !data.length) return null;
     return { payload: data[0].payload, fetchedAt: data[0].fetched_at };
   } catch (e) { console.warn('[LiveMatrix] cache read threw', e); return null; }
+}
+
+// ── [p7z9c] Newest-wins matrix on snapshot load ────────────────────────────
+// ROOT CAUSE of "↻ Live matrix fixes HO26, then a page reload brings the stale
+// groups back": a reload rebuilds from the shared SNAPSHOT, and the snapshot
+// carries whatever matrices were embedded the last time someone PUBLISHED
+// (normally a Refresh Data). ↻ Live matrix updated only the in-memory copy and
+// the Supabase store_matrix cache — it never republished — and on load the
+// embedded copy always beat the cache. So every reload resurrected the
+// publish-time matrix.
+//
+// Fix: before a snapshot is built, compare each embedded matrix (config season
+// + every display season it carries + the next season) with the newest row in
+// the store_matrix cache, and take whichever was fetched more recently. Every
+// successful live fetch, from anyone, writes that cache, so one click of
+// ↻ Live matrix now sticks across reloads for the whole team without
+// republishing the dataset. A cache that's older than the snapshot is ignored.
+async function readCachedMatrixMeta(seasonCode) {
+  if (!window.SB) return null;
+  try {
+    const { data, error } = await window.SB.from('store_matrix')
+      .select('fetched_at').eq('season', seasonCode)
+      .order('fetched_at', { ascending: false }).limit(1);
+    if (error || !data || !data.length) return null;
+    return data[0].fetched_at || null;
+  } catch (_) { return null; }
+}
+async function freshenBundleMatrices(P) {
+  if (!P || !window.SB) return [];
+  const g = (P._globals && P._globals.SEASONS) || {};
+  const cs = String(P.matrixSeason || g.cs || '').trim();
+  const ids = new Set([cs, g.ns].concat(Object.keys(P.extraMatrixPayloads || {})).filter(Boolean));
+  const swapped = [];
+  await Promise.all(Array.from(ids).map(async function (id) {
+    const embAsOf = (id === cs) ? P.matrixAsOf : (P.extraMatrixPayloads && P.extraMatrixPayloads[id] && P.extraMatrixPayloads[id].asOf);
+    const hasEmb  = (id === cs) ? !!(P.matrixPayload && Array.isArray(P.matrixPayload.groups))
+                                : !!(P.extraMatrixPayloads && P.extraMatrixPayloads[id] && P.extraMatrixPayloads[id].payload);
+    const cacheAt = await readCachedMatrixMeta(id);
+    if (!cacheAt) return;
+    const tC = Date.parse(cacheAt) || 0, tE = Date.parse(embAsOf) || 0;
+    if (hasEmb && tC <= tE) return;                      // snapshot copy is as new or newer
+    const c = await readCachedMatrix(id);
+    if (!c || !c.payload || !Array.isArray(c.payload.groups)) return;
+    if (id === cs) {
+      P.matrixPayload = c.payload; P.matrixSource = 'cache'; P.matrixAsOf = c.fetchedAt;
+      P.matrixFresh = true; P.matrixError = null; P.matrixSeason = cs;
+    } else {
+      P.extraMatrixPayloads = P.extraMatrixPayloads || {};
+      P.extraMatrixPayloads[id] = { payload: c.payload, source: 'cache', asOf: c.fetchedAt };
+      if (typeof SEASON_MX !== 'undefined' && SEASON_MX[id]) {   // drop any stale in-memory copy
+        SEASON_MX[id].state = 'idle'; SEASON_MX[id].payload = null; SEASON_MX[id].adapted = null;
+      }
+    }
+    swapped.push(id + ' (snapshot ' + (embAsOf ? String(embAsOf).slice(0, 16) : 'none') + ' → cache ' + String(c.fetchedAt).slice(0, 16) + ')');
+  }));
+  if (swapped.length) console.log('[LiveMatrix] newer matrix in the shared cache than in the snapshot — using it for: ' + swapped.join(', '));
+  else console.log('[LiveMatrix] snapshot matrices are current (checked ' + Array.from(ids).join(', ') + ')');
+  return swapped;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
