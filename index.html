@@ -784,6 +784,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
       row.tier_ow    = getOW(sku, 'tier_ow');
       row.ps_tier_ow = getOW(sku, 'ps_tier_ow');
       row.ns_tier_ow = getOW(sku, 'ns_tier_ow');   // [p7z7]
+      row.ns_deliv_ow = getOW(sku, 'ns_deliv_ow'); // [p7z10]
       row.deliv_ow   = getOW(sku, 'deliv_ow');
       row.force_ia   = getOW(sku, 'force_ia');
       try {
@@ -1077,7 +1078,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins (p7z9c)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow (p7z10)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1757,6 +1758,14 @@ setTimeout(function(){
       <select class="dd-edit-select" id="bulkTierSelect" style="width:100%">
         <option value="__noop__">— No tier change —</option>
         <option value="__clear__" style="font-style:italic;color:var(--orange)">⊘ Clear tier override (revert to PST tier)</option>
+      </select>
+    </div>
+
+    <!-- [p7z10] NS Delivery override section (optional) — hidden when no NS season -->
+    <div id="bulkNSDelivWrap" style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px">
+      <label id="bulkNSDelivLabel" style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">NS Delivery override <span style="font-style:italic;text-transform:none;letter-spacing:0">(optional · puts the SKU in next season — pair with an NS tier if it has none)</span></label>
+      <select class="dd-edit-select" id="bulkNSDelivSelect" style="width:100%">
+        <option value="__noop__">— No NS delivery change —</option>
       </select>
     </div>
 
@@ -2738,7 +2747,7 @@ window.zeroStoreGroups = async function zeroStoreGroups(season, opts) {
   const groups = {};
   (ALL_ROWS || []).forEach(function (row) {
     const v = seasonProjection(row, season);
-    if (!v.v_hasPST || !v.v_tier) return;
+    if (!v.v_present || !v.v_tier) return;   // [p7z10]
     const k = v.v_tier;
     const g = groups[k] || (groups[k] = { group: k, state: v.v_mx_state, count: v.v_mx_store_ct, note: v.v_mx_note || '', category: v.v_mx_category || '', skus: [], delivs: {} });
     g.skus.push(row.sku);
@@ -2780,7 +2789,7 @@ window.categorySummary = async function (season) {
   const n = {};
   (ALL_ROWS || []).forEach(function (row) {
     const v = seasonProjection(row, season);
-    if (!v.v_hasPST || !v.v_tier) return;
+    if (!v.v_present || !v.v_tier) return;   // [p7z10]
     const c = v.v_mx_category || '(blank)'; n[c] = (n[c] || 0) + 1;
   });
   const m = seasonMatrixFor(season); const order = (m && m.categoryOrder) || [];
@@ -3204,9 +3213,14 @@ function seasonProjection(row, key){
              : (key && key === owNextKey()) ? String(getOWFor(row.sku, key, 'tier_ow') || '').trim()
              : '';
   v.v_tier_ovr   = !!(tierOw && tierOw !== String(pstTier).trim());
-  v.v_deliv1_ovr = !!(isConfig && row.deliv_ow && String(row.deliv_ow).trim() && String(row.deliv_ow).trim() !== String(pstDeliv).trim());
+  // [p7z10] Delivery override honored on the config season (deliv_ow) and the
+  // next season (its own slot, written by ns_deliv_ow) — mirrors tierOw above.
+  var delivOw = isConfig ? String(row.deliv_ow || '').trim()
+              : (key && key === owNextKey()) ? String(getOWFor(row.sku, key, 'deliv_ow') || '').trim()
+              : '';
+  v.v_deliv1_ovr = !!(delivOw && delivOw !== String(pstDeliv).trim());
   v.v_tier   = v.v_tier_ovr   ? tierOw  : pstTier;
-  v.v_deliv1 = v.v_deliv1_ovr ? String(row.deliv_ow).trim() : pstDeliv;
+  v.v_deliv1 = v.v_deliv1_ovr ? delivOw : pstDeliv;
   // Pre-override ("was") values — populated ONLY when an override is active, so
   // the dedicated Prev. columns stay blank/scannable for the untouched majority
   // and clearly surface the original PST value for the rows that changed.
@@ -3227,6 +3241,7 @@ function seasonProjection(row, key){
   v.v_final_buy    = g('final_buy');
   v.v_weeks_bought = g('weeks_bought');
   v.v_hasPST       = !!s.hasPST;   // namespaced so it can't shadow a season slice's own hasPST
+  v.v_present      = seasonPresent(row, key);   // [p7z10] PST OR season-scoped override
   // [p7y] Store Count follows the displayed season's EFFECTIVE Store Group,
   // read from THAT season's matrix. cs_store_ct is untouched (config math).
   var mx = seasonStoreCountInfo(key, v.v_tier);
@@ -3273,6 +3288,7 @@ function owNextKey(){
 function owSlotFor(field){
   if (field === 'ps_tier_ow') return { seasonId: owPrevKey(), f: 'tier_ow' };
   if (field === 'ns_tier_ow') return { seasonId: owNextKey(), f: 'tier_ow' };
+  if (field === 'ns_deliv_ow') return { seasonId: owNextKey(), f: 'deliv_ow' };   // [p7z10]
   return { seasonId: owConfigKey(), f: field };
 }
 // Mirror the legacy CS(default)/PS seasons back onto flat keys for old clients.
@@ -3368,6 +3384,50 @@ function effNsTierForStatus(sku, rawNsTier){
   var ovr = String(getOW(sku, 'ns_tier_ow') || '').trim();
   if (ovr.toUpperCase() === 'NONE') return '';
   return ovr || String(rawNsTier || '');
+}
+
+// [p7z10] Effective NS delivery for the NS-only branch of computeStatus.
+function effNsDelivForStatus(sku, rawNsDeliv){
+  var ovr = String(getOW(sku, 'ns_deliv_ow') || '').trim();
+  if (ovr.toUpperCase() === 'NONE') return '';
+  return ovr || String(rawNsDeliv || '');
+}
+
+// [p7z10] SINGLE presence rule: does this SKU belong to season X?
+//   • it has PST data for X (delivery or tier), OR
+//   • X is the working season and it carries a CS tier / delivery override, OR
+//   • X is the next season and it carries an NS tier / delivery override.
+// Every "should this SKU appear in / be evaluated for season X" check goes
+// through here (grid season filter, NS Config, panel season section, console
+// diagnostics), so a SKU added to HO26 purely by override can't be visible in
+// one place and missing in another.
+function seasonPresent(row, seasonId){
+  if (!row || !seasonId) return false;
+  var s = row.seasons && row.seasons[seasonId];
+  if (s && s.hasPST) return true;
+  if (seasonId === CONFIG_SEASON) return !!(row.tier_ow || row.deliv_ow);
+  if (seasonId === owNextKey()) {
+    var t = String(getOWFor(row.sku, seasonId, 'tier_ow') || '').trim();
+    var d = String(getOWFor(row.sku, seasonId, 'deliv_ow') || '').trim();
+    return !!(t || d);
+  }
+  return false;
+}
+
+// [p7z10] A SKU brought into the next season by override needs BOTH a delivery
+// (the in-season switch) and a tier (the store set). Flag when only one half is
+// effective — PST counts toward either half. Only fires when an NS override is
+// actually set, so ordinary PST-only rows never warn.
+function nsHalfSetWarning(row){
+  var nsKey = owNextKey();
+  if (!row || !nsKey) return '';
+  var tOw = String(getOWFor(row.sku, nsKey, 'tier_ow') || '').trim();
+  var dOw = String(getOWFor(row.sku, nsKey, 'deliv_ow') || '').trim();
+  if (!tOw && !dOw) return '';
+  var tier = effTierFor(row, nsKey), deliv = effDelivFor(row, nsKey);
+  if (deliv && !tier) return nsKey + ' has a delivery but no store group — set an NS tier override, or it won\'t allocate in ' + nsKey + '.';
+  if (tier && !deliv) return nsKey + ' has a store group but no delivery — set an NS delivery override, or it reads as out of season in ' + nsKey + '.';
+  return '';
 }
 
 // One-time, idempotent, non-destructive migration of a single override record.
@@ -5745,7 +5805,7 @@ function computeAllRows(lookups) {
     const status = computeStatus({
       sku, fp_md, is_md, alloc_date, new_cf,
       cs_deliv1: deliv_to_use,
-      ns_deliv1: ns_deliv1_val,
+      ns_deliv1: effNsDelivForStatus(sku, ns_deliv1_val),   // [p7z10]
       deliv_alloc_date, force_ia, syrup_ia, syrup_rp, syrupCfg,
       cs_lifecycle: cfg.lifecycle || '', omni_oh, tier_oh,
       plg_oh, effective_tier: eff_tier_for_status,
@@ -6218,6 +6278,7 @@ function computeAllRows(lookups) {
       ps_tier: ps.corrTier || ps.storeTier || '',  // display value (unfiltered, for drilldown PS Tier row)
       ps_tier_ow,                                  // manual override
       ns_tier_ow: getOW(sku, 'ns_tier_ow'),        // [p7z7] next-season override
+      ns_deliv_ow: getOW(sku, 'ns_deliv_ow'),      // [p7z10]
       ps_corr_tier: ps.corrTier || '',             // PST Corrected Tier (column may not exist; usually '')
       ps_store_tier_raw: ps.storeTier || '',       // PST raw Store Tier (subject to EXCLUDED_TIERS filter for CF)
       ps_rp: ps.rollout || '',
@@ -7623,7 +7684,7 @@ function recomputeRowDerived(row) {
     alloc_date: row.alloc_date ? new Date(row.alloc_date) : null,
     new_cf: row.new_cf,
     cs_deliv1: effDeliv,
-    ns_deliv1: row.ns_deliv1 || '',
+    ns_deliv1: effNsDelivForStatus(row.sku, row.ns_deliv1 || ''),   // [p7z10]
     deliv_alloc_date: newAllocDate,
     force_ia: row.force_ia || '',
     syrup_ia: row.syrup_ia || 0, syrup_rp: row.syrup_rp || 0,
@@ -8079,10 +8140,7 @@ function applyFiltersAndRender() {
     // so a retiered orphan (e.g. a SP26-only SKU overwritten to a CS tier +
     // delivery) shows in the config-season view.
     if (DISPLAY_SEASON !== ALL_SEASONS) {
-      const vs = r.seasons && r.seasons[DISPLAY_SEASON];
-      let present = !!(vs && vs.hasPST);
-      if (!present && DISPLAY_SEASON === CONFIG_SEASON && (r.tier_ow || r.deliv_ow)) present = true;
-      if (!present) return false;
+      if (!seasonPresent(r, DISPLAY_SEASON)) return false;   // [p7z10] one presence rule
     }
     // Global text search
     if (SEARCH) {
@@ -9241,7 +9299,9 @@ function openDrilldown(sku) {
       ['Delivery Override', 'deliv_ow', getOW(sku, 'deliv_ow'), 'delivery'],
       ['Tier Override (CS)', 'tier_ow', getOW(sku, 'tier_ow'), 'tier'],
       ['PS Tier Override', 'ps_tier_ow', getOW(sku, 'ps_tier_ow'), 'tier'],
+      ...(owNextKey() ? [[`Delivery Override (NS · ${owNextKey()})`, 'ns_deliv_ow', getOW(sku, 'ns_deliv_ow'), 'delivery']] : []),   // [p7z10]
       ...(owNextKey() ? [[`Tier Override (NS · ${owNextKey()})`, 'ns_tier_ow', getOW(sku, 'ns_tier_ow'), 'tier']] : []),   // [p7z7]
+      ...(nsHalfSetWarning(row) ? [['__warn__', '__warn__', nsHalfSetWarning(row), 'warn']] : []),   // [p7z10]
       ['Force IA — "Y" (forces Newness + IA config dates)', 'force_ia', getOW(sku, 'force_ia'), 'text'],
       ['End Date OW — date, "+13w", or "INDEF"', 'end_ow', fmtEndOWDisplay(getOW(sku, 'end_ow')), 'text'],
     ]},
@@ -9370,7 +9430,7 @@ function openDrilldown(sku) {
   const ddS = (row.seasons && row.seasons[ddSeasonKey]) || {};
   const ddSeasonTitle = 'SEASON — ' + ddSeasonKey + (ddSeasonKey === CONFIG_SEASON ? ' (working)' : '');
   const ddNum = v => (v || v === 0) ? String(v) : '—';
-  if (ddS.hasPST) {
+  if (seasonPresent(row, ddSeasonKey)) {   // [p7z10] PST or season-scoped override
     // [p7t] This section used to restate Delivery / Store Group / Lifecycle /
     // End Week / On-Time verbatim from the sections above it — those are the
     // SAME source fields (seasonProjection reads this very slice), except the
@@ -9385,12 +9445,15 @@ function openDrilldown(sku) {
     // drops are expressed as September / September_2 in the delivery column.
     const ddRows = [];
     if (!ddIsConfig) {
-      ddRows.push(['Delivery', ddS.deliv1 || '—']);
+      { const _pd = seasonProjection(row, ddSeasonKey);   // [p7z10] override-aware
+        ddRows.push(['Delivery', _pd.v_deliv1
+          ? (_pd.v_deliv1_ovr ? `<span style="color:var(--orange);font-weight:500">${sgEsc(_pd.v_deliv1)}</span> <span style="color:var(--orange);font-weight:500">(override)</span>` + sgWasLine(_pd.v_deliv1_prev) : sgEsc(_pd.v_deliv1))
+          : '—']); }
       // [p7z7] Store Group / Store Count / Category follow the projection, which
       // is NS-override-aware — so an NS retier shows here with its own count.
       { const _pv = seasonProjection(row, ddSeasonKey);
         const _t  = String(_pv.v_tier || '').trim();
-        const _dv = (ddS.deliv1 || row.deliv_ow || row.cs_deliv1);
+        const _dv = (_pv.v_deliv1 || row.deliv_ow || row.cs_deliv1);
         ddRows.push(['Store Group (Tier)', _t
           ? sgValueSpan(sgEsc(_t), _t, _dv, _pv.v_tier_ovr ? 'color:var(--orange);font-weight:500' : '', '', ddSeasonKey)
             + (_pv.v_tier_ovr ? ` <span style="color:var(--orange);font-weight:500">(override)</span>` + sgWasLine(_pv.v_tier_prev) : '')
@@ -9474,6 +9537,10 @@ function openDrilldown(sku) {
       rows.forEach(r => {
         if (editable) {
           const [lbl, field, val, inputType] = r;
+          if (inputType === 'warn') {   // [p7z10]
+            bodyHtml += `<div class="dd-note" style="color:var(--orange)">⚠ ${val}</div>`;
+            return;
+          }
           let inputHtml;
           if (inputType === 'tier') {
             // [p7z7] NS override reads/validates against the NS season's matrix
@@ -9503,7 +9570,7 @@ function openDrilldown(sku) {
             >`;
           } else if (inputType === 'delivery') {
             const opts = getFlowCalOptions();
-            const pst = row.cs_deliv1 || '';
+            const pst = (field === 'ns_deliv_ow') ? (row.ns_deliv1 || '') : (row.cs_deliv1 || '');   // [p7z10]
             const isOv = val && val !== '';
             const optHtml = `<option value="">${pst ? pst + ' (PST)' : '— none —'}</option>`
               + opts.map(o => `<option value="${o}"${val===o?' selected':''}>${o}</option>`).join('');
@@ -9802,6 +9869,7 @@ function saveOverride(sku, field) {
   // [p7z7] ns_tier_ow validates against the NS matrix and rejects the PS-only
   // None/CF sentinels (on the roll it becomes the CS override, where those
   // sentinels mean nothing useful).
+  if (field === 'ns_deliv_ow' && !owNextKey()) { showToast('No next season is configured — NS delivery override unavailable', 2800); return; }   // [p7z10]
   if (field === 'ns_tier_ow') {
     if (!owNextKey()) { showToast('No next season is configured — NS tier override unavailable', 2800); return; }
     const up0 = val.toUpperCase();
@@ -9870,7 +9938,7 @@ function saveOverride(sku, field) {
     // dependents (new_cf / deliv_alloc_date / status / on-time) so a delivery
     // edit also updates the in-season gate, a tier edit updates new_cf, and
     // a PS tier edit updates the CF tag.
-    if (field === 'tier_ow' || field === 'deliv_ow' || field === 'ps_tier_ow' || field === 'ns_tier_ow' || field === 'force_ia' || field === 'end_ow') {
+    if (field === 'tier_ow' || field === 'deliv_ow' || field === 'ps_tier_ow' || field === 'ns_tier_ow' || field === 'ns_deliv_ow' || field === 'force_ia' || field === 'end_ow') {
       recomputeRowDerived(row);   // [p7z7] ns_tier_ow: NS-only Status branch reads the effective NS tier
       console.log(`[${field}-DD] ${sku} → "${val||'(cleared)'}" | new_cf=${row.new_cf} | status=${row.status} | newnessProj=${row.newness_proj}`);
     }
@@ -10480,6 +10548,28 @@ function openBulkNotesModal() {
 
   // [p7z7] Populate NS tier dropdown from the NS season's own matrix.
   { const _ns = document.getElementById('bulkNSTierSelect'); if (_ns) _ns.value = '__noop__'; }   // fresh open
+  // [p7z10] NS delivery dropdown — Flow Cal months, same as the CS delivery list.
+  {
+    const wrap = document.getElementById('bulkNSDelivWrap');
+    const sel  = document.getElementById('bulkNSDelivSelect');
+    const lbl  = document.getElementById('bulkNSDelivLabel');
+    const nsK  = owNextKey();
+    if (wrap) wrap.style.display = nsK ? '' : 'none';
+    if (sel) {
+      sel.innerHTML = `<option value="__noop__">— No NS delivery change —</option>`
+        + `<option value="__clear__" style="font-style:italic;color:var(--orange)">⊘ Clear NS delivery override (revert to ${nsK || 'NS'} PST delivery)</option>`;
+      const fm = window._flowCalMap || {};
+      (typeof getFlowCalOptions === 'function' ? getFlowCalOptions() : []).forEach(code => {
+        const o = document.createElement('option');
+        const ad = fm[code] && fm[code].allocDate;
+        o.value = code;
+        o.textContent = (ad instanceof Date) ? `${code} (${ad.getMonth()+1}/${ad.getDate()})` : code;
+        sel.appendChild(o);
+      });
+      sel.value = '__noop__';
+    }
+    if (lbl && lbl.firstChild && nsK) lbl.firstChild.nodeValue = `NS Delivery override · ${nsK} `;
+  }
   // [p7z8] Note season target — working season by default, NS for pre-season config notes.
   {
     const nsSel = document.getElementById('bulkNoteSeason');
@@ -11530,7 +11620,7 @@ function nsCfgCompute(row, notesStore, nsKeyArg) {
   const nsKey = (nsKeyArg === undefined) ? owNextKey() : nsKeyArg;
   if (!nsKey || !row || !row.seasons) return row;
   const ns = row.seasons[nsKey];
-  if (!ns || !ns.hasPST) return row;
+  if (!ns || !seasonPresent(row, nsKey)) return row;   // [p7z10] PST or NS override
   const csKey = CONFIG_SEASON;
   const cs = row.seasons[csKey] || {};
   const sku = row.sku;
@@ -11888,6 +11978,8 @@ function runBulkUpdate() {
   const psTierVal = document.getElementById('bulkPSTierSelect').value;
   const _nsSel = document.getElementById('bulkNSTierSelect');                       // [p7z7]
   const nsTierVal = (_nsSel && owNextKey()) ? _nsSel.value : '__noop__';
+  const _nsdSel = document.getElementById('bulkNSDelivSelect');                     // [p7z10]
+  const nsDelivVal = (_nsdSel && owNextKey()) ? _nsdSel.value : '__noop__';
   const delivVal = document.getElementById('bulkDelivSelect').value;
   const skusUpper = parseBulkSkus(raw);
 
@@ -11897,8 +11989,9 @@ function runBulkUpdate() {
   const wantTier   = tierVal   !== '__noop__';
   const wantPSTier = psTierVal !== '__noop__';
   const wantNSTier = nsTierVal !== '__noop__';   // [p7z7]
+  const wantNSDeliv = nsDelivVal !== '__noop__'; // [p7z10]
   const wantDeliv  = delivVal  !== '__noop__';
-  if (!wantNote && !wantTier && !wantPSTier && !wantNSTier && !wantDeliv) {
+  if (!wantNote && !wantTier && !wantPSTier && !wantNSTier && !wantNSDeliv && !wantDeliv) {
     showToast('Nothing to apply — fill in a note, a CS/NS/PS tier or delivery override, or any combination');
     return;
   }
@@ -11998,6 +12091,24 @@ function runBulkUpdate() {
     });
   }
 
+  // ── Step 1b3: NS Delivery override (if requested) [p7z10] ─────────────────
+  let nsDelivApplied = 0;
+  if (wantNSDeliv) {
+    const isClear = nsDelivVal === '__clear__';
+    valid.forEach(sku => {
+      const row = ALL_ROWS.find(r => r.sku === sku);
+      if (!row) return;
+      const v = isClear ? '' : nsDelivVal;
+      setOW(sku, 'ns_deliv_ow', v);
+      row.ns_deliv_ow = v;
+      recomputeRowDerived(row);
+      nsDelivApplied++;
+    });
+  }
+  const nsHalfSet = (wantNSDeliv || wantNSTier) ? valid.filter(sku => {
+    const r = ALL_ROWS.find(x => x.sku === sku); return r && nsHalfSetWarning(r);
+  }) : [];
+
   // ── Step 1c: Delivery override (if requested) ─────────────────────────────
   // Set or clear deliv_ow for each SKU. Delivery changes ripple through the
   // resolver's deliv_to_use → deliv_alloc_date → calc_start chain, which is
@@ -12024,7 +12135,7 @@ function runBulkUpdate() {
     });
   }
 
-  if (wantTier || wantPSTier || wantNSTier || wantDeliv) {
+  if (wantTier || wantPSTier || wantNSTier || wantNSDeliv || wantDeliv) {
     persistManualOW();
   }
 
@@ -12049,7 +12160,7 @@ function runBulkUpdate() {
     // Per-SKU config recompute for the ISS branch (no-op for non-ISS notes
     // beyond the table re-render, but cheap enough to call uniformly)
     valid.forEach(sku => recomputeConfigFlagForSku(sku));
-  } else if (wantTier || wantPSTier || wantNSTier || wantDeliv) {
+  } else if (wantTier || wantPSTier || wantNSTier || wantNSDeliv || wantDeliv) {
     // Even without a note, we need a single re-render to repaint pills
     if (typeof applyFiltersAndRender === 'function') applyFiltersAndRender();
   }
@@ -12091,6 +12202,10 @@ function runBulkUpdate() {
     const verb = nsTierVal === '__clear__' ? 'cleared on' : 'set on';
     parts.push(`NS (${owNextKey()}) tier ${verb} ${nsTierApplied}`);
   }
+  if (wantNSDeliv) {   // [p7z10]
+    const verb = nsDelivVal === '__clear__' ? 'cleared on' : `set to ${nsDelivVal} on`;
+    parts.push(`NS (${owNextKey()}) delivery ${verb} ${nsDelivApplied}`);
+  }
   if (wantDeliv) {
     const verb = delivVal === '__clear__' ? 'cleared on' : `set to ${delivVal} on`;
     parts.push(`Delivery ${verb} ${delivApplied}`);
@@ -12098,7 +12213,11 @@ function runBulkUpdate() {
   let msg = parts.join(' · ');
   if (flippedCount > 0) msg += ` · ${flippedCount} Config Status flipped`;
   if (skipped > 0)     msg += ` (${skipped} not found)`;
-  showToast(msg, 4500);
+  if (nsHalfSet && nsHalfSet.length) {   // [p7z10]
+    msg += ` · ⚠ ${nsHalfSet.length} still need the other half (NS tier or delivery)`;
+    console.warn('[BulkUpdate] ' + owNextKey() + ' override is half-set (needs both a delivery and a tier) on: ' + nsHalfSet.join(', '));
+  }
+  showToast(msg, nsHalfSet && nsHalfSet.length ? 6500 : 4500);
 }
 
 // Keep the old name as a thin alias so any stale references still work
