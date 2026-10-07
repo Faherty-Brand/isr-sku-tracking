@@ -1078,7 +1078,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover (p7z12)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse (p7z13)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -3688,6 +3688,32 @@ function findFile(files, name) {
   return files.find(f => f.name.toLowerCase() === low || f.name.toLowerCase().includes(low.replace(/\.[^.]+$/, '')));
 }
 
+// [p7z13] Shared number parser for spreadsheet values.
+// readXLSX uses raw:false, so numeric cells arrive as their DISPLAY text —
+// a #,##0 cell holding 1920 comes through as "1,920". parseFloat stops at the
+// first comma and silently returns 1; Number() returns NaN. toNum strips
+// thousands separators, spaces and $ first, and reads (123) as -123.
+// WIP / Newness / Safety Stock already strip commas inline; this is the
+// shared version for everything else (PST buy fields, NF Review, EOL, sorts).
+function toNum(v) {
+  if (typeof v === 'number') return isFinite(v) ? v : 0;
+  if (v == null) return 0;
+  let s = String(v).trim();
+  if (!s) return 0;
+  const neg = /^\(.*\)$/.test(s);
+  s = s.replace(/^\((.*)\)$/, '$1').replace(/[,\s$]/g, '');
+  const n = parseFloat(s);
+  if (!isFinite(n)) return 0;
+  return neg ? -n : n;
+}
+// True when a value is a plain number once separators are stripped
+// ("1,920", "$45.50", "(12)", 960). Used to sanity-check parsed fields.
+function isNumLike(v) {
+  if (typeof v === 'number') return isFinite(v);
+  const s = String(v == null ? '' : v).trim().replace(/^\((.*)\)$/, '$1').replace(/[,\s$]/g, '');
+  return /^-?\d+(\.\d+)?$/.test(s);
+}
+
 async function readXLSX(file) {
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, {type:'array', cellDates:true, dense:true});
@@ -4374,6 +4400,27 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
       }
     }
   }
+
+  // [p7z13] Numeric-field audit: count comma-formatted values (the ones the
+  // old parseFloat read as their first digit group) and flag anything that
+  // still won't parse, so a format change in the PST surfaces in F12.
+  (function(){
+    const fields = ['finalBuy','onlineFinalBuy','apsFinal','minBuy','storeCount','weeksBought'];
+    const commas = {}, bad = {}, badEx = {};
+    fields.forEach(f => { commas[f] = 0; bad[f] = 0; badEx[f] = []; });
+    Object.values(pstBySeasonSku).forEach(o => {
+      fields.forEach(f => {
+        const v = o[f];
+        if (v === '' || v == null) return;
+        if (String(v).indexOf(',') !== -1) commas[f]++;
+        if (!isNumLike(v)) { bad[f]++; if (badEx[f].length < 5) badEx[f].push(o.sznSku + '="' + v + '"'); }
+      });
+    });
+    console.log('[PST/num] comma-formatted values parsed whole: ' + fields.map(f => f + '=' + commas[f]).join(' | '));
+    const badFields = fields.filter(f => bad[f] > 0);
+    if (badFields.length) console.warn('[PST/num] ⚠ Non-numeric values (treated as 0): ' + badFields.map(f => f + '=' + bad[f] + ' e.g. ' + badEx[f].join(', ')).join(' || '));
+    else console.log('[PST/num] All buy/APS/min/store/weeks values parse cleanly');
+  })();
 
   console.log(`[PST] Indexed — CS:"${SEASONS.cs}"=${Object.keys(pstBySku.cs).length} SKUs | NS:"${SEASONS.ns}"=${Object.keys(pstBySku.ns).length} | PS:"${SEASONS.ps}"=${Object.keys(pstBySku.ps).length}`);
   // Warn if CS is empty — most common root cause of blank rows
@@ -6504,7 +6551,7 @@ function computeCalcEndDate({calc_start, new_cf, md_exit, weeks_bought, end_ow})
   if (!calc_start) return null;
   if (new_cf === 'CF') return CFG_INFINITY_DATE;
   const exitStr = String(md_exit || '').trim().toUpperCase();
-  const wks = parseFloat(weeks_bought) || 0;
+  const wks = toNum(weeks_bought);
   if (exitStr === 'NONE' || wks === 0) return CFG_INFINITY_DATE;
   return _addDays(calc_start, wks * 7);
 }
@@ -6622,7 +6669,7 @@ function configDateParts({
   const ah = alloc_date       instanceof Date ? alloc_date       : null;
 
   const exitStr = String(md_exit || '').trim().toUpperCase();
-  const wks = parseFloat(weeks_bought) || 0;
+  const wks = toNum(weeks_bought);
   const hasFiniteDuration = (exitStr !== 'NONE' && wks > 0);
 
   let startOk, endOk;
@@ -6891,7 +6938,7 @@ window.dbgConfigDate = function(sku) {
     console.log(`CF-relaxed start check (syrup_start ≤ ceiling): ${startOk}`,
       startOk ? '→ start passes' : '→ start fails (Syrup gating CF behind future date)');
     const exitStr = String(row.cs_md_exit || row._cs_md_exit_raw || '').trim().toUpperCase();
-    const wks = parseFloat(row.cs_weeks_bought) || 0;
+    const wks = toNum(row.cs_weeks_bought);
     const hasFiniteDuration = (exitStr !== 'NONE' && wks > 0);
     if (sameDay(syrupEndObj, calc_end)) {
       console.log(`  End check: matches infinity sentinel → end passes`);
@@ -6925,7 +6972,7 @@ window.dbgConfigDate = function(sku) {
       console.log(`  syrup_start=${fmt(syrupStartObj)} | > today+${CFG_HOLD_LEAD_DAYS}d (${fmt(leadEdge)}): ${c1} | ≥ AJ+11 (${fmt(floor)}): ${c2} | > future pend (${fmt(pendF)}): ${c3}  →  start ${c1&&c2&&c3?'passes':'fails'}`);
       if (String(row.end_ow||'').trim()) console.log('  End Date Override active → held-start rule waived (start passes regardless)');
       const exitStr = String(row.cs_md_exit || row._cs_md_exit_raw || '').trim().toUpperCase();
-      const wks = parseFloat(row.cs_weeks_bought) || 0;
+      const wks = toNum(row.cs_weeks_bought);
       const expectsInfinity = (exitStr === 'NONE' || wks === 0);
       if (expectsInfinity) {
         console.log(`  End check: strict (md_exit/weeks → infinity expected). sameDay=${sameDay(syrupEndObj, calc_end)}`);
@@ -8315,7 +8362,10 @@ function openColFilter(colId) {
     // is 9, so every September date tied and kept raw row order.
     const dc = cmpFilterDates(a, b);
     if (dc !== null) return dc;
-    const an = parseFloat(a), bn = parseFloat(b);
+    // [p7z13] "1,920" sorted as 1 under plain parseFloat; read comma-formatted
+    // numbers whole. Non-numeric text keeps the old parseFloat behaviour.
+    const an = isNumLike(a) ? toNum(a) : parseFloat(a);
+    const bn = isNumLike(b) ? toNum(b) : parseFloat(b);
     if (!isNaN(an) && !isNaN(bn)) return an - bn;
     return a.localeCompare(b);
   });
@@ -14284,7 +14334,7 @@ function renderLateListTable() {
           return `<td class="ll-td num" title="WIP in-DC date ${row.pend_indc_date} has passed and the IA ask is not funded — WIP likely not updated"><span class="ll-days-late">${v}d</span></td>`;
         }
         if (col.id === 'missing_qty' || col.id === 'ia_qty' || col.id === 'recv_qty' || col.id === 'qty_ordered') {
-          const n = parseFloat(v)||0;
+          const n = toNum(v);
           const color = col.id==='missing_qty' ? 'color:var(--orange)' : '';
           return `<td class="ll-td num" style="${color}">${n.toLocaleString()}</td>`;
         }
@@ -15088,7 +15138,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
 
   // ---- helpers ----
   function nfEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-  function num(v){ var n = parseFloat(v); return isFinite(n) ? n : 0; }
+  function num(v){ return toNum(v); }   // [p7z13] comma-safe ("1,920" → 1920, was 1)
   function round1(n){ return Math.round(n*10)/10; }
   function monthKey(s){
     s = String(s||'').trim().toLowerCase().replace(/_\d+$/,'');
@@ -17547,7 +17597,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     return String(v == null ? '' : v)
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
-  function num(v){ var n = Number(v); return isFinite(n) ? n : 0; }
+  function num(v){ return toNum(v); }   // [p7z13] comma-safe ("1,920" → 1920, was 0)
   function fmtN(v){ return num(v).toLocaleString(); }
 
   // Delegates to the shared predicate so this tab and the date check agree on
