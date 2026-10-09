@@ -1078,7 +1078,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf (p7z14)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv (p7z15)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -6100,7 +6100,12 @@ function computeAllRows(lookups) {
       config_ct_status = 'Dropped';
       config_ct_reason = adjInfo.matched.find(n => /^DROP\b/i.test((n.text||'').trim()))?.text
                        || adjInfo.matched[0].text;
-    } else if (!cs_deliv1 || cs_store_ct === 0) {
+    } else if (!deliv_to_use || cs_store_ct === 0) {
+      // [p7z15] Gate on the EFFECTIVE delivery (deliv_ow → PST, honoring the
+      // "None" sentinel), not raw PST cs_deliv1. A SKU whose config-season
+      // delivery exists only as an override was early-outing here to "Correct"
+      // on every full build, skipping the count check entirely. Must match
+      // recomputeRowDerived (effDeliv) and recomputeConfigFlagForSku.
       // NOT ACTIVE this season: no current-season delivery, or the effective
       // tier resolves to 0 retail stores (this also covers excluded tiers like
       // Online Only / Partnership / Wholesale Exclusive, which aren't matrix
@@ -9927,7 +9932,12 @@ function recomputeConfigFlagForSku(sku) {
     ctReason = adjInfo.matched.find(n => /^DROP\b/i.test((n.text||'').trim()))?.text
              || adjInfo.matched[0].text;
   }
-  else if (!row.cs_deliv1 || expected === 0) ctStatus = hasCfg ? 'Correct' : '—';
+  // [p7z15] Effective delivery (override-aware), same as recomputeRowDerived.
+  // row.cs_deliv1 is the raw PST value, so gating on it alone sent
+  // override-only SKUs back to "Correct" whenever their notes were edited.
+  else if (!((typeof window.resolveEffDeliv === 'function')
+              ? window.resolveEffDeliv(row.deliv_ow, row.cs_deliv1)
+              : (row.deliv_ow || row.cs_deliv1 || '')) || expected === 0) ctStatus = hasCfg ? 'Correct' : '—';
   else if (adjInfo.hasAdj) {
     ctStatus = 'Adjusted';
     ctReason = adjInfo.matched[0].text;
