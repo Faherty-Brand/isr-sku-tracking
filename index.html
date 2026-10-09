@@ -1078,7 +1078,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse (p7z13)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf (p7z14)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -3254,7 +3254,76 @@ function seasonProjection(row, key){
   v.v_mx_note      = mx.note || '';
   v.v_mx_category  = mxCategoryLabel(mx);   // [p7z] plain string — filters/CSV pass it through
   v.v_mx_uncat     = (mx.state === 'ok' && !mx.category);   // [p7z2] group exists, category missing
+  // [p7z14] New/CF for THIS season. The config season keeps row.new_cf (the
+  // value that drives status + Syrup configs); every other season is
+  // classified against the season immediately before it. See seasonNewCF.
+  v.v_new_cf = isConfig ? (row.new_cf || '') : seasonNewCF(row, key, v);
   return v;
+}
+
+// ── [p7z14] Season-aware New/CF ──────────────────────────────────────────────
+// ROOT CAUSE this fixes: the grid's New/CF column read row.new_cf, which is
+// anchored to the WORKING season (FA26): gated on the FA26 delivery and decided
+// by the FA26-vs-SU26 (PS) tier. Switching the grid to HO26 re-projected every
+// other season column but not this one, so in the HO26 view
+//   • an FA26 Newness SKU continuing into HO26 still read "Newness" (it's CF
+//     in HO26), and
+//   • a SKU new to HO26 with no FA26 delivery read blank (row.new_cf is gated
+//     on the working-season delivery), so it fell out of the Newness filter.
+//
+// Rule, for any season X other than the working season (same rule the working
+// season uses, shifted one season):
+//   gate   — X needs an effective delivery and an allocating effective tier
+//            (the values the grid shows for X: v_deliv1 / v_tier, override-
+//            aware). Otherwise ''.
+//   Force IA set on X                                  -> Newness
+//   prior-season tier override "None"                  -> Newness
+//   prior-season tier override "CF"/"Carry Forward"    -> CF
+//   any other prior-season tier override               -> CF
+//   prior season corrected tier                        -> CF
+//   prior season raw store tier, if it allocates       -> CF
+//   else                                               -> Newness
+//   prior season not loaded (earliest display season)  -> '' — we can't see
+//            whether it existed before, so we don't guess.
+// PARITY: for the next season this is exactly nsCfgCompute's ns_cfg_new_cf
+// (working season in the PS role, its tier_ow/corr/raw tier, NS Force IA), so
+// the grid and the NS pre-season config lane can't disagree.
+// Pure: reads row + overrides, mutates nothing. Config/Syrup logic still reads
+// row.new_cf only.
+function seasonPrevLoadedId(key){
+  var i = SEASON_SEQUENCE.indexOf(key);
+  if (i <= 0) return null;
+  var prev = SEASON_SEQUENCE[i - 1];
+  var loaded = SEASON_REGISTRY.some(function(sn){ return sn.id === prev; })
+            || (EXTRA_DISPLAY_SEASONS || []).indexOf(prev) !== -1;
+  return loaded ? prev : null;
+}
+function seasonNewCF(row, key, v){
+  if (!row || !key) return '';
+  if (key === CONFIG_SEASON) return row.new_cf || '';
+  v = v || seasonProjection(row, key);
+  var deliv = String(v.v_deliv1 || '').trim();
+  var tier  = String(v.v_tier   || '').trim().toUpperCase();
+  if (!deliv || deliv.toUpperCase() === 'NONE') return '';
+  if (!tier || tier === 'NONE' || NON_ALLOC_TIERS.has(tier)) return '';
+  if (isForceIA(getOWFor(row.sku, key, 'force_ia'))) return 'Newness';
+  var prev = seasonPrevLoadedId(key);
+  if (!prev) return '';
+  var p = (row.seasons && row.seasons[prev]) || {};
+  var owRaw = String(getOWFor(row.sku, prev, 'tier_ow') || '').trim();
+  var owUp  = owRaw.toUpperCase();
+  if (owUp === 'NONE') return 'Newness';
+  if (owRaw) return 'CF';                       // incl. the CF / Carry Forward sentinel
+  if (String(p.corr_tier || '').trim()) return 'CF';
+  var raw = String(p.store_tier_raw || p.tier || '').trim();
+  return (raw && !NON_ALLOC_TIERS.has(raw.toUpperCase())) ? 'CF' : 'Newness';
+}
+// What the SKU Tracking grid shows/filters/exports for New/CF: the working
+// season reads row.new_cf live (it is recomputed in place by overrides); any
+// other displayed season reads the projected v_new_cf.
+function viewNewCF(row){
+  if (!row) return '';
+  return (seasonViewKey() === CONFIG_SEASON) ? (row.new_cf || '') : (row.v_new_cf || '');
 }
 function projectSeasonView(row){
   var v = seasonProjection(row, seasonViewKey());
@@ -8143,6 +8212,7 @@ document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeT
 //       "Off (count & date)" — both
 //     Other states (Correct / Adjusted / —) pass through unchanged.
 function getFilterValue(r, colId) {
+  if (colId === 'new_cf') return viewNewCF(r);   // [p7z14] follows the season toggle
   if (colId === 'cs_tier') return (r.tier_ow || r.cs_tier || '').trim();
   // ps_tier filter follows the override-aware display: if ps_tier_ow is set,
   // filter sees the override (including the CF/None sentinels). Without this,
@@ -8184,7 +8254,7 @@ function applyFiltersAndRender() {
       if (sv === 'N/A'        && !r.status.includes('N/A: Do Not'))    return false;
       if (sv === 'MD'         && !r.status.includes('Out of Szn'))     return false;
     }
-    if (!typeF && !FILTER_TYPE.has(r.new_cf || 'other')) return false;
+    if (!typeF && !FILTER_TYPE.has(viewNewCF(r) || 'other')) return false;   // [p7z14] season-aware
     // Season filter (Phase 2) — hide SKUs with no PST for the displayed season.
     // Suppressed in "All Seasons" mode. Exception: in the config season a CS
     // tier/delivery override makes an otherwise-absent SKU effectively present,
@@ -8591,15 +8661,22 @@ const STATUS_CLASS = {
 // New/CF column filter both key off r.new_cf, so encoding the forced state into
 // the string ('Newness (Forced)') would fragment both filters and split the
 // Newness bucket in two. The forced state is carried purely as a visual affix.
-function newCfPillHtml(row){
-  var v = row && row.new_cf;
+// [p7z14] useView=true (grid cell + inline repaint) follows the grid's season
+// toggle via viewNewCF; the drilldown's Status & Allocation section omits it and
+// keeps showing the working-season value it is labelled with.
+function newCfPillHtml(row, useView){
+  var key = useView ? seasonViewKey() : CONFIG_SEASON;
+  var v = useView ? viewNewCF(row) : (row && row.new_cf);
   if (!v) return '<span class="muted-cell">—</span>';
   var cls = v === 'Newness' ? 'pill-purple' : v === 'CF' ? 'pill-blue' : 'pill-muted';
-  var affix = isForceIA(row.force_ia)
+  var fia = (key === CONFIG_SEASON) ? row.force_ia : getOWFor(row.sku, key, 'force_ia');
+  var affix = isForceIA(fia)
     ? ' <span title="Force IA is on: PS tier suppressed, config dates generated as Newness"'
       + ' style="font-size:11px;color:var(--orange);font-weight:700;cursor:help">&#9889;</span>'
     : '';
-  return '<span class="pill ' + cls + '">' + v + '</span>' + affix;
+  var tip = (key === CONFIG_SEASON) ? ''
+    : ' title="' + key + ' classification — vs ' + (seasonPrevLoadedId(key) || '?') + '"';
+  return '<span class="pill ' + cls + '"' + tip + '>' + v + '</span>' + affix;
 }
 
 function statusClass(s) {
@@ -9085,7 +9162,7 @@ function renderPage() {
           : 'pill-yellow';
         return `<td><span class="pill ${cls}">${v}</span></td>`;
       }
-      if (id === 'new_cf') return `<td>${newCfPillHtml(row)}</td>`;
+      if (id === 'new_cf') return `<td>${newCfPillHtml(row, true)}</td>`;
       if (id === 'config_status') {
         return `<td>${renderConfigStatusPill(row)}</td>`;
       }
@@ -10492,7 +10569,7 @@ function refreshDependentCells(tr, row) {
       cell.innerHTML = renderSSOffCell(row);
     }
     if (id === 'new_cf') {
-      cell.innerHTML = newCfPillHtml(row);
+      cell.innerHTML = newCfPillHtml(row, true);   // [p7z14] season-aware
     }
     if (id === 'status') {
       cell.innerHTML = `<span class="pill ${statusClass(row.status)}">${row.status||'—'}</span>`;
@@ -12399,6 +12476,7 @@ function csvCellsFor(row, id) {
   }
 
   if (id === 'v_mx_store_ct') return [mxStoreCtLabel(row) ?? ''];   // [p7y]
+  if (id === 'new_cf') return [viewNewCF(row)];   // [p7z14] matches the grid's season view
 
   const map = CSV_VALUE_OVERRIDE[id];
   const raw = row[id] ?? '';
