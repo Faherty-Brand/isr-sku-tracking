@@ -1079,7 +1079,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route (p7z16)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix (p7z17)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -2619,6 +2619,9 @@ function seasonMatrixChanged(id) {
   try {   // [p7z11] Store Matrix tab, when it is showing this season
     if (typeof window.smSeasonMatrixChanged === 'function') window.smSeasonMatrixChanged(id);
   } catch (e) { console.warn('[SeasonMatrix] Store Matrix tab repaint failed', e); }
+  try {   // [p7z17] NF Review, when it is showing this season
+    if (typeof window.nfSeasonMatrixChanged === 'function') window.nfSeasonMatrixChanged(id);
+  } catch (e) { console.warn('[SeasonMatrix] NF Review repaint failed', e); }
 }
 
 // Called by buildFromParsed: adopt payloads that rode in with the bundle, then
@@ -15398,9 +15401,29 @@ tr.nf-strow-shifted {background:#DBEAFE}
     for (var i=0;i<MONTHS.length;i++){ var m=MONTHS[i]; if (m===s || m.slice(0,3)===s.slice(0,3)) return m.charAt(0).toUpperCase()+m.slice(1); }
     return s.charAt(0).toUpperCase()+s.slice(1);
   }
-  function tierMap(deliv){
-    try { return (typeof window.getTierToStoreCount === 'function') ? (window.getTierToStoreCount(deliv) || {}) : {}; }
-    catch(e){ return {}; }
+  // [p7z17] Season-aware tier→store-count map. The config season keeps reading
+  // the app-wide matrix (getTierToStoreCount) exactly as before. Any other NF
+  // season reads THAT season's roster from Lauren's app (HO26 → Q4 2026) via
+  // the shared per-season cache — same source as the main grid's Season-block
+  // Store Count and the Store Group popover. Deliberately NO fallback to the
+  // config-season matrix while it loads / if it is unavailable: an empty map
+  // (Stores falls back to PST, else 0, and the subtitle says why) beats a
+  // plausible wrong-quarter count.
+  function nfMatrixState(season){
+    if (!season || season === CONFIG_SEASON) return 'ready';
+    try { return seasonMatrixFor(season).state || 'idle'; } catch(e){ return 'unavailable'; }
+  }
+  function tierMap(deliv, season){
+    try {
+      if (!season || season === CONFIG_SEASON)
+        return (typeof window.getTierToStoreCount === 'function') ? (window.getTierToStoreCount(deliv) || {}) : {};
+      var m = seasonMatrixFor(season);
+      if (m.state === 'ready') return m.tierToStoreCount || {};
+      // Kick a fetch only from 'idle'. Re-kicking from 'unavailable' would loop:
+      // fetch fails → seasonMatrixChanged → nfRefresh → fetch again → …
+      if (m.state === 'idle') ensureSeasonMatrix(season);
+      return {};
+    } catch(e){ return {}; }
   }
   function sizeCtFor(scale){
     var ms = window.MASTER_SIZES || {};
@@ -15655,7 +15678,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var overridden = (dropped && stored.status && stored.status !== 'released') ? stored.status : '';
     var sizeCt = sizeCtFor(slice.size_scale);
     var baseTier = String(slice.tier||'').trim();
-    var tmap = tierMap(deliv);
+    var tmap = tierMap(deliv, NF_SEASON);   // [p7z17] NF season's matrix, not always the config season's
     // Store Tier follows the tier override when set — a retier from the grid/side
     // panel pulls into NF as the Store Tier and drives the effective tier.
     // [p7k] resolved via the canonical season-scoped resolver instead of reading
@@ -15769,7 +15792,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
       // [nf-release-p6i] diagnostics for nfWhy()
       whyNot: whyNot, inLog: inLog, logTs: _rel.logTs, ownTs: _rel.ownTs, bar: _rel.bar,
       storedStatus: stored.status || '',
-      _tmap: tmap
+      _tmap: tmap,
+      mxState: nfMatrixState(NF_SEASON)   // [p7z17]
     };
   }
 
@@ -16050,13 +16074,18 @@ tr.nf-strow-shifted {background:#DBEAFE}
       // PST tier in the tooltip (main grid v_tier convention).
       if (r.tierOw) {
         return '<td class="l" title="PST: '+nfEsc(r.pstTier||'—')+' · Override: '+nfEsc(r.baseTier)+'">'
-          + sgValueSpan(nfEsc(r.baseTier), r.baseTier, r.delivRaw, 'color:var(--orange);font-weight:500')
+          + sgValueSpan(nfEsc(r.baseTier), r.baseTier, r.delivRaw, 'color:var(--orange);font-weight:500', '', NF_SEASON)
           + '<span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span></td>';
       }
-      return '<td class="l">'+sgValueSpan(nfEsc(r.baseTier), r.baseTier, r.delivRaw)+'</td>';
+      return '<td class="l">'+sgValueSpan(nfEsc(r.baseTier), r.baseTier, r.delivRaw, '', '', NF_SEASON)+'</td>';   // [p7z17] season-aware popover
     },
     alttier: function(r){ return '<td class="l">'+nfTierSelect(r)+'</td>'; },
-    stores: function(r){ return '<td class="nf-num">'+r.stores+'</td>'; },
+    stores: function(r){
+      // [p7z17] No number from a missing season matrix is shown as '?', not 0.
+      if (!r.stores && r.mxState && r.mxState !== 'ready')
+        return '<td class="nf-num" title="'+nfEsc(NF_SEASON)+' store matrix '+(r.mxState==='unavailable'?'unavailable':'loading')+' — counts are not borrowed from '+nfEsc(CONFIG_SEASON)+'" style="color:var(--muted)">'+(r.mxState==='unavailable'?'?':'…')+'</td>';
+      return '<td class="nf-num">'+r.stores+'</td>';
+    },
     newrec: function(r){ return '<td class="nf-newrec">'+r.newRec.toLocaleString()+'</td>'; },
     retailbuy: function(r){ return '<td class="nf-num">'+(r.retail>0?r.retail.toLocaleString():'—')+'</td>'; },
     omnibuy: function(r){ return '<td class="nf-num">'+(r.omni>0?r.omni.toLocaleString():'—')+'</td>'; },
@@ -16234,7 +16263,14 @@ tr.nf-strow-shifted {background:#DBEAFE}
       var scope = (NF_MODE === 'released')
         ? 'Released (dropped per Newness Log) · actual depth'
         : (NF_SEASON===CONFIG_SEASON?'IA-eligible':'Newness (excl. CF)');
-      if (sub) sub.textContent = scope + ' · excl. non-alloc tiers · '+NF_SEASON+' · '+recs.length+' of '+allRecs.length+' SKUs'+(nf?(' · '+nf+' filter'+(nf>1?'s':'')+' active'):'');
+      // [p7z17] which season's Store Matrix the tier columns are reading
+      var _mx = (function(){
+        if (NF_SEASON === CONFIG_SEASON) return '';
+        var st = nfMatrixState(NF_SEASON);
+        if (st === 'ready'){ var m = seasonMatrixFor(NF_SEASON); return ' · tiers: '+NF_SEASON+' matrix ('+(m.source||'?')+(m.asOf?' '+String(m.asOf).slice(0,10):'')+')'; }
+        return ' · '+NF_SEASON+' matrix '+(st==='unavailable'?'UNAVAILABLE':'loading…');
+      })();
+      if (sub) sub.textContent = scope + ' · excl. non-alloc tiers · '+NF_SEASON+' · '+recs.length+' of '+allRecs.length+' SKUs'+(nf?(' · '+nf+' filter'+(nf>1?'s':'')+' active'):'')+_mx;
       if (!_nfCloudInit){ _nfCloudInit = true; nfCloudInit(); }
     } catch(err){
       console.error('[NF] nfRefresh failed:', err);
@@ -16846,6 +16882,11 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.nfSetMode         = nfSetMode;          // [p7k] Pending / Released view mode
   window.nfShowStoreDepth  = nfShowStoreDepth;   // [p7k] per-store actual depth popover
   window.nfSetSeason  = nfSetSeason;
+  // [p7z17] called from seasonMatrixChanged() when a season's matrix lands/fails
+  window.nfSeasonMatrixChanged = function(id){
+    var panel = document.getElementById('nfPanel');
+    if (id === NF_SEASON && panel && panel.style.display !== 'none') nfRefresh();
+  };
   window.nfSetFilter  = nfSetFilter;
   window.nfSetNumFilter = nfSetNumFilter;
   window.nfOpenMulti    = nfOpenMulti;     // [p7s] multi-select column filter
