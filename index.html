@@ -351,6 +351,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .ia-skurow-tag{display:inline-block;font-family:var(--mono);font-size:9px;padding:0 5px;border-radius:8px;border:1px solid var(--border);color:var(--muted);margin-right:5px;vertical-align:1px}
 .ia-skurow-tag.conf{background:#ecfdf5;border-color:#a7f3d0;color:#15803d}
 .ia-skurow-tag.pend{background:#fffbeb;border-color:#fde68a;color:#b45309}
+.ia-skurow-tag.ns{background:#eef2ff;border-color:#c7d2fe;color:#4338ca}
 
 /* Wider stack on narrow screens — collapse cards to 1 column at <1100px */
 @media (max-width:1100px){
@@ -1078,7 +1079,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv (p7z15)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route (p7z16)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1399,6 +1400,7 @@ setTimeout(function(){
         <p><b>Bucket meanings:</b> Confirmed (≥99%, on-hand only) · Likely (80–98%) · Possible (50–79%) · Long-shot (&lt;50%).</p>
         <p><b>Roll-forward:</b> the leftover probability from <i>this</i> week's Pending SKUs. A Pending SKU with IA of 1,000 units at 85% contributes 850 units to This Week and the remaining 150 (1&nbsp;−&nbsp;0.85) to Next Week. The units aren't cancelled if the WIP misses its date — they slip. Only <b>Pending – Allocate This Week</b> SKUs generate roll-forward; on-hand ("Here") SKUs are certain and have no remainder. In the Drop Day Breakdown the same remainder lands on the <i>following</i> Tue/Thu drop.</p>
         <p><b>Excluded:</b> Pending SKUs without a WIP date (no signal to estimate from). They appear in the Risk Factors strip below.</p>
+        <p><b>Next-season SKUs:</b> a SKU that's N/A or NS Pending in the current season (e.g. Wholesale Exclusive now, a store tier next season) is placed on its <b>next-season</b> delivery — that month's Flow Cal drop date, its NS WIP date and NS on-time — and tagged with the season in the lists. It only counts if next season would allocate it (an NS delivery and an allocatable NS tier, overrides included). It clears once a Newness Log allocation lands within 6 weeks before that NS drop date. N/A SKUs with no allocatable next season are left out entirely.</p>
       </div>
     </div>
 
@@ -12718,11 +12720,14 @@ function iaOnTimeBonus(cs_ontime) {
 
 // Returns probability that a Pending SKU actually drops at its scheduled drop.
 // Returns null if SKU lacks the data to estimate (e.g., no WIP date).
-function iaPendingProb(row) {
-  if (!row.cs_dc_pend) return null; // no WIP date — caller handles separately
+function iaPendingProb(row, view) {
+  // [p7z16] Season-aware: reads the drop date / WIP date / on-time flag from the
+  // IA view (CS fields for current-season rows, NS fields for next-season rows).
+  const v = view || iaRowView(row);
+  if (!v || !v.pendStr) return null; // no WIP date — caller handles separately
 
-  const dropDate = row.deliv_alloc_date ? parseXLDate(row.deliv_alloc_date) : null;
-  let   wipDate  = parseXLDate(row.cs_dc_pend);
+  const dropDate = v.allocDate;
+  let   wipDate  = parseXLDate(v.pendStr);
   if (!dropDate || !wipDate) return null;
   // [p7x] A pending date already behind us is stale — the goods can't arrive
   // yesterday. Use today as the effective ETA so a past-due line isn't scored
@@ -12738,7 +12743,7 @@ function iaPendingProb(row) {
   const plgRatio = ia > 0 ? Math.min(plg / ia, 1) : 0;
 
   // On-time nudge
-  const adjusted = Math.max(0, Math.min(1, wipProb + iaOnTimeBonus(row.cs_ontime)));
+  const adjusted = Math.max(0, Math.min(1, wipProb + iaOnTimeBonus(v.ontime)));
 
   // Blend: guaranteed PLG + WIP-conditional remainder
   const blended = plgRatio + (1 - plgRatio) * adjusted;
@@ -12754,9 +12759,137 @@ function iaPendingProb(row) {
 }
 
 // Returns the drop Date for this SKU's scheduled allocation, or null.
-function iaDropDate(row) {
-  return row.deliv_alloc_date ? parseXLDate(row.deliv_alloc_date) : null;
+// [p7z16] Season-aware via the IA view (NS rows use their NS delivery's date).
+function iaDropDate(row, view) {
+  const v = view || iaRowView(row);
+  return v ? v.allocDate : null;
 }
+
+// ── IA season view  [p7z16] ─────────────────────────────────────────────────
+// Which season's delivery/WIP should the IA Volume tab read for this row?
+//
+//   CS — the normal case. Any row whose current-season Status is NOT N/A and NOT
+//        NS Pending is evaluated exactly as before: CS effective delivery, its
+//        Flow Cal alloc date, CS WIP, CS on-time, CS Status (for "Allocated").
+//
+//   NS — the row is out of the current season's store allocation:
+//          • Status 'N/A…'       (e.g. Wholesale Exclusive in FA26 → ALL STORES
+//                                 in HO26, like MKF2425-YSM), or
+//          • Status 'NS Pending…'(coded for next season only).
+//        It is routed onto its NEXT-season delivery instead, provided that
+//        season would actually allocate it — same gate as the NS Config
+//        (effective NS delivery AND an allocatable NS tier, both override-aware).
+//        Reads NS Flow Cal alloc date, NS WIP (ns_dc_pend/recd), NS on-time.
+//
+//   null — out of scope: N/A in CS with no allocatable NS season. Before p7z16
+//        these leaked in on their CS date (an HO26 IA qty dated to FA26 timing).
+//
+// "Allocated" for an NS row: CS Status can't say (it reads N/A / NS Pending
+// regardless), so it's derived here from the Newness Log date. An allocation
+// counts if it landed on/after (NS Flow Cal alloc date − IA_NS_EARLY_WINDOW_DAYS),
+// so an early floorset drop clears the SKU from the tab once it's logged, while
+// a months-old prior-season Newness Log date doesn't.
+const IA_NS_EARLY_WINDOW_DAYS = 42;
+
+function iaIsNonAllocTier(up) {
+  up = String(up || '').trim().toUpperCase();
+  return !!up && (NON_ALLOC_TIERS.has(up) || up.indexOf('DO NOT ALLOCATE') !== -1);
+}
+
+function iaRowView(row) {
+  if (!row) return null;
+  const st = String(row.status || '');
+  const csOut = st.indexOf('N/A') === 0 || st.indexOf('NS Pending') === 0;
+
+  if (!csOut) {
+    // Effective (override-aware) delivery month — same resolver the grid and
+    // Late List use, so a deliv_ow edit regroups the SKU here too.
+    const delivMonth = (typeof window.resolveEffDeliv === 'function')
+      ? (window.resolveEffDeliv(row.deliv_ow, row.cs_deliv1) || '')
+      : (row.deliv_ow || row.cs_deliv1 || '');
+    return {
+      scope: 'CS',
+      season: (typeof CONFIG_SEASON !== 'undefined' ? CONFIG_SEASON : ''),
+      status: row.status,
+      delivMonth,
+      allocDate: row.deliv_alloc_date ? parseXLDate(row.deliv_alloc_date) : null,
+      pendStr: row.cs_dc_pend || '',
+      recdStr: row.cs_dc_recd || '',
+      ontime: row.cs_ontime || '',
+    };
+  }
+
+  // ── NS routing ──
+  const nsKey = (typeof owNextKey === 'function') ? owNextKey() : null;
+  if (!nsKey || !row.seasons) return null;
+  if (typeof seasonPresent === 'function' && !seasonPresent(row, nsKey)) return null;
+  const nsDeliv = effDelivFor(row, nsKey);
+  const nsTier  = effTierFor(row, nsKey);
+  if (!nsDeliv || !nsTier || iaIsNonAllocTier(nsTier)) return null;
+  // NS carry-forward resolves to a replen config, not an IA — nothing to drop.
+  if (row.ns_cfg_new_cf === 'CF') return null;
+
+  const allocDate = llResolveAllocDate(nsDeliv);
+  const ah = row.alloc_date ? parseXLDate(row.alloc_date) : null;
+  let status = '';
+  if (ah && allocDate &&
+      ah.getTime() >= allocDate.getTime() - IA_NS_EARLY_WINDOW_DAYS * 86400000) {
+    status = 'Allocated (NS)';
+  }
+  return {
+    scope: 'NS',
+    season: nsKey,
+    status,
+    delivMonth: nsDeliv,
+    allocDate,
+    pendStr: row.ns_dc_pend || '',
+    recdStr: row.ns_dc_recd || '',
+    ontime: row.ns_ontime || '',
+  };
+}
+
+// Group/sort label for a delivery month in the IA tab. NS months carry their
+// season so "HO26 · November" never merges with a CS month, and sort after
+// every CS month. NS groups order by their Flow Cal drop date rather than the
+// Nov→Oct retail order, so an NS delivery overridden to an earlier code (e.g.
+// an early floorset pulled to October_2) sorts ahead of HO26 November, not
+// behind December.
+function iaMonthLabel(scope, season, month) {
+  const m = month || '—';
+  return scope === 'NS' ? `${season} · ${m}` : m;
+}
+function iaMonthSortKey(scope, month, allocDate) {
+  if (scope !== 'NS') return iaMonthKey(month || '');
+  const day = (allocDate instanceof Date && !isNaN(allocDate))
+    ? Math.floor(allocDate.getTime() / 86400000) : 99999;
+  return 100000 + day;
+}
+
+// Console diagnostic: why is (or isn't) a SKU in the IA Volume tab?
+function iaWhy(sku) {
+  const row = (ALL_ROWS || []).find(r => r.sku === String(sku || '').trim().toUpperCase())
+           || (ALL_ROWS || []).find(r => r.sku === sku);
+  if (!row) { console.log('[iaWhy] SKU not found:', sku); return null; }
+  const v = iaRowView(row);
+  const isIA = row._cfgStatusUpper ? row._cfgStatusUpper === 'IA' : ((+row.syrup_ia||0) > 0);
+  const out = {
+    sku: row.sku, csStatus: row.status, isIA, syrup_ia: +row.syrup_ia || 0, plg_oh: +row.plg_oh || 0,
+    scope: v ? v.scope : '(excluded — N/A in CS, no allocatable NS season)',
+    season: v ? v.season : '', delivMonth: v ? v.delivMonth : '',
+    allocDate: v && v.allocDate ? fmtDate4(v.allocDate) : '', wipPend: v ? v.pendStr : '',
+    nsAllocated: v && v.scope === 'NS' ? !!v.status : undefined,
+    newnessLogDate: row.alloc_date || '',
+  };
+  if (v && isIA) {
+    out.proj = computeNewnessProj({
+      status: v.status, isIA, plg_oh: out.plg_oh, syrup_ia: out.syrup_ia,
+      allocDate: v.allocDate, pendDate: v.pendStr ? parseXLDate(v.pendStr) : null,
+    });
+  }
+  console.table(out);
+  return out;
+}
+window.iaWhy = iaWhy;
 
 // ── Delivery-month ordering — SINGLE SOURCE OF TRUTH ────────────────────────
 // Retail season order (Nov → Oct). Used by the IA tab, the live Late List, and
@@ -12863,7 +12996,9 @@ function iaCompute() {
     // Volume that falls outside the 3-drop window: either the SKU isn't ready
     // until after drop #3, or its roll-forward remainder spills past drop #3.
     dropsBeyond: {units: 0, skus: 0, rollUnits: 0},
-    byMonth: {},                        // delivery month → this-week units
+    byMonth: {},                        // delivery month label → this-week units
+    byMonthSort: {},                    // [p7z16] label → sort key (CS months before NS)
+    nsIncluded: {skus: 0, thisUnits: 0, nextUnits: 0, season: ''},   // [p7z16]
     risks: {noWip: 0, noWipUnits: 0, noWipNear: 0, noWipNearUnits: 0, lateWip: 0, longShot: 0},
     contribs: [], // per-SKU detail rows for the contributors widget
     range: {thisDropThu, nextDropThu, weekAfterDropThu, dropDays},
@@ -12874,24 +13009,27 @@ function iaCompute() {
     // WIP/Syrup data on the row, instead of the newness_proj that was frozen at
     // data-load time. This is what makes the tab update live on any weekday.
     const isIA = row._cfgStatusUpper ? row._cfgStatusUpper === 'IA' : ((+row.syrup_ia||0) > 0);
+    // [p7z16] Season view — CS as before, or NS for rows that are N/A / NS
+    // Pending in the current season (see iaRowView). null = out of scope.
+    const view = iaRowView(row);
+    if (!view) return;
     const proj = computeNewnessProj({
-      status: row.status, isIA,
+      status: view.status, isIA,
       plg_oh: +row.plg_oh || 0, syrup_ia: +row.syrup_ia || 0,
-      allocDate: row.deliv_alloc_date ? parseXLDate(row.deliv_alloc_date) : null,
-      pendDate:  row.cs_dc_pend ? parseXLDate(row.cs_dc_pend) : null,
+      allocDate: view.allocDate,
+      pendDate:  view.pendStr ? parseXLDate(view.pendStr) : null,
     });
     if (!proj) return; // out of IA scope entirely
     const ia = +row.syrup_ia || 0;
     if (ia <= 0) return; // nothing to allocate
 
-    const dropDate = iaDropDate(row);
-    const pendDate = row.cs_dc_pend ? parseXLDate(row.cs_dc_pend) : null;
+    const dropDate = iaDropDate(row, view);
+    const pendDate = view.pendStr ? parseXLDate(view.pendStr) : null;
+    const isNS = view.scope === 'NS';
 
-    // Effective (override-aware) delivery month — same resolver the grid and
-    // Late List use, so a deliv_ow edit regroups the SKU here too.
-    const delivMonth = (typeof window.resolveEffDeliv === 'function')
-      ? (window.resolveEffDeliv(row.deliv_ow, row.cs_deliv1) || '')
-      : (row.deliv_ow || row.cs_deliv1 || '');
+    const delivMonth = view.delivMonth || '';
+    const monthLbl   = iaMonthLabel(view.scope, view.season, delivMonth);
+    out.byMonthSort[monthLbl] = iaMonthSortKey(view.scope, delivMonth, view.allocDate);
 
     let probThis = 0, probNext = 0, isNoWip = false, contribBucket = '';
     let dropIdx = -1;
@@ -12901,7 +13039,7 @@ function iaCompute() {
       probThis = 1.0;
       contribBucket = 'this';
     } else if (proj === 'Pending - Allocate This Week') {
-      const p = iaPendingProb(row);
+      const p = iaPendingProb(row, view);
       if (p === null) {
         isNoWip = true; // excluded from volume per spec
         out.risks.noWip++;
@@ -12915,7 +13053,7 @@ function iaCompute() {
       probNext = IA_SETTINGS.hereNextWeekProb;
       contribBucket = 'next';
     } else if (proj === 'Pending - Allocate Next Week') {
-      const p = iaPendingProb(row);
+      const p = iaPendingProb(row, view);
       if (p === null) {
         // No WIP for next-week pending — flag but don't error
         out.risks.noWip++;
@@ -12931,11 +13069,17 @@ function iaCompute() {
       // "Near" = alloc drop date lands inside the two-week horizon, i.e. we'd
       // expect these to allocate soon and have no idea whether they can.
       if (proj === 'Pending - No WIP Date') {
-        out.risks.noWip++;
-        out.risks.noWipUnits += ia;
-        if (dropDate && dropDate.getTime() <= nextDropThu.getTime()) {
-          out.risks.noWipNear++;
-          out.risks.noWipNearUnits += ia;
+        const near = !!(dropDate && dropDate.getTime() <= nextDropThu.getTime());
+        // [p7z16] Next-season SKUs only count toward the near-term risk line.
+        // Most of NS has no WIP date yet months out; folding that whole season
+        // into the "monitor only" tail would bury the CS signal.
+        if (!isNS || near) {
+          out.risks.noWip++;
+          out.risks.noWipUnits += ia;
+          if (near) {
+            out.risks.noWipNear++;
+            out.risks.noWipNearUnits += ia;
+          }
         }
       }
       return;
@@ -12955,7 +13099,7 @@ function iaCompute() {
       out.thisWeek.skus++;
 
       // This-week volume by delivery month (drives the bottom bar chart)
-      out.byMonth[delivMonth || '—'] = (out.byMonth[delivMonth || '—'] || 0) + thisVol;
+      out.byMonth[monthLbl] = (out.byMonth[monthLbl] || 0) + thisVol;
 
       // Risk: late or long-shot
       if (probThis < 0.5) out.risks.longShot++;
@@ -13012,8 +13156,19 @@ function iaCompute() {
     // sub-line under division, and the WIP date (pend if no recd, otherwise
     // recd — labeled differently in the UI). cs_dc_recd/pend are pre-formatted
     // date strings produced by computeAllRows.
+    if (isNS && (thisVol > 0 || nextVol > 0)) {
+      out.nsIncluded.skus++;
+      out.nsIncluded.thisUnits += thisVol;
+      out.nsIncluded.nextUnits += nextVol;
+      out.nsIncluded.season = view.season;
+    }
+
     out.contribs.push({
       sku: row.sku,
+      scope: view.scope,            // [p7z16] 'CS' | 'NS'
+      season: view.season,
+      monthLbl,
+      monthSort: iaMonthSortKey(view.scope, delivMonth, view.allocDate),
       desc: `${row.style_desc||''} — ${row.color_desc||''}`,
       style: row.style_desc || '',
       color: row.color_desc || '',
@@ -13029,8 +13184,8 @@ function iaCompute() {
       isNoWip,
       proj,
       dropIdx,
-      dcRecd: row.cs_dc_recd || '',
-      dcPend: row.cs_dc_pend || '',
+      dcRecd: view.recdStr || '',
+      dcPend: view.pendStr || '',
     });
   });
 
@@ -13182,15 +13337,17 @@ function renderSkuListRows(rows, week) {
   const volOf  = r => (week === 'this' ? r.thisVol  : r.nextVol);
   const probOf = r => (week === 'this' ? r.probThis : r.probNext);
 
-  const groups = new Map();
+  // [p7z16] Group on the season-qualified label ("HO26 · November") so NS
+  // months never merge with CS months, and order CS before NS.
+  const groups = new Map(), gSort = new Map();
   rows.forEach(r => {
-    const m = r.delivMonth || '—';
-    if (!groups.has(m)) groups.set(m, []);
+    const m = r.monthLbl || r.delivMonth || '—';
+    if (!groups.has(m)) { groups.set(m, []); gSort.set(m, r.monthSort != null ? r.monthSort : iaMonthKey(r.delivMonth)); }
     groups.get(m).push(r);
   });
 
   const ordered = [...groups.entries()].sort((a, b) => {
-    const ka = iaMonthKey(a[0]), kb = iaMonthKey(b[0]);
+    const ka = gSort.get(a[0]), kb = gSort.get(b[0]);
     if (ka !== kb) return ka - kb;
     return String(a[0]).localeCompare(String(b[0]));
   });
@@ -13236,9 +13393,10 @@ function renderSkuRowSet(rows, week) {
     }
 
     const probPct = Math.round(prob * 100);
-    const tag = r.isConfirmed
+    const tag = (r.isConfirmed
       ? `<span class="ia-skurow-tag conf">CONF</span>`
-      : `<span class="ia-skurow-tag pend">PEND</span>`;
+      : `<span class="ia-skurow-tag pend">PEND</span>`)
+      + (r.scope === 'NS' ? `<span class="ia-skurow-tag ns" title="Next-season SKU — routed on its ${iaEsc(r.season)} delivery">${iaEsc(r.season)}</span>` : '');
     const styleTxt = iaEsc(r.style || '—');
     const colorTxt = iaEsc(r.color || '—');
     const subLine  = [r.division, r.category].filter(Boolean).join(' · ');
@@ -13330,8 +13488,10 @@ function iaRenderDrops() {
 function iaRenderByMonth() {
   const el = document.getElementById('iaByMonth');
   if (!el) return;
+  const bms = IA_DATA.byMonthSort || {};
+  const sk = k => (bms[k] != null ? bms[k] : iaMonthKey(k));
   const entries = Object.entries(IA_DATA.byMonth || {})
-    .sort((a, b) => iaMonthKey(a[0]) - iaMonthKey(b[0]) || String(a[0]).localeCompare(String(b[0])));
+    .sort((a, b) => sk(a[0]) - sk(b[0]) || String(a[0]).localeCompare(String(b[0])));
   const max = Math.max(...entries.map(e => e[1]), 1);
   if (entries.length === 0) {
     el.innerHTML = `<div class="ia-card-empty">No SKUs in this-week scope.</div>`;
@@ -13361,6 +13521,10 @@ function iaRenderRisks() {
     text:`Pending, no WIP date, alloc drop beyond the window — ${iaFmtN(r.noWipUnits - r.noWipNearUnits)} IA units, monitor only`,
     count:noWipFar});
   if (r.longShot > 0) items.push({icon:'⚠', cls:'ia-risk-yellow', text:`SKUs counted in this-week volume with <50% confidence`, count:r.longShot});
+  const nsi = IA_DATA.nsIncluded || {skus: 0};
+  if (nsi.skus > 0) items.push({icon:'ℹ', cls:'ia-risk-blue',
+    text:`Next-season (${iaEsc(nsi.season)}) SKUs included on their ${iaEsc(nsi.season)} delivery — ${iaFmtN(nsi.thisUnits)} units this week · ${iaFmtN(nsi.nextUnits)} next week`,
+    count:nsi.skus});
   items.push({icon:'ℹ', cls:'ia-risk-blue', text:`Generosity multiplier active`, count:`${IA_SETTINGS.generosity.toFixed(2)}×`});
 
   document.getElementById('iaRisks').innerHTML = items.map(i => `
