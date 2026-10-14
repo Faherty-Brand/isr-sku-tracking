@@ -189,6 +189,10 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .note-box{display:inline-block;width:13px;height:13px;border-radius:3px;background:#dc2626;
   box-shadow:0 1px 2px rgba(0,0,0,.25);cursor:pointer;vertical-align:middle;transition:transform .08s ease}
 .note-box:hover{transform:scale(1.18)}
+/* [p7z18] SR/ADD note names a store that doesn't match Store Codes */
+.note-box.note-box-unres{background:#f59e0b;outline:2px solid #b45309;outline-offset:-2px}
+#notePopover .np-unres{margin-top:3px;font-family:var(--mono);font-size:10px;color:#b45309}
+#notePopover .np-ok{margin-top:3px;font-family:var(--mono);font-size:10px;color:var(--green)}
 .col-note{width:62px;min-width:62px;max-width:62px;text-align:center;padding-left:0;padding-right:0}
 #th_has_note{width:62px;min-width:62px;max-width:62px;background:rgba(220,38,38,.14)!important}
 
@@ -1079,7 +1083,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix (p7z17)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes (p7z18)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1729,6 +1733,7 @@ setTimeout(function(){
       • <b>ADD{N}</b> (forward-looking) → declares a planned store <i>addition</i> — opposite of SR. Flips status to <span class="pill pill-red" style="display:inline-block">Off</span> until configs catch up. Use when adding a store to a SKU outside its tier.<br>
       • <b>DROP</b> (dropped from assortment) → SKU was killed upstream (production, costing, etc) before reaching stores. Status flips to <span class="pill pill-dropped" style="display:inline-block">Dropped</span>. Both ct and dt checks are suppressed and the SKU is excluded from the Configs Generator entirely.<br>
       • <b>MD</b> (markdown exit) → SKU is exiting via markdown. Status flips to <span class="pill pill-markdown" style="display:inline-block">Markdown</span> when configured=0 (clean) or <span class="pill pill-markdown-action" style="display:inline-block">⚠ Markdown!</span> when Syrup still has stores configured (zero them out). Excluded from the Configs Generator.<br>
+      • <b>Store-named SR / ADD</b> → write the store exactly as it appears in Store Codes (col D), comma-separated for several: <code style="font-size:11px">SR - Vero Beach, Venice</code>. The count then comes from the named stores (the number is optional) and Generate Configs leaves SR stores out / puts ADD stores in. A name with no Store Codes match turns the note box <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f59e0b;vertical-align:middle"></span> amber and holds the SKU out of Generate Configs until renamed.<br>
       • SR/ISS without an encoded count (legacy notes) → can't verify, status stays <span class="pill pill-red" style="display:inline-block">Off</span>. Re-enter with a count to clear.
       <br><br>
       Set PS tier to <b style="color:#6b21a8">None</b> to force a SKU to Newness (matches Excel's
@@ -5577,7 +5582,17 @@ const ADJUST_PREFIX_RE = new RegExp(
 //   • SR{N}   → forward-looking — flags SKUs as Off until the planned
 //               configs change actually lands
 //   • SR/ISS without encoded count (legacy) → can't verify, status=Off
-function analyzeAdjustmentNotes(notesArr) {
+// [p7z18] tierStores (optional): the store NAMES in the SKU's effective tier
+// for the season being checked. When supplied, SR / ADD notes whose text names
+// stores that ALL resolve against Store Codes derive their count from those
+// stores instead of the typed number:
+//   SR  → number of named stores that are actually IN the tier
+//   ADD → number of named stores that are NOT already in the tier
+// so a matrix change (new door, retier) can't break a correct note. Notes that
+// name no store, or any store that doesn't resolve, keep the encoded-count
+// behaviour and are listed in out.unresolved. When tierStores is omitted every
+// note uses its encoded count (pre-p7z18 behaviour).
+function analyzeAdjustmentNotes(notesArr, tierStores) {
   const out = {
     matched: [],
     expectedDelta: 0,
@@ -5592,8 +5607,17 @@ function analyzeAdjustmentNotes(notesArr) {
     hasAdd: false,
     hasDrop: false,
     hasMd: false,
+    // [p7z18] store-aware SR / ADD
+    srStores: [],        // resolved store names named by SR notes
+    addStores: [],       // resolved store names named by ADD notes
+    unresolved: [],      // [{text, prefix, names}] SR/ADD notes that don't fully resolve
+    storeAware: false,   // count came from named stores (tierStores supplied)
+    allReplayable: false // every matched note is a fully-resolved SR / ADD
   };
   if (!Array.isArray(notesArr)) return out;
+  const useStores = Array.isArray(tierStores);
+  const srSet = new Set(), addSet = new Set();
+  let replayable = true;
   notesArr.forEach(n => {
     const text = (n.text || '').trim();
     const m = ADJUST_PREFIX_RE.exec(text);
@@ -5608,6 +5632,18 @@ function analyzeAdjustmentNotes(notesArr) {
     if (prefix === 'ADD')  out.hasAdd  = true;
     if (prefix === 'DROP') out.hasDrop = true;
     if (prefix === 'MD')   out.hasMd   = true;
+    if (prefix === 'SR' || prefix === 'ADD') {
+      const rs = resolveNoteStores(text);
+      if (rs && rs.resolved) {
+        rs.stores.forEach(s => (prefix === 'SR' ? srSet : addSet).add(s));
+        if (useStores) return;          // count derived from the named stores below
+      } else {
+        replayable = false;
+        out.unresolved.push({ text, prefix, names: (rs && rs.unresolved.length) ? rs.unresolved : [] });
+      }
+    } else {
+      replayable = false;               // ADJ / ISS / MD / DROP carry no store identities
+    }
     if (!cfg.countAware) return;  // ADJ/DROP/MD — counts ignored, drive their own statuses
     // Count-aware: SR, ISS, or ADD
     if (numStr === undefined) { out.hasUncountable = true; return; }
@@ -5628,7 +5664,76 @@ function analyzeAdjustmentNotes(notesArr) {
     }
     out.hasEncodedCount = true;
   });
+  out.srStores  = [...srSet];
+  out.addStores = [...addSet];
+  if (useStores && (srSet.size || addSet.size)) {
+    const inTier = new Set(tierStores);
+    const srN  = out.srStores.filter(s => inTier.has(s)).length;
+    const addN = out.addStores.filter(s => !inTier.has(s)).length;
+    out.srDelta  += srN;
+    out.addDelta += addN;
+    out.expectedDelta += srN - addN;
+    out.hasEncodedCount = true;
+    out.storeAware = true;
+  }
+  out.allReplayable = out.matched.length > 0 && replayable;
   return out;
+}
+
+// ── [p7z18] Store-aware strategy notes ──────────────────────────────────────
+// SR / ADD notes name stores by their Store Codes display name (col D),
+// comma-separated:  "SR - Vero Beach"  ·  "SR2 - Vero Beach, Venice"
+// Matching is exact on the name after normalizing case, whitespace, curly vs
+// straight apostrophes and trailing periods. Deliberately NO abbreviations or
+// fuzzy matching ("MV" will not resolve to Martha's Vineyard) — an unmatched
+// name is surfaced (amber note box, Audit Notes tag, generator hold) rather
+// than guessed, same rule as the live-matrix store aliasing.
+function normStoreKey(s) {
+  return String(s == null ? '' : s)
+    .replace(/[\u2018\u2019\u02BC\u0060\u00B4]/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\.+$/, '')
+    .toLowerCase();
+}
+let _STORE_NAME_IDX = null, _STORE_NAME_IDX_SRC = null;
+function storeNameIndex() {
+  const src = (typeof STORE_CODE_MAP !== 'undefined') ? STORE_CODE_MAP : null;
+  if (_STORE_NAME_IDX && _STORE_NAME_IDX_SRC === src) return _STORE_NAME_IDX;
+  const idx = {};
+  Object.keys(src || {}).forEach(name => { idx[normStoreKey(name)] = name; });
+  _STORE_NAME_IDX = idx; _STORE_NAME_IDX_SRC = src;
+  return idx;
+}
+// Returns null for anything that isn't an SR / ADD note, else
+//   { prefix, stores: [canonical names], unresolved: [raw parts], resolved }
+// resolved = at least one store named AND every named store matched.
+function resolveNoteStores(text) {
+  const t = String(text || '').trim();
+  const m = ADJUST_PREFIX_RE.exec(t);
+  if (!m) return null;
+  const prefix = m[1].toUpperCase();
+  if (prefix !== 'SR' && prefix !== 'ADD') return null;
+  const rest = t.slice(m[0].length).replace(/^[\s\-\u2013\u2014:;|.]+/, '');
+  const parts = rest.split(',').map(x => x.trim()).filter(Boolean);
+  const idx = storeNameIndex();
+  const stores = [], unresolved = [];
+  parts.forEach(part => {
+    const hit = idx[normStoreKey(part)];
+    if (hit) { if (stores.indexOf(hit) === -1) stores.push(hit); }
+    else unresolved.push(part);
+  });
+  return { prefix, stores, unresolved, resolved: parts.length > 0 && unresolved.length === 0 };
+}
+// Store names in a config-season tier — the same key cs_store_ct is read with.
+function cfgTierStoresFor(row) {
+  const t2s = (typeof window.getTierToStores === 'function') ? (window.getTierToStores() || {}) : {};
+  const key = String((row && (row.tier_ow || row.cs_tier)) || '').trim().toUpperCase();
+  return t2s[key] || [];
+}
+// One-line description of why a note set can't be replayed, for warnings.
+function unresolvedNoteLabel(adj) {
+  return adj.unresolved.map(u => u.names.length ? u.names.join(', ') : '(no store named)').join('; ');
 }
 
 // Back-compat shim — some legacy callers still expect "find first match"
@@ -6069,7 +6174,9 @@ function computeAllRows(lookups) {
     // populated also implies presence; we use direct map lookup as the source
     // of truth so we don't depend on which optional fields the export carries.
     const hasSyrupCfg = !!syrupCfgBySku[sku];
-    const adjInfo = analyzeAdjustmentNotes(getNotesFor(notesStore, sku, CONFIG_SEASON));
+    // [p7z18] tier store names → SR/ADD notes that name stores count from them
+    const _tierStoresCfg = ((typeof window.getTierToStores === 'function') ? (window.getTierToStores() || {}) : {})[effective_tier] || [];
+    const adjInfo = analyzeAdjustmentNotes(getNotesFor(notesStore, sku, CONFIG_SEASON), _tierStoresCfg);
     const actualDelta = cs_store_ct - config_store_ct;
 
     // Count-aware adjustment check. Three flavors of matched notes:
@@ -6320,6 +6427,9 @@ function computeAllRows(lookups) {
       // tier-derived, while a noted SKU's live config is deliberately not the
       // tier — re-emitting would silently restore doors the note removed.
       config_has_adj_note: adjInfo.matched.length > 0,
+      // [p7z18] every note is a store-resolved SR/ADD → generator can replay it
+      config_note_replayable: adjInfo.allReplayable,
+      config_note_unresolved: adjInfo.unresolved.length > 0,
       start_date: syrupCfg.validFrom ? fmtDateStr(syrupCfg.validFrom) : '',
       end_date: syrupCfg.validUntil ? fmtDateStr(syrupCfg.validUntil) : '',
       status,
@@ -7863,7 +7973,7 @@ function recomputeRowDerived(row) {
   const expected   = row.cs_store_ct || 0;
   const configured = row.config_store_ct || 0;
   const hasCfg     = row._cfgPresent === true || !!row._cfgStatusUpper;
-  const adjInfo    = analyzeAdjustmentNotes(getNotesFor(getNotesStore(), row.sku, CONFIG_SEASON));
+  const adjInfo    = analyzeAdjustmentNotes(getNotesFor(getNotesStore(), row.sku, CONFIG_SEASON), cfgTierStoresFor(row));   // [p7z18]
   const actualDelta = expected - configured;
 
   // Mirror count-aware logic from computeAllRows. See that block for full
@@ -7913,6 +8023,8 @@ function recomputeRowDerived(row) {
   row.config_ct_expected_delta = expectedDelta;
   row.cs_rp = ctReason;
   row.config_has_adj_note = adjInfo.matched.length > 0;   // [p7u] two-site parity
+  row.config_note_replayable = adjInfo.allReplayable;      // [p7z18]
+  row.config_note_unresolved = adjInfo.unresolved.length > 0;
 
   // 7. Config date status — recompute when overrides move the calc dates.
   //    Triggered specifically by deliv_ow changes (which move deliv_alloc_date
@@ -8238,7 +8350,11 @@ function getFilterValue(r, colId) {
     if (dtOff)          return 'Off (date)';
     return 'Off';
   }
-  if (colId === 'has_note') return getNoteIndex().set.has(r.sku) ? 'Has note' : '';
+  if (colId === 'has_note') {
+    const _ni = getNoteIndex();
+    if (!_ni.set.has(r.sku)) return '';
+    return (_ni.unres && _ni.unres.has(r.sku)) ? 'Has note · store unmatched' : 'Has note';   // [p7z18]
+  }
   if (colId === 'v_mx_store_ct') return mxStoreCtLabel(r);   // [p7y] "0" vs "Not in matrix" are separate filter values
   return r[colId];
 }
@@ -8871,7 +8987,14 @@ function showNotePopover(evt, sku){
       const dateStr = isFinite(dt) ? (dt.toLocaleDateString() + ' ' + dt.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})) : '';
       return '<div class="np-item">'
         + (dateStr ? '<div class="np-date">'+sgEsc(dateStr)+'</div>' : '')
-        + '<div class="np-text">'+sgEsc(n.text)+'</div></div>';
+        + '<div class="np-text">'+sgEsc(n.text)+'</div>'
+        + (function(){   // [p7z18] store match for SR / ADD notes
+            const rs = resolveNoteStores(n.text);
+            if (!rs) return '';
+            if (rs.resolved) return '<div class="np-ok">\u2713 '+sgEsc(rs.stores.map(function(x){ return x + ' (' + (STORE_CODE_MAP[x] || '?') + ')'; }).join(', '))+'</div>';
+            return '<div class="np-unres">\u26A0 no Store Codes match: '+sgEsc(rs.unresolved.length ? rs.unresolved.join(', ') : '(no store named)')+'</div>';
+          })()
+        + '</div>';
     }).join('') + '</div>';
   } else {
     listHtml = '<div class="np-empty">No '+sgEsc(season)+' strategy notes for this SKU.</div>';
@@ -9143,6 +9266,11 @@ function renderPage() {
       if (id === 'has_note') {
         const idx = getNoteIndex();
         if (!idx.set.has(row.sku)) return `<td class="col-note"><span class="muted-cell">—</span></td>`;
+        if (idx.unres && idx.unres.has(row.sku)) {   // [p7z18]
+          const _un = sgEsc((idx.unresNames[row.sku] || []).join('; '));
+          return `<td class="col-note"><span class="note-box note-box-unres" title="SR/ADD note names a store not in Store Codes: ${_un}. Held out of Generate Configs until renamed."`
+            + ` onclick="event.stopPropagation();showNotePopover(event,'${row.sku}')"></span></td>`;
+        }
         return `<td class="col-note"><span class="note-box" title="Click to see strategy notes"`
           + ` onclick="event.stopPropagation();showNotePopover(event,'${row.sku}')"></span></td>`;
       }
@@ -9800,9 +9928,11 @@ function invalidateNoteIndex(){ NOTE_INDEX = null; }
 function getNoteIndex(){
   var season = (typeof CONFIG_SEASON !== 'undefined' && CONFIG_SEASON) ? CONFIG_SEASON
              : (typeof notesSeasonKey === 'function' ? notesSeasonKey() : '');
-  if (NOTE_INDEX && NOTE_INDEX.season === season) return NOTE_INDEX;
+  var _scm = (typeof STORE_CODE_MAP !== 'undefined') ? STORE_CODE_MAP : null;
+  if (NOTE_INDEX && NOTE_INDEX.season === season && NOTE_INDEX.scm === _scm) return NOTE_INDEX;
   var store = getNotesStore();
   var set = new Set(), text = {};
+  var unres = new Set(), unresNames = {};   // [p7z18] SR/ADD notes with an unmatched store
   Object.keys(store).forEach(function(sku){
     var arr = getNotesFor(store, sku, season);
     if (arr && arr.length){
@@ -9811,9 +9941,16 @@ function getNoteIndex(){
       // shows each note on its own line.
       text[sku] = arr.slice().sort(function(a,b){ return b.ts - a.ts; })
         .map(function(n){ return '• ' + String(n.text); }).join('\n');
+      arr.forEach(function(n){
+        var rs = resolveNoteStores(n.text);
+        if (rs && !rs.resolved) {
+          unres.add(sku);
+          (unresNames[sku] = unresNames[sku] || []).push(rs.unresolved.length ? rs.unresolved.join(', ') : '(no store named)');
+        }
+      });
     }
   });
-  NOTE_INDEX = { season: season, set: set, text: text };
+  NOTE_INDEX = { season: season, scm: _scm, set: set, text: text, unres: unres, unresNames: unresNames };
   return NOTE_INDEX;
 }
 function saveNotesStore(store) {
@@ -9916,7 +10053,7 @@ function recomputeConfigFlagForSku(sku) {
   const row = ALL_ROWS.find(r => r.sku === sku);
   if (!row) return;
   const notes = getNotesFor(getNotesStore(), sku, notesSeasonKey());
-  const adjInfo = analyzeAdjustmentNotes(notes);
+  const adjInfo = analyzeAdjustmentNotes(notes, cfgTierStoresFor(row));   // [p7z18]
   const expected = row.cs_store_ct || 0;
   const configured = row.config_store_ct || 0;
   const actualDelta = expected - configured;
@@ -9976,6 +10113,8 @@ function recomputeConfigFlagForSku(sku) {
   // gates whether the Configs Generator will auto-emit an end_ow amendment,
   // so it has to be refreshed on this path as well as the other two.
   row.config_has_adj_note = adjInfo.matched.length > 0;
+  row.config_note_replayable = adjInfo.allReplayable;      // [p7z18] three-site parity
+  row.config_note_unresolved = adjInfo.unresolved.length > 0;
 
   // When a terminal status fires on the ct side, propagate to dt for
   // internal consistency (matches what a full rebuild via computeAllRows
@@ -11189,6 +11328,13 @@ function _renderAuditResults() {
             <div style="margin-bottom:${allNoted ? '0' : '4px'}">
               <span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:${pc.bg};color:${pc.color};margin-right:6px">${p.prefix}</span>
               ${p.descriptor ? `<span>${p.descriptor.replace(/</g, '&lt;')}</span>` : `<span style="color:var(--muted);font-style:italic">(no descriptor)</span>`}
+              ${(function(){   // [p7z18] store match tag for SR / ADD patterns
+                  if (p.prefix !== 'SR' && p.prefix !== 'ADD') return '';
+                  const rs = resolveNoteStores(p.prefix + ' - ' + (p.descriptor || ''));
+                  if (rs && rs.resolved) return `<span style="margin-left:6px;font-family:var(--mono);font-size:9px;color:var(--green)" title="Matches Store Codes — the Configs Generator excludes/adds these stores">✓ ${rs.stores.map(x => (STORE_CODE_MAP[x] || '?')).join(', ')}</span>`;
+                  const un = rs && rs.unresolved.length ? rs.unresolved.join(', ') : '(no store named)';
+                  return `<span style="margin-left:6px;font-family:var(--mono);font-size:9px;color:#b45309" title="No Store Codes (col D) match — SKUs carrying this note are held out of Generate Configs. Use Rename to fix.">⚠ no store match: ${un.replace(/</g, '&lt;')}</span>`;
+                })()}
             </div>${barHtml}
           </div>
           ${countCell}
@@ -11598,7 +11744,10 @@ function buildConfigsExport() {
 
   const actionableRows = [...offRows, ...dashWithOverrideRows];
 
-  const skuList = actionableRows.map(r => r.sku);
+  // [p7z18] skuList is built AFTER the loop so SKUs held for an unmatched
+  // SR/ADD store name are left out of it. The workflow deletes every row for
+  // each listed SKU before pasting — a held SKU in that list would have its
+  // configs deleted with nothing to replace them.
   const uploadRows = [];          // [{location, product, validFrom, validUntil}, ...]
   const warnings = [];
 
@@ -11616,8 +11765,14 @@ function buildConfigsExport() {
   const _cfgToday = new Date(); _cfgToday.setHours(0,0,0,0);
   const heldSkus = [];            // held SKUs emitted with a pushed-out start
   const heldWithStoreOH = [];     // …of which already carry store units (possible missing Newness Log entry)
+  // [p7z18] store-aware SR / ADD notes
+  const _notesStore = getNotesStore();
+  const heldUnresolved = [];      // [{sku, label}] — SR/ADD note names a store Store Codes doesn't have
+  const heldUnresolvedSet = new Set();
+  let srExcludedRows = 0, addAddedRows = 0, storeAwareSkus = 0;
 
   for (const r of actionableRows) {
+    const _skuNotes = getNotesFor(_notesStore, r.sku, CONFIG_SEASON);
     // ── [p7u] End-date amendment lane ─────────────────────────────────────
     // A SKU is Off *because of* an End Date Override when end_ow is set. Two
     // things then differ from a structural rebuild:
@@ -11641,7 +11796,11 @@ function buildConfigsExport() {
     const endOwActive = !!String(r.end_ow || '').trim();
     let amendFrom = '';
     if (endOwActive) {
-      if (r.config_has_adj_note) { skippedNotedExt++; continue; }
+      // [p7z18] A SKU whose notes are ALL store-resolved SR/ADD can now be
+      // replayed exactly (tier minus SR stores plus ADD stores), so only
+      // ADJ / ISS / unmatched-store notes still force the manual route.
+      const _adjExt = analyzeAdjustmentNotes(_skuNotes);
+      if (_adjExt.matched.length > 0 && !_adjExt.allReplayable) { skippedNotedExt++; continue; }
       const parts = configDateParts({
         new_cf: r.new_cf,
         syrup_start: r.config_syrup_start ? parseXLDate(r.config_syrup_start) : null,
@@ -11672,9 +11831,29 @@ function buildConfigsExport() {
     // Single seasonal matrix — no delivery-month routing.
     const tierToStores = window.getTierToStores();
 
-    const stores = tierToStores[effTier];
-    if (!stores) { unknownTiers.add(effTier); skippedNoStores++; continue; }
-    if (stores.length === 0) { skippedNoStores++; continue; }
+    const tierStores = tierToStores[effTier];
+    if (!tierStores) { unknownTiers.add(effTier); skippedNoStores++; continue; }
+    if (tierStores.length === 0) { skippedNoStores++; continue; }
+
+    // [p7z18] Apply SR / ADD notes that name stores. An SR/ADD note that
+    // doesn't fully resolve holds the SKU out entirely: emitting the plain
+    // tier would put back a door the note removed (or drop one it added).
+    const _adjS = analyzeAdjustmentNotes(_skuNotes, tierStores);
+    if (_adjS.unresolved.length) {
+      heldUnresolved.push({ sku: r.sku, label: unresolvedNoteLabel(_adjS) });
+      heldUnresolvedSet.add(r.sku);
+      continue;
+    }
+    let stores = tierStores;
+    if (_adjS.srStores.length || _adjS.addStores.length) {
+      const _sr = new Set(_adjS.srStores);
+      stores = tierStores.filter(n => !_sr.has(n));
+      srExcludedRows += tierStores.length - stores.length;
+      const _add = _adjS.addStores.filter(n => tierStores.indexOf(n) === -1);
+      stores = stores.concat(_add);
+      addAddedRows += _add.length;
+      storeAwareSkus++;
+    }
 
     // Date strings on the row are formatted like "01/01/25". Re-parse and
     // reformat to M/D/YYYY for clean Google Sheets paste behavior.
@@ -11720,15 +11899,24 @@ function buildConfigsExport() {
     + `Once each drop is logged the SKU flips to Off and one more regeneration sets its real date.`);
   if (heldWithStoreOH.length) warnings.push(`${heldWithStoreOH.length} of those already carry store inventory — confirm they have not dropped. `
     + `If a Newness Log entry is simply missing, pushing the start out would switch their replen OFF: ${heldWithStoreOH.join(', ')}`);
-  if (skippedNotedExt) warnings.push(`${skippedNotedExt} SKU(s) skipped — End Date Override on a SKU carrying an adjustment note. `
+  if (heldUnresolved.length) warnings.push(`${heldUnresolved.length} SKU(s) held — an SR/ADD note names a store that doesn't match Store Codes (col D), `
+    + `so the store list can't be built safely. Left out of the Off SKU list too, so their live rows aren't deleted. `
+    + `Rename the note to the exact store name (Audit Notes ▸ Rename) and regenerate: `
+    + heldUnresolved.map(h => `${h.sku} (${h.label})`).join(', '));
+  if (storeAwareSkus) warnings.push(`${storeAwareSkus} SKU(s) applied store-named SR/ADD notes: `
+    + `${srExcludedRows} store row(s) excluded (SR), ${addAddedRows} added (ADD).`);
+  if (skippedNotedExt) warnings.push(`${skippedNotedExt} SKU(s) skipped — End Date Override on a SKU carrying an ADJ/ISS note or an SR/ADD note with an unmatched store. `
     + `The generated store list comes from the tier, but the note means the live config is intentionally a different set, `
     + `so emitting would restore doors the note removed. Update these rows directly in the config eligibility sheet `
     + `(see the EOL Review tab · "Manual" tag).`);
+
+  const skuList = actionableRows.map(r => r.sku).filter(s => !heldUnresolvedSet.has(s));
 
   return {
     skuList,
     uploadRows,
     warnings,
+    heldUnresolved,
     offCount: offRows.length,
     dashOverrideCount: dashWithOverrideRows.length,
     emptyTierOwRows,
@@ -11816,7 +12004,8 @@ function nsCfgCompute(row, notesStore, nsKeyArg) {
   }
 
   // ── Newness: NS-season notes ──
-  const adj = analyzeAdjustmentNotes(getNotesFor(notesStore || getNotesStore(), sku, nsKey));
+  const nsNotes = getNotesFor(notesStore || getNotesStore(), sku, nsKey);
+  let adj = analyzeAdjustmentNotes(nsNotes);
   if (adj.hasDrop) {
     row.ns_cfg_status = 'Dropped'; row.ns_cfg_ct = 'Dropped'; row.ns_cfg_dt = 'Dropped';
     row.ns_cfg_reason = (adj.matched.find(n => /^DROP\b/i.test((n.text || '').trim())) || adj.matched[0]).text;
@@ -11834,6 +12023,9 @@ function nsCfgCompute(row, notesStore, nsKeyArg) {
   }
   const expected = counts[nsTier];
   row.ns_cfg_expected = expected;
+  // [p7z18] re-read the notes against the NS tier's stores so SR/ADD notes
+  // that name stores derive their count the same way the config season does.
+  adj = analyzeAdjustmentNotes(nsNotes, (m.tierToStores || {})[nsTier] || []);
 
   // ── Calculated dates (same functions the post-roll path uses) ──
   const flow = (window._flowCalMap || {})[nsDeliv] || null;
@@ -11924,6 +12116,8 @@ function buildNsConfigsExport() {
   if (m.state !== 'ready') { out.ready = false; out.warnings.push(`${nsKey} Store Matrix ${m.state === 'unavailable' ? 'unavailable' : 'still loading'} — refresh once it lands.`); return out; }
   const t2s = m.tierToStores || {};
   let noCode = 0; const unmapped = new Set(); let noDates = 0;
+  const _nsNotesStore = getNotesStore();   // [p7z18]
+  const held = []; let srEx = 0, addAd = 0;
   (ALL_ROWS || []).forEach(r => {
     const v = r.ns_cfg_status;
     if (v === 'Retier at roll') { out.retier++; return; }
@@ -11932,7 +12126,18 @@ function buildNsConfigsExport() {
     if (!isMissing && !isOff) return;
     const vFrom = _fmtConfigDate(r.ns_cfg_calc_start), vUntil = _fmtConfigDate(r.ns_cfg_calc_end);
     if (!vFrom || !vUntil) { noDates++; return; }
-    const stores = t2s[r.ns_cfg_tier] || [];
+    const tierStores = t2s[r.ns_cfg_tier] || [];
+    // [p7z18] same store-aware SR/ADD rule as the config-season generator
+    const adjS = analyzeAdjustmentNotes(getNotesFor(_nsNotesStore, r.sku, nsKey), tierStores);
+    if (adjS.unresolved.length) { held.push(r.sku + ' (' + unresolvedNoteLabel(adjS) + ')'); return; }
+    let stores = tierStores;
+    if (adjS.srStores.length || adjS.addStores.length) {
+      const sr = new Set(adjS.srStores);
+      stores = tierStores.filter(n => !sr.has(n));
+      srEx += tierStores.length - stores.length;
+      const add = adjS.addStores.filter(n => tierStores.indexOf(n) === -1);
+      stores = stores.concat(add); addAd += add.length;
+    }
     (isMissing ? out.missing : out.off).push(r.sku);
     stores.forEach(name => {
       const code = STORE_CODE_MAP[name];
@@ -11942,6 +12147,8 @@ function buildNsConfigsExport() {
     });
   });
   if (noDates) out.warnings.push(`${noDates} SKU(s) skipped — calculated start/end was empty`);
+  if (held.length) out.warnings.push(`${held.length} SKU(s) held — an SR/ADD note names a store that doesn't match Store Codes; left out of the SKU list so live rows aren't deleted: ${held.join(', ')}`);
+  if (srEx || addAd) out.warnings.push(`Store-named notes applied: ${srEx} store row(s) excluded (SR), ${addAd} added (ADD).`);
   if (noCode) out.warnings.push(`${noCode} (SKU × store) row(s) skipped — no store code for: ${[...unmapped].join(', ')}`);
   if (out.blocked.length) out.warnings.push(`${out.blocked.length} SKU(s) can't be generated: ${out.blocked.join('; ')}`);
   return out;
@@ -12486,7 +12693,8 @@ function csvCellsFor(row, id) {
   if (id === 'has_note') {
     try {
       const idx = (typeof getNoteIndex === 'function') ? getNoteIndex() : null;
-      return [idx && idx.set.has(row.sku) ? 'Yes' : 'No'];
+      if (!(idx && idx.set.has(row.sku))) return ['No'];
+      return [(idx.unres && idx.unres.has(row.sku)) ? 'Yes (store unmatched)' : 'Yes'];   // [p7z18]
     } catch (e) { return ['']; }
   }
 
@@ -17997,7 +18205,9 @@ tr.nf-strow-shifted {background:#DBEAFE}
       blocked: blocked,
       // Noted SKUs are recorded here but never auto-emitted — see the
       // buildConfigsExport amendment lane for the full reasoning.
-      manual: !blocked && hasOw && !!r.config_has_adj_note,
+      // [p7z18] store-resolved SR/ADD notes replay automatically, so only
+      // ADJ / ISS / unmatched-store notes are manual now.
+      manual: !blocked && hasOw && !!r.config_has_adj_note && !r.config_note_replayable,
       ow: ow,
       owDate: owDate,
       syrupEnd: syrupEnd,
