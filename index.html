@@ -1083,7 +1083,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes (p7z18)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check (p7z19)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1734,6 +1734,7 @@ setTimeout(function(){
       • <b>DROP</b> (dropped from assortment) → SKU was killed upstream (production, costing, etc) before reaching stores. Status flips to <span class="pill pill-dropped" style="display:inline-block">Dropped</span>. Both ct and dt checks are suppressed and the SKU is excluded from the Configs Generator entirely.<br>
       • <b>MD</b> (markdown exit) → SKU is exiting via markdown. Status flips to <span class="pill pill-markdown" style="display:inline-block">Markdown</span> when configured=0 (clean) or <span class="pill pill-markdown-action" style="display:inline-block">⚠ Markdown!</span> when Syrup still has stores configured (zero them out). Excluded from the Configs Generator.<br>
       • <b>Store-named SR / ADD</b> → write the store exactly as it appears in Store Codes (col D), comma-separated for several: <code style="font-size:11px">SR - Vero Beach, Venice</code>. The count then comes from the named stores (the number is optional) and Generate Configs leaves SR stores out / puts ADD stores in. A name with no Store Codes match turns the note box <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f59e0b;vertical-align:middle"></span> amber and holds the SKU out of Generate Configs until renamed.<br>
+      • <b>Store check</b> → for SKUs with no notes or only store-named SR / ADD notes, the actual Syrup store codes are compared with the expected doors (tier − SR + ADD). Right count but wrong doors shows as <span class="pill pill-red" style="display:inline-block">Off (stores)</span>; the drilldown lists the missing / extra codes. ADJ / ISS notes stay count-only.<br>
       • SR/ISS without an encoded count (legacy notes) → can't verify, status stays <span class="pill pill-red" style="display:inline-block">Off</span>. Re-enter with a count to clear.
       <br><br>
       Set PS tier to <b style="color:#6b21a8">None</b> to force a SKU to Newness (matches Excel's
@@ -5420,6 +5421,12 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
   const cfgKeyFrom   = resolveCfgKey(cfgSample, 'validFrom', 'valid_from', 'valid from', 'start');
   const cfgKeyUntil  = resolveCfgKey(cfgSample, 'validUntil', 'valid_until', 'valid until', 'end');
   const cfgKeyStatus = resolveCfgKey(cfgSample, 'status');
+  // [p7z19] store code per row — drives the store-level config check
+  const cfgKeyLoc    = resolveCfgKey(cfgSample, 'location', 'store code', 'store');
+  window._cfgHasLocations = !!cfgKeyLoc && syrupCfgRows.length > 0;
+  if (syrupCfgRows.length > 0 && !cfgKeyLoc) {
+    console.warn('[SyrupCfg] ⚠ No location column found — store-level config check disabled (count check only).');
+  }
 
   if (syrupCfgRows.length > 0) {
     console.log(`[SyrupCfg] Header keys resolved → sku="${cfgKeySku}" | value="${cfgKeyValue}" | validFrom="${cfgKeyFrom}" | validUntil="${cfgKeyUntil}" | status="${cfgKeyStatus}"`);
@@ -5441,10 +5448,15 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
         status:     cfgKeyStatus ? r[cfgKeyStatus] : (r['Status']     || r['status']      || ''),
         firstValue: valStr,   // first-row active flag (TRUE/FALSE) for the IFS "-FALSE-" branch
         trueCount:  0,
+        codes:      [],   // [p7z19] distinct location codes on TRUE rows
       };
     }
     if (valStr === 'TRUE') {
       syrupCfgBySku[sku].trueCount++;
+      if (cfgKeyLoc) {
+        const code = normCfgCode(r[cfgKeyLoc]);
+        if (code && syrupCfgBySku[sku].codes.indexOf(code) === -1) syrupCfgBySku[sku].codes.push(code);
+      }
     }
   });
 
@@ -5718,11 +5730,21 @@ function resolveNoteStores(text) {
   const parts = rest.split(',').map(x => x.trim()).filter(Boolean);
   const idx = storeNameIndex();
   const stores = [], unresolved = [];
-  parts.forEach(part => {
-    const hit = idx[normStoreKey(part)];
+  // [p7z19] Some store names contain a comma ("Newport, RI"), so the comma
+  // split can cut one name in two. At each position take the LONGEST run of
+  // consecutive parts that, re-joined with ", ", is a Store Codes name —
+  // "SR - Newport, RI, Venice" → Newport, RI + Venice. A part that starts no
+  // matching run is reported as unresolved on its own.
+  for (let i = 0; i < parts.length; ) {
+    let hit = null, used = 1;
+    for (let j = parts.length; j > i; j--) {
+      const h = idx[normStoreKey(parts.slice(i, j).join(', '))];
+      if (h) { hit = h; used = j - i; break; }
+    }
     if (hit) { if (stores.indexOf(hit) === -1) stores.push(hit); }
-    else unresolved.push(part);
-  });
+    else unresolved.push(parts[i]);
+    i += used;
+  }
   return { prefix, stores, unresolved, resolved: parts.length > 0 && unresolved.length === 0 };
 }
 // Store names in a config-season tier — the same key cs_store_ct is read with.
@@ -5734,6 +5756,67 @@ function cfgTierStoresFor(row) {
 // One-line description of why a note set can't be replayed, for warnings.
 function unresolvedNoteLabel(adj) {
   return adj.unresolved.map(u => u.names.length ? u.names.join(', ') : '(no store named)').join('; ');
+}
+
+// ── [p7z19] Store-level config verification ─────────────────────────────────
+// The count check can pass while the wrong doors are configured (SR1 - Chatham
+// + ADD1 - Amagansett nets to 0, so an untouched config still "matches").
+// When the Syrup Configs export carries a location column, compare the actual
+// store CODES on the SKU's TRUE rows against the codes the generator would
+// emit: tier stores − SR stores + ADD stores.
+//
+// Scope: SKUs with no adjustment notes, or whose notes are ALL store-resolved
+// SR / ADD — the only cases where the expected door set is exactly known.
+// ADJ / ISS / unmatched-store notes keep the count-only check.
+function normCfgCode(c) { return String(c == null ? '' : c).trim().toUpperCase(); }
+function cfgExpectedStoreNames(tierStores, adj) {
+  const sr = new Set(adj.srStores);
+  return tierStores.filter(n => !sr.has(n))
+    .concat(adj.addStores.filter(n => tierStores.indexOf(n) === -1));
+}
+// Returns null when the check can't run (no location column, out of scope),
+// else { missing: [codes expected but not configured], extra: [configured but
+// not expected] } — both empty when the configured doors are exactly right.
+function cfgStoreSetDiff(tierStores, adj, configuredCodes) {
+  if (!Array.isArray(configuredCodes) || !Array.isArray(tierStores)) return null;
+  if (adj.matched.length && !adj.allReplayable) return null;
+  const exp = new Set();
+  cfgExpectedStoreNames(tierStores, adj).forEach(n => {
+    const c = (typeof STORE_CODE_MAP !== 'undefined') ? STORE_CODE_MAP[n] : null;
+    if (c) exp.add(normCfgCode(c));
+  });
+  const got = new Set(configuredCodes.map(normCfgCode));
+  return {
+    missing: [...exp].filter(c => !got.has(c)).sort(),
+    extra:   [...got].filter(c => !exp.has(c)).sort(),
+  };
+}
+// Shared by all three config-season count sites (computeAllRows,
+// recomputeRowDerived, recomputeConfigFlagForSku) so they can't drift.
+// Writes config_st_* onto `target` and returns the (possibly flipped) status.
+//   config_st_off — Off ONLY because the doors differ (count was fine)
+function applyCfgStoreCheck(target, ctStatus, inSeason, tierStores, adj, configuredCodes) {
+  target.config_st_missing = [];
+  target.config_st_extra = [];
+  target.config_st_off = false;
+  target.config_st_checked = false;
+  if (!inSeason || (ctStatus !== 'Correct' && ctStatus !== 'Off')) return ctStatus;
+  const d = cfgStoreSetDiff(tierStores, adj, configuredCodes);
+  if (!d) return ctStatus;
+  target.config_st_checked = true;
+  target.config_st_missing = d.missing;
+  target.config_st_extra = d.extra;
+  if (ctStatus === 'Correct' && (d.missing.length || d.extra.length)) {
+    target.config_st_off = true;
+    return 'Off';
+  }
+  return ctStatus;
+}
+function cfgStoreDiffLabel(missing, extra) {
+  const p = [];
+  if (missing && missing.length) p.push('missing ' + missing.join(', '));
+  if (extra && extra.length) p.push('extra ' + extra.join(', '));
+  return p.join(' · ');
 }
 
 // Back-compat shim — some legacy callers still expect "find first match"
@@ -6260,6 +6343,11 @@ function computeAllRows(lookups) {
       // No notes, counts mismatch → Off
       config_ct_status = 'Off';
     }
+    // [p7z19] store-level check (can flip a count-Correct SKU to Off)
+    const config_codes = window._cfgHasLocations ? (syrupCfg.codes || []) : null;
+    const _st = {};
+    config_ct_status = applyCfgStoreCheck(_st, config_ct_status,
+      !!deliv_to_use && cs_store_ct > 0, _tierStoresCfg, adjInfo, config_codes);
     const config_ct_delta = actualDelta;
     cs_rp = config_ct_reason;
 
@@ -6464,6 +6552,12 @@ function computeAllRows(lookups) {
       // count-aware notes exist. Used by the Off renderer to show the
       // "X explained" annotation when partial match.
       config_ct_expected_delta,
+      // [p7z19] store-level check
+      config_codes,
+      config_st_missing: _st.config_st_missing,
+      config_st_extra: _st.config_st_extra,
+      config_st_off: _st.config_st_off,
+      config_st_checked: _st.config_st_checked,
       config_dt_status,
       // Stored as ISO date strings so they survive the row payload cleanly
       // (avoid Date objects living on rows — they don't serialise well for
@@ -7812,7 +7906,9 @@ function renderConfigStatusPill(row) {
       //   • No SR/ISS note + counts differ → "ct ±N"
       //   • No SR/ISS note + counts match → just "ct" (the rare ctOff with delta=0
       //     fall-through case from legacy/uncountable notes)
-      if (hasNote) {
+      if (row.config_st_off) {
+        parts.push('stores');                        // [p7z19] count fine, doors differ
+      } else if (hasNote) {
         const sign  = (n) => (n > 0 ? '+' : '') + n;
         // "pending" reads better than "explained" when actual is 0 (no action yet)
         // and the target is non-zero. Otherwise "explained" is the right framing.
@@ -8017,6 +8113,9 @@ function recomputeRowDerived(row) {
     ctStatus = 'Off';
   }
 
+  // [p7z19] store-level check — same helper as computeAllRows
+  ctStatus = applyCfgStoreCheck(row, ctStatus, !!effDeliv && expected > 0,
+    cfgTierStoresFor(row), adjInfo, row.config_codes);
   row.config_ct_status = ctStatus;
   row.config_ct_reason = ctReason;
   row.config_ct_delta  = actualDelta;
@@ -8345,8 +8444,9 @@ function getFilterValue(r, colId) {
     if (r.config_status !== 'Off') return r.config_status;
     const ctOff = r.config_ct_status === 'Off';
     const dtOff = r.config_dt_status === 'Off';
-    if (ctOff && dtOff) return 'Off (count & date)';
-    if (ctOff)          return 'Off (count)';
+    const _ctWord = r.config_st_off ? 'stores' : 'count';   // [p7z19]
+    if (ctOff && dtOff) return `Off (${_ctWord} & date)`;
+    if (ctOff)          return `Off (${_ctWord})`;
     if (dtOff)          return 'Off (date)';
     return 'Off';
   }
@@ -8547,7 +8647,7 @@ function openColFilter(colId) {
       if (ia !== -1 && ib !== -1) return ia - ib;
     }
     if (colId === 'config_status') {
-      const order = ['Correct', 'Adjusted', 'Off (count)', 'Off (date)', 'Off (count & date)', 'Off', '—'];
+      const order = ['Correct', 'Adjusted', 'Off (count)', 'Off (stores)', 'Off (date)', 'Off (count & date)', 'Off (stores & date)', 'Off', '—'];
       const ia = order.indexOf(a);
       const ib = order.indexOf(b);
       if (ia !== -1 && ib !== -1) return ia - ib;
@@ -9650,6 +9750,19 @@ function openDrilldown(sku) {
         const note = row.config_ct_delta > 0 ? 'add stores' : 'remove stores';
         r.push(['  Δ Difference', `<span style="color:#dc2626;font-weight:500">${sign}${row.config_ct_delta} (${note})</span>`]);
       }
+      // [p7z19] store-level check
+      if (row.config_st_checked) {
+        const _ok = !(row.config_st_missing || []).length && !(row.config_st_extra || []).length;
+        r.push(['  Store Check', _ok
+          ? '<span class="pill pill-green">Doors match</span>'
+          : '<span class="pill pill-red">Doors differ</span>']);
+        if ((row.config_st_missing || []).length)
+          r.push(['  Missing in Syrup', `<span style="color:#dc2626;font-family:var(--mono)">${sgEsc(row.config_st_missing.join(', '))}</span>`]);
+        if ((row.config_st_extra || []).length)
+          r.push(['  Extra in Syrup', `<span style="color:#dc2626;font-family:var(--mono)">${sgEsc(row.config_st_extra.join(', '))}</span>`]);
+      } else if (row.config_codes && (row.config_ct_status === 'Correct' || row.config_ct_status === 'Off') && row.config_has_adj_note) {
+        r.push(['  Store Check', '<span style="color:var(--muted)">count only — ADJ / ISS / unmatched-store note</span>']);
+      }
       if (row.config_ct_status === 'Adjusted' && row.config_ct_reason) {
         r.push(['  Adjustment Note', `<span style="color:#2563eb">${row.config_ct_reason}</span>`]);
       }
@@ -10064,6 +10177,9 @@ function recomputeConfigFlagForSku(sku) {
   // ADJ → Adjusted; SR (forward) + ISS (retroactive) verified against
   // srDelta+issDelta target.
   let ctStatus, ctReason = '', expectedDelta = null;
+  const _inSeasonCfg = !!((typeof window.resolveEffDeliv === 'function')
+              ? window.resolveEffDeliv(row.deliv_ow, row.cs_deliv1)
+              : (row.deliv_ow || row.cs_deliv1 || '')) && expected > 0;
   if (adjInfo.hasMd) {
     ctStatus = (configured === 0) ? 'Markdown' : 'Markdown!';
     ctReason = adjInfo.matched.find(n => /^MD\b/i.test((n.text||'').trim()))?.text
@@ -10077,9 +10193,7 @@ function recomputeConfigFlagForSku(sku) {
   // [p7z15] Effective delivery (override-aware), same as recomputeRowDerived.
   // row.cs_deliv1 is the raw PST value, so gating on it alone sent
   // override-only SKUs back to "Correct" whenever their notes were edited.
-  else if (!((typeof window.resolveEffDeliv === 'function')
-              ? window.resolveEffDeliv(row.deliv_ow, row.cs_deliv1)
-              : (row.deliv_ow || row.cs_deliv1 || '')) || expected === 0) ctStatus = hasCfg ? 'Correct' : '—';
+  else if (!_inSeasonCfg) ctStatus = hasCfg ? 'Correct' : '—';
   else if (adjInfo.hasAdj) {
     ctStatus = 'Adjusted';
     ctReason = adjInfo.matched[0].text;
@@ -10105,6 +10219,8 @@ function recomputeConfigFlagForSku(sku) {
     ctStatus = 'Off';
   }
 
+  // [p7z19] store-level check — same helper as computeAllRows
+  ctStatus = applyCfgStoreCheck(row, ctStatus, _inSeasonCfg, cfgTierStoresFor(row), adjInfo, row.config_codes);
   row.config_ct_status = ctStatus;
   row.config_ct_reason = ctReason;
   row.config_ct_expected_delta = expectedDelta;
@@ -11956,7 +12072,7 @@ function buildConfigsExport() {
 //
 // Computed in one place (nsCfgCompute) and refreshed on every grid render, so
 // there is no second site to drift.
-const NS_CFG_ORDER = ['Missing', 'Off (count & date)', 'Off (count)', 'Off (date)', 'Not in matrix',
+const NS_CFG_ORDER = ['Missing', 'Off (count & date)', 'Off (stores & date)', 'Off (count)', 'Off (stores)', 'Off (date)', 'Not in matrix',
   'No Flow Cal date', 'Matrix loading', 'Adjusted', 'Correct', 'Dropped', 'Retier at roll'];
 
 function nsCfgClear(row) {
@@ -11964,6 +12080,7 @@ function nsCfgClear(row) {
   row.ns_cfg_tier = ''; row.ns_cfg_deliv = ''; row.ns_cfg_expected = null; row.ns_cfg_delta = null;
   row.ns_cfg_reason = ''; row.ns_cfg_calc_start = ''; row.ns_cfg_calc_end = '';
   row.ns_cfg_aj = ''; row.ns_cfg_cs_tier = '';
+  row.ns_cfg_st_off = false; row.ns_cfg_st_missing = []; row.ns_cfg_st_extra = [];   // [p7z19]
 }
 
 function nsCfgCompute(row, notesStore, nsKeyArg) {
@@ -12060,6 +12177,15 @@ function nsCfgCompute(row, notesStore, nsKeyArg) {
     ct = (!adj.hasUncountable && delta === adj.expectedDelta) ? 'Correct' : 'Off';
   }
   else ct = (configured === expected) ? 'Correct' : 'Off';
+  // [p7z19] store-level check against the NS tier's doors
+  {
+    const _st = {};
+    ct = applyCfgStoreCheck(_st, ct, true, (m.tierToStores || {})[nsTier] || [], adj, row.config_codes);
+    row.ns_cfg_st_off = _st.config_st_off;
+    row.ns_cfg_st_missing = _st.config_st_missing;
+    row.ns_cfg_st_extra = _st.config_st_extra;
+    if (_st.config_st_off) row.ns_cfg_reason = cfgStoreDiffLabel(_st.config_st_missing, _st.config_st_extra);
+  }
 
   const ss = row.config_syrup_start ? parseXLDate(row.config_syrup_start) : null;
   const se = row.config_syrup_end   ? parseXLDate(row.config_syrup_end)   : null;
@@ -12073,8 +12199,9 @@ function nsCfgCompute(row, notesStore, nsKeyArg) {
   });
   const dt = dtOff ? 'Off' : 'Correct';
   row.ns_cfg_ct = ct; row.ns_cfg_dt = dt;
-  row.ns_cfg_status = (ct === 'Off' && dt === 'Off') ? 'Off (count & date)'
-                    : (ct === 'Off') ? 'Off (count)'
+  const _nsCtWord = row.ns_cfg_st_off ? 'stores' : 'count';   // [p7z19]
+  row.ns_cfg_status = (ct === 'Off' && dt === 'Off') ? `Off (${_nsCtWord} & date)`
+                    : (ct === 'Off') ? `Off (${_nsCtWord})`
                     : (dt === 'Off') ? 'Off (date)'
                     : ct;                                  // Adjusted | Correct
   return row;
