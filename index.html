@@ -1095,7 +1095,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout (p7z20)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg (p7z21)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -2256,6 +2256,13 @@ let CURRENT_SEASON = 'FA26';
 // Any tier here is treated as "do not allocate" everywhere: main grid (Status,
 // New/CF, config generation), Late List, and NF Review. Add a tier ONCE here.
 const NON_ALLOC_TIERS = new Set(['ONLINE ONLY','PARTNERSHIP','WHOLESALE EXCLUSIVE','DO NOT ALLOCATE','DROP','NFL','COLLEGIATE','NBA']);
+// [p7z21] DO NOT ALLOCATE (legacy "DROP" shorthand normalizes to it) is the one
+// non-allocating tier with a hard config expectation: ZERO configured stores.
+// Shared by all three config-season count sites so they can't drift.
+function isDnaTier(t) {
+  const up = String(t || '').trim().toUpperCase();
+  return up === 'DROP' || up.indexOf('DO NOT ALLOCATE') !== -1;
+}
 
 let SEASON_REGISTRY = [];
 
@@ -6272,7 +6279,9 @@ function computeAllRows(lookups) {
     // [p7z18] tier store names → SR/ADD notes that name stores count from them
     const _tierStoresCfg = ((typeof window.getTierToStores === 'function') ? (window.getTierToStores() || {}) : {})[effective_tier] || [];
     const adjInfo = analyzeAdjustmentNotes(getNotesFor(notesStore, sku, CONFIG_SEASON), _tierStoresCfg);
-    const actualDelta = cs_store_ct - config_store_ct;
+    const _isDna = isDnaTier(effective_tier);   // [p7z21]
+    // [p7z21] DNA expects 0 stores regardless of what the matrix says.
+    const actualDelta = (_isDna ? 0 : cs_store_ct) - config_store_ct;
 
     // Count-aware adjustment check. Three flavors of matched notes:
     //   • ADJ  → blanket Adjusted, count math skipped
@@ -6307,6 +6316,14 @@ function computeAllRows(lookups) {
       config_ct_status = 'Dropped';
       config_ct_reason = adjInfo.matched.find(n => /^DROP\b/i.test((n.text||'').trim()))?.text
                        || adjInfo.matched[0].text;
+    } else if (_isDna) {
+      // [p7z21] DO NOT ALLOCATE tier → expected configured stores = 0.
+      // Previously fell into the "not active / 0 matrix stores" gate below,
+      // which returned Correct for ANY config row present — so a dropped SKU
+      // still configured to N stores read as Correct. Evaluated before the
+      // season gate and before ADJ/SR/ISS/ADD notes: no note can make a
+      // configured DNA SKU correct. No row / all rows inactive → Correct.
+      config_ct_status = (config_store_ct === 0) ? 'Correct' : 'Off';
     } else if (!deliv_to_use || cs_store_ct === 0) {
       // [p7z15] Gate on the EFFECTIVE delivery (deliv_ow → PST, honoring the
       // "None" sentinel), not raw PST cs_deliv1. A SKU whose config-season
@@ -6416,6 +6433,10 @@ function computeAllRows(lookups) {
     } else if (adjInfo.hasDrop) {
       // DROP: dropped SKU has no date expectations. Mirrors ct side.
       config_dt_status = 'Dropped';
+    } else if (_isDna) {
+      // [p7z21] DNA: nothing should be configured, so dates are moot — the
+      // count side alone decides (keeps the pill reading "Off (ct −N)").
+      config_dt_status = 'Correct';
     } else if (!hasSyrupCfg) {
       // No Syrup config row at all → there are no actual Syrup dates to compare
       // against. Mirror the count side's "—" so the Date Check doesn't read a
@@ -8082,7 +8103,8 @@ function recomputeRowDerived(row) {
   const configured = row.config_store_ct || 0;
   const hasCfg     = row._cfgPresent === true || !!row._cfgStatusUpper;
   const adjInfo    = analyzeAdjustmentNotes(getNotesFor(getNotesStore(), row.sku, CONFIG_SEASON), cfgTierStoresFor(row));   // [p7z18]
-  const actualDelta = expected - configured;
+  const _isDna     = isDnaTier(eff_tier_for_status);   // [p7z21] TWO-SITE PARITY
+  const actualDelta = (_isDna ? 0 : expected) - configured;
 
   // Mirror count-aware logic from computeAllRows. See that block for full
   // commentary. DROP → Dropped (overrides everything); ADJ → Adjusted;
@@ -8099,6 +8121,7 @@ function recomputeRowDerived(row) {
     ctReason = adjInfo.matched.find(n => /^DROP\b/i.test((n.text||'').trim()))?.text
              || adjInfo.matched[0].text;
   }
+  else if (_isDna) ctStatus = (configured === 0) ? 'Correct' : 'Off';   // [p7z21]
   else if (!effDeliv || expected === 0) ctStatus = hasCfg ? 'Correct' : '—';
   else if (adjInfo.hasAdj) {
     ctStatus = 'Adjusted';
@@ -8177,6 +8200,8 @@ function recomputeRowDerived(row) {
     dtStatus2 = 'Markdown';
   } else if (adjInfo.hasDrop) {
     dtStatus2 = 'Dropped';
+  } else if (_isDna) {
+    dtStatus2 = 'Correct';   // [p7z21] dates moot — count side decides
   } else if (!hasCfg) {
     dtStatus2 = '—';
   } else if (!calcStart && !endOw) {
@@ -9758,7 +9783,8 @@ function openDrilldown(sku) {
                     : row.config_ct_status === 'Correct' ? 'pill-green'
                     : 'pill-muted';
       r.push(['  Count Check', `<span class="pill ${ctPill}">${row.config_ct_status||'—'}</span>`]);
-      r.push(['  Expected Stores (matrix)', row.cs_store_ct ? String(row.cs_store_ct) : '—']);
+      r.push(['  Expected Stores (matrix)', isDnaTier(row.tier_ow || row.cs_tier) ? '0 (Do Not Allocate)'   // [p7z21]
+                                          : row.cs_store_ct ? String(row.cs_store_ct) : '—']);
       r.push(['  Configured Stores (Syrup)', (row.config_store_ct ?? 0).toString()]);
       if (row.config_ct_status === 'Off' && row.config_ct_delta !== 0) {
         const sign = row.config_ct_delta > 0 ? '+' : '';
@@ -10188,7 +10214,8 @@ function recomputeConfigFlagForSku(sku) {
   const adjInfo = analyzeAdjustmentNotes(notes, cfgTierStoresFor(row));   // [p7z18]
   const expected = row.cs_store_ct || 0;
   const configured = row.config_store_ct || 0;
-  const actualDelta = expected - configured;
+  const _isDna = isDnaTier(row.tier_ow || row.cs_tier);   // [p7z21] three-site parity
+  const actualDelta = (_isDna ? 0 : expected) - configured;
   const hasCfg = row._cfgPresent === true || !!row._cfgStatusUpper;
 
   // Same count-aware logic as computeAllRows + recomputeRowDerived.
@@ -10209,6 +10236,7 @@ function recomputeConfigFlagForSku(sku) {
     ctReason = adjInfo.matched.find(n => /^DROP\b/i.test((n.text||'').trim()))?.text
              || adjInfo.matched[0].text;
   }
+  else if (_isDna) ctStatus = (configured === 0) ? 'Correct' : 'Off';   // [p7z21]
   // [p7z15] Effective delivery (override-aware), same as recomputeRowDerived.
   // row.cs_deliv1 is the raw PST value, so gating on it alone sent
   // override-only SKUs back to "Correct" whenever their notes were edited.
@@ -10242,6 +10270,7 @@ function recomputeConfigFlagForSku(sku) {
   ctStatus = applyCfgStoreCheck(row, ctStatus, _inSeasonCfg, cfgTierStoresFor(row), adjInfo, row.config_codes);
   row.config_ct_status = ctStatus;
   row.config_ct_reason = ctReason;
+  row.config_ct_delta  = actualDelta;   // [p7z21] keep in step with the other two sites
   row.config_ct_expected_delta = expectedDelta;
   row.cs_rp = ctReason;
   // [p7u] Notes just changed, so note PRESENCE may have changed too. This
