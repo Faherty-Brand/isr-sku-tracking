@@ -1095,7 +1095,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg (p7z21)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf (p7z22)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -2256,6 +2256,44 @@ let CURRENT_SEASON = 'FA26';
 // Any tier here is treated as "do not allocate" everywhere: main grid (Status,
 // New/CF, config generation), Late List, and NF Review. Add a tier ONCE here.
 const NON_ALLOC_TIERS = new Set(['ONLINE ONLY','PARTNERSHIP','WHOLESALE EXCLUSIVE','DO NOT ALLOCATE','DROP','NFL','COLLEGIATE','NBA']);
+// [p7z22] Config-season New/CF — shared by computeAllRows + recomputeRowDerived.
+// A carry-forward is decided by the season's TIER, not its delivery month: a CF
+// SKU has no new receipt, so a blank config-season delivery is normal for it.
+// Before p7z22 a blank delivery blanked new_cf, which zeroed the calc dates and
+// early-outed the count check to "Correct" — even with a tier override that
+// put the SKU in N stores Syrup didn't match.
+//   excluded / non-allocating CS tier            → ''       (unchanged)
+//   effective delivery present                   → CF | Newness (unchanged)
+//   no delivery, deliv_ow = "None"               → ''       (explicit opt-out kept)
+//   no delivery, CS tier set + prior-season tier → 'CF'     (NEW)
+//   no delivery, otherwise (Newness)             → ''       (needs a drop date)
+function resolveCfgNewCF(effDeliv, delivOwRaw, effTierUpper, effPSTier) {
+  const t = String(effTierUpper || '').trim().toUpperCase();
+  if (NON_ALLOC_TIERS.has(t)) return '';
+  if (effDeliv) return effPSTier ? 'CF' : 'Newness';
+  if (String(delivOwRaw || '').trim().toUpperCase() === 'NONE') return '';
+  return (t && effPSTier) ? 'CF' : '';
+}
+// [p7z22] Is the config count/store check live for this SKU? Shared by all
+// three count sites. With a delivery: identical to pre-p7z22. Without one: a
+// CF SKU is still judged against its tier's matrix stores.
+function cfgCountActive(effDeliv, newCf, expected) {
+  return (!!effDeliv || newCf === 'CF') && expected > 0;
+}
+// [p7z22] F12 helper: CF SKUs judged on tier alone (no config-season delivery).
+// cfgTierOnlyCF() → table of every one; cfgTierOnlyCF(true) → only the Off ones.
+function cfgTierOnlyCF(offOnly) {
+  const rows = (typeof ALL_ROWS !== 'undefined' ? ALL_ROWS : []).filter(r => {
+    if (r.new_cf !== 'CF') return false;
+    const d = (typeof window.resolveEffDeliv === 'function')
+      ? window.resolveEffDeliv(r.deliv_ow, r.cs_deliv1) : (r.deliv_ow || r.cs_deliv1 || '');
+    return !d && (!offOnly || r.config_status === 'Off');
+  });
+  console.table(rows.map(r => ({ sku: r.sku, tier: r.tier_ow || r.cs_tier, tier_ow: r.tier_ow || '',
+    expected: r.cs_store_ct, configured: r.config_store_ct, ct: r.config_ct_status,
+    dt: r.config_dt_status, status: r.config_status })));
+  return rows.length;
+}
 // [p7z21] DO NOT ALLOCATE (legacy "DROP" shorthand normalizes to it) is the one
 // non-allocating tier with a hard config expectation: ZERO configured stores.
 // Shared by all three config-season count sites so they can't drift.
@@ -6123,9 +6161,8 @@ function computeAllRows(lookups) {
     // means out-of-season (fix with a delivery override); an excluded/dropped
     // tier must stay the strongest off-signal so a drop can't be resurrected
     // into a live Syrup config. Both still blank new_cf.
-    const new_cf = (!deliv_to_use || EXCLUDED_TIERS.has(effTierForCF))
-      ? ''
-      : (eff_ps_tier ? 'CF' : 'Newness');
+    // [p7z22] Tier-driven for CF — see resolveCfgNewCF.
+    const new_cf = resolveCfgNewCF(deliv_to_use, deliv_ow, effTierForCF, eff_ps_tier);
 
     // ── Status (AN) ──
     // Pass effective (override-aware) values: deliv_to_use as cs_deliv1, eff_tier
@@ -6324,7 +6361,9 @@ function computeAllRows(lookups) {
       // season gate and before ADJ/SR/ISS/ADD notes: no note can make a
       // configured DNA SKU correct. No row / all rows inactive → Correct.
       config_ct_status = (config_store_ct === 0) ? 'Correct' : 'Off';
-    } else if (!deliv_to_use || cs_store_ct === 0) {
+    } else if (!cfgCountActive(deliv_to_use, new_cf, cs_store_ct)) {
+      // [p7z22] Gate is now cfgCountActive: a CF SKU with no config-season
+      // delivery is still checked against its tier. Delivered SKUs unchanged.
       // [p7z15] Gate on the EFFECTIVE delivery (deliv_ow → PST, honoring the
       // "None" sentinel), not raw PST cs_deliv1. A SKU whose config-season
       // delivery exists only as an override was early-outing here to "Correct"
@@ -6376,7 +6415,7 @@ function computeAllRows(lookups) {
     const config_codes = window._cfgHasLocations ? (syrupCfg.codes || []) : null;
     const _st = {};
     config_ct_status = applyCfgStoreCheck(_st, config_ct_status,
-      !!deliv_to_use && cs_store_ct > 0, _tierStoresCfg, adjInfo, config_codes);
+      cfgCountActive(deliv_to_use, new_cf, cs_store_ct), _tierStoresCfg, adjInfo, config_codes);   // [p7z22]
     const config_ct_delta = actualDelta;
     cs_rp = config_ct_reason;
 
@@ -8041,9 +8080,7 @@ function recomputeRowDerived(row) {
       : ((row.ps_tier_ow || '')
          || (row.ps_corr_tier || '')
          || (psStorePasses ? psStoreTierRaw : ''));
-  row.new_cf = (!effDeliv || EXCLUDED_TIERS.has(effTierUpper))
-    ? ''
-    : (effPSTier ? 'CF' : 'Newness');
+  row.new_cf = resolveCfgNewCF(effDeliv, row.deliv_ow, effTierUpper, effPSTier);   // [p7z22] two-site parity
 
   // 3. Status (override-aware)
   const eff_tier_for_status = (row.tier_ow || row.cs_tier || '').trim();
@@ -8122,7 +8159,7 @@ function recomputeRowDerived(row) {
              || adjInfo.matched[0].text;
   }
   else if (_isDna) ctStatus = (configured === 0) ? 'Correct' : 'Off';   // [p7z21]
-  else if (!effDeliv || expected === 0) ctStatus = hasCfg ? 'Correct' : '—';
+  else if (!cfgCountActive(effDeliv, row.new_cf, expected)) ctStatus = hasCfg ? 'Correct' : '—';   // [p7z22]
   else if (adjInfo.hasAdj) {
     ctStatus = 'Adjusted';
     ctReason = adjInfo.matched[0].text;
@@ -8149,7 +8186,7 @@ function recomputeRowDerived(row) {
   }
 
   // [p7z19] store-level check — same helper as computeAllRows
-  ctStatus = applyCfgStoreCheck(row, ctStatus, !!effDeliv && expected > 0,
+  ctStatus = applyCfgStoreCheck(row, ctStatus, cfgCountActive(effDeliv, row.new_cf, expected),   // [p7z22]
     cfgTierStoresFor(row), adjInfo, row.config_codes);
   row.config_ct_status = ctStatus;
   row.config_ct_reason = ctReason;
@@ -10223,9 +10260,10 @@ function recomputeConfigFlagForSku(sku) {
   // ADJ → Adjusted; SR (forward) + ISS (retroactive) verified against
   // srDelta+issDelta target.
   let ctStatus, ctReason = '', expectedDelta = null;
-  const _inSeasonCfg = !!((typeof window.resolveEffDeliv === 'function')
+  const _effDelivCfg = (typeof window.resolveEffDeliv === 'function')
               ? window.resolveEffDeliv(row.deliv_ow, row.cs_deliv1)
-              : (row.deliv_ow || row.cs_deliv1 || '')) && expected > 0;
+              : (row.deliv_ow || row.cs_deliv1 || '');
+  const _inSeasonCfg = cfgCountActive(_effDelivCfg, row.new_cf, expected);   // [p7z22] three-site parity
   if (adjInfo.hasMd) {
     ctStatus = (configured === 0) ? 'Markdown' : 'Markdown!';
     ctReason = adjInfo.matched.find(n => /^MD\b/i.test((n.text||'').trim()))?.text
