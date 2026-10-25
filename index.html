@@ -1095,7 +1095,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release (p7z23)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit (p7z24)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1249,6 +1249,7 @@ setTimeout(function(){
         <button class="tab-btn" id="tabSmBtn" onclick="switchTab('sm')">🏬 Store Matrix</button>
         <button class="tab-btn" id="tabNfBtn" onclick="switchTab('nf')">🎯 NF Review</button>
         <button class="tab-btn" id="tabEolBtn" onclick="switchTab('eol')">⏳ EOL Review</button>
+        <button class="tab-btn" id="tabRollBtn" onclick="switchTab('roll')" title="Pre-flip review of working-season overrides and strategy notes">🔁 Season Roll</button>
       </div>
       <button class="ctrl-btn" onclick="document.getElementById('fileInput').click()">↻ Refresh Data</button>
       <button class="ctrl-btn" id="lookupBtn" onclick="openLookupModal()">🔍 Multi-SKU Lookup</button>
@@ -1643,6 +1644,78 @@ setTimeout(function(){
       <tbody id="eolBody"></tbody>
     </table>
     <div class="nf-empty" id="eolEmpty" style="display:none"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     SEASON ROLL AUDIT [p7z24]
+     Pre-flip review of working-season overrides and strategy notes. Every
+     override and note is season-scoped, so on the roll the working season's
+     values stop driving configs. This tab lists the ones that might need to
+     follow the SKU into the next season and writes the carried ones into the
+     next season's slot NOW (same slot the NS tier override uses), so they are
+     live the moment the season flips. "Expire" records the decision only —
+     expiring is what the roll already does.
+     ═══════════════════════════════════════════════════ -->
+<div id="raPanel">
+  <div class="nf-header">
+    <div>
+      <div class="nf-title" id="raTitle">🔁 Season Roll Audit</div>
+      <div class="nf-subtitle" id="raSubtitle"></div>
+    </div>
+    <div class="nf-header-actions">
+      <div class="nf-ctrl">
+        <span class="nf-ctrl-lbl">Section</span>
+        <div class="nf-seg">
+          <button class="nf-seg-btn active" id="raSecTier" onclick="raSetSection('tier')">Tier overrides</button>
+          <button class="nf-seg-btn" id="raSecEnd" onclick="raSetSection('end')">End dates</button>
+          <button class="nf-seg-btn" id="raSecNotes" onclick="raSetSection('notes')">Strategy notes</button>
+        </div>
+      </div>
+      <div class="nf-ctrl">
+        <span class="nf-ctrl-lbl">Show</span>
+        <div class="nf-seg">
+          <button class="nf-seg-btn active" id="raViewOpen" onclick="raSetView('open')">Undecided</button>
+          <button class="nf-seg-btn" id="raViewDone" onclick="raSetView('done')">Decided</button>
+          <button class="nf-seg-btn" id="raViewAll" onclick="raSetView('all')">All</button>
+        </div>
+      </div>
+      <div class="nf-ctrl">
+        <span class="nf-ctrl-lbl">Search</span>
+        <input class="nf-ftext" id="raSearch" type="text" placeholder="SKU / style / note…" style="max-width:170px" oninput="raSetQuery(this.value)">
+      </div>
+      <button class="nf-action-btn" onclick="raExportCsv()" title="Every override and note on the working season, with its bucket and decision. Download this before you flip.">⤓ Export snapshot</button>
+      <button class="nf-action-btn" onclick="raRefresh()">↻ Refresh</button>
+    </div>
+  </div>
+
+  <div class="nf-stats" id="raStats"></div>
+
+  <div class="ra-notebar" id="raNoteBar" style="display:none">
+    <span class="nf-ctrl-lbl">Note type</span>
+    <div class="nf-seg">
+      <button class="nf-seg-btn active" id="raKindStore" onclick="raSetKind('store')">Store-named (SR / ADD)</button>
+      <button class="nf-seg-btn" id="raKindConfig" onclick="raSetKind('config')">Other config notes</button>
+      <button class="nf-seg-btn" id="raKindContext" onclick="raSetKind('context')">Context</button>
+      <button class="nf-seg-btn" id="raKindGone" onclick="raSetKind('gone')">SKU not in next season</button>
+    </div>
+    <span class="nf-ctrl-lbl" id="raStoreLbl" style="margin-left:10px">Store</span>
+    <select class="eol-fsel ra-store-sel" id="raStoreSel" onchange="raSetStore(this.value)"></select>
+  </div>
+
+  <div class="eol-bulk" id="raBulk" style="display:none">
+    <span class="eol-bulk-count" id="raBulkCount"></span>
+    <button class="nf-action-btn" id="raBulkCarry" onclick="raBulk('carry')">Carry all undecided shown</button>
+    <button class="nf-action-btn" onclick="raBulk('expire')">Expire all undecided shown</button>
+    <span class="eol-bulk-hint" id="raBulkHint">Bulk actions only touch undecided rows on screen. Change a decided row with its own buttons.</span>
+  </div>
+
+  <div class="nf-tablewrap">
+    <table class="nf-table" id="raTable">
+      <thead id="raHead"></thead>
+      <tbody id="raBody"></tbody>
+    </table>
+    <div class="nf-empty" id="raEmpty" style="display:none"></div>
   </div>
 </div>
 
@@ -2685,6 +2758,9 @@ function seasonMatrixChanged(id) {
   try {   // [p7z17] NF Review, when it is showing this season
     if (typeof window.nfSeasonMatrixChanged === 'function') window.nfSeasonMatrixChanged(id);
   } catch (e) { console.warn('[SeasonMatrix] NF Review repaint failed', e); }
+  try {   // [p7z24] Season Roll Audit validates carries against the next season's matrix
+    if (typeof window.raSeasonMatrixChanged === 'function') window.raSeasonMatrixChanged(id);
+  } catch (e) { console.warn('[SeasonMatrix] Season Roll Audit repaint failed', e); }
 }
 
 // Called by buildFromParsed: adopt payloads that rode in with the bundle, then
@@ -8423,7 +8499,15 @@ function setFilter(type, val) {
 function onWorkingSeasonChange(sel) {
   const next = sel.value;
   if (!next || next === CURRENT_SEASON) return;
-  const ok = confirm(
+  // [p7z24] Season Roll Audit: warn (don't block) when the roll still has
+  // undecided tier / end-date overrides or config notes.
+  let _raWarn = '';
+  try {
+    const _p = (typeof window.rollAuditPending === 'function' && next === owNextKey()) ? window.rollAuditPending() : null;
+    if (_p && _p.total) _raWarn = '⚠ Season Roll Audit: ' + _p.total + ' undecided (' + _p.tier + ' tier override(s), ' + _p.end +
+      ' end date(s), ' + _p.notes + ' config note(s)). Undecided items EXPIRE on the flip. Consider exporting the snapshot first (🔁 Season Roll tab).\n\n';
+  } catch (_) {}
+  const ok = confirm(_raWarn +
     'Set the CURRENT season to ' + next + '?\n\n' +
     'This slides the PS / CS / NS window (CS becomes ' + next + '), re-buckets the ' +
     'PST, and repoints ALL derived values (Status, Config Status, Store Count, SKU ' +
@@ -10464,6 +10548,7 @@ function ddRefreshActiveTab(){
     else if (ACTIVE_TAB === 'ia'  && typeof iaRefresh === 'function') iaRefresh();
     else if (ACTIVE_TAB === 'nf'  && typeof window.nfRefresh === 'function') window.nfRefresh();
     else if (ACTIVE_TAB === 'eol' && typeof window.eolRefresh === 'function') window.eolRefresh();
+    else if (ACTIVE_TAB === 'roll' && typeof window.raRefresh === 'function') window.raRefresh();   // [p7z24]
   } catch(e){ console.warn('[dd] active-tab refresh failed:', e); }
 }
 // ── Cached dropdown option lists (rebuilt on each data load) ──
@@ -13008,11 +13093,13 @@ function switchTab(tab) {
   { const b = document.getElementById('tabNfBtn'); if (b) b.classList.remove('active'); }
   { const b = document.getElementById('tabSmBtn'); if (b) b.classList.remove('active'); }
   { const b = document.getElementById('tabEolBtn'); if (b) b.classList.remove('active'); }
+  { const b = document.getElementById('tabRollBtn'); if (b) b.classList.remove('active'); }   // [p7z24]
   document.getElementById('lateListPanel').style.display = 'none';
   document.getElementById('iaPanel').style.display = 'none';
   { const p = document.getElementById('nfPanel'); if (p) p.style.display = 'none'; }
   { const p = document.getElementById('smPanel'); if (p) p.style.display = 'none'; }
   { const p = document.getElementById('eolPanel'); if (p) p.style.display = 'none'; }
+  { const p = document.getElementById('raPanel'); if (p) p.style.display = 'none'; }   // [p7z24]
 
   if (tab === 'sku') {
     document.getElementById('tabSkuBtn').classList.add('active');
@@ -13078,6 +13165,13 @@ function switchTab(tab) {
     document.getElementById('exportBtn').style.display = 'none';
     document.getElementById('colPanelBtn').style.display = 'none';
     if (typeof smRefresh === 'function') smRefresh();
+  } else if (tab === 'roll') {   // [p7z24] Season Roll Audit
+    const b = document.getElementById('tabRollBtn'); if (b) b.classList.add('active');
+    skuEls.forEach(id => { const el=document.getElementById(id); if(el) el.style.display='none'; });
+    const p = document.getElementById('raPanel'); if (p) p.style.display = 'flex';
+    ['lookupBtn','clearLookupBtn','copySkuBtn','bulkNotesBtn','exportBtn','colPanelBtn']
+      .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    if (typeof window.raRefresh === 'function') window.raRefresh();
   }
 }
 
@@ -15747,6 +15841,25 @@ tr.nf-strow-shifted {background:#DBEAFE}
 .nf-empty{padding:40px;text-align:center;font-family:var(--mono);font-size:12px;color:var(--muted)}
 .nf-sku{font-family:var(--mono);font-weight:600;color:var(--accent);cursor:pointer}
 .nf-sku:hover{text-decoration:underline}
+/* ── Season Roll Audit [p7z24] ── reuses the nf-* / eol-* shell */
+#raPanel{display:none;flex-direction:column;flex:1;overflow:hidden;background:var(--bg)}
+.ra-notebar{display:flex;align-items:center;gap:8px;margin:0 24px 12px;flex-wrap:wrap}
+.ra-store-sel{max-width:240px}
+.nf-stat.ra-tile{cursor:pointer}
+.nf-stat.ra-tile.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.ra-dec{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.ra-dec button{font-family:var(--mono);font-size:10.5px;padding:3px 9px;border:none;background:var(--surface);color:var(--muted);cursor:pointer}
+.ra-dec button+button{border-left:1px solid var(--border)}
+.ra-dec button:disabled{opacity:.35;cursor:not-allowed}
+.ra-dec button.on-carry{background:var(--green);color:#fff;font-weight:600}
+.ra-dec button.on-expire{background:var(--surface2);color:var(--text);font-weight:600;text-decoration:line-through}
+.ra-sub{display:block;font-family:var(--mono);font-size:9.5px;color:var(--muted);margin-top:1px}
+.ra-warn{color:var(--orange)}
+.ra-tier{font-family:var(--mono);font-size:11px}
+.ra-note{max-width:340px;white-space:normal;line-height:1.35}
+.ra-store{display:inline-block;font-family:var(--mono);font-size:9.5px;border:1px solid var(--border);border-radius:4px;padding:0 4px;margin:1px 3px 1px 0;background:var(--bg)}
+.ra-store.unres{border-color:var(--orange);color:var(--orange)}
+.ra-info{font-family:var(--mono);font-size:10px;color:var(--muted)}
 </style>
 <script>
 // ═══════════════════════════════════════════════════════════════
@@ -19238,6 +19351,504 @@ tr.nf-strow-shifted {background:#DBEAFE}
   }
 
   console.log('[EOL] End-of-lifecycle module ready [eol-review p7z4]');
+})();
+</script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// SEASON ROLL AUDIT  [p7z24]
+// ═══════════════════════════════════════════════════════════════
+// FROM = the working season, TO = the next season (owNextKey). Generic, so
+// the same tab audits every roll (FA26→HO26 now, HO26→SP27 next).
+//
+// What the roll does without this tab: tier_ow / deliv_ow / force_ia /
+// end_ow and strategy notes are all stored per season, so FROM's values stop
+// driving status and Syrup configs the moment TO becomes the working season.
+// That is right for most of them; it is wrong for an SB2 re-tier that should
+// keep its store group. This tab finds the candidates and, on "Carry", writes
+// the value into TO's slot now:
+//   tier   → setOW(sku,'ns_tier_ow',…)  (the existing NS tier override; read
+//            back as the CS tier override after the roll, zero migration)
+//   end    → MANUAL_OW[sku].seasons[TO].end_ow (no NS accessor exists for it;
+//            it is read as the CS end_ow after the roll)
+//   notes  → appended to TO's notes, tagged {carriedFrom, srcTs} so the copy
+//            can be found and undone, and the FROM original stays untouched
+// "Expire" writes nothing to the data — it is the default behaviour — and is
+// only recorded so the row stops counting as undecided. Decisions live in
+// localStorage (isr_roll_audit_v1), keyed by FROM>TO.
+//
+// Buckets (tier):
+//   review — FROM tier override, SKU in TO, TO's PST tier differs, no TO
+//            override of its own (or the TO override is the one we carried)
+//   pst    — TO's PST tier already equals the FROM override: nothing to do
+//   set    — TO already has its own, independently-set tier override
+//   gone   — SKU not in TO (no PST, no TO override): expires with the SKU
+(function(){
+  var RA_KEY = 'isr_roll_audit_v1';
+  var RA = { section: 'tier', view: 'open', q: '', kind: 'store', store: '' };
+  var DATA = null;
+
+  function F(){ return (typeof CONFIG_SEASON !== 'undefined') ? CONFIG_SEASON : ''; }
+  function T(){ return (typeof owNextKey === 'function') ? (owNextKey() || '') : ''; }
+  function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function up(s){ return String(s == null ? '' : s).trim().toUpperCase(); }
+  function normTxt(s){ return String(s == null ? '' : s).replace(/\s+/g,' ').trim().toLowerCase(); }
+  function toast(m){ try { showToast(m, 2800); } catch(e){ console.log('[RollAudit] ' + m); } }
+
+  // ── decision store ────────────────────────────────────────────────────────
+  function loadAll(){ try { return JSON.parse(localStorage.getItem(RA_KEY) || '{}') || {}; } catch(e){ return {}; } }
+  function st(){
+    var all = loadAll(), k = F() + '>' + T();
+    var s = all[k] || {};
+    s.tier = s.tier || {}; s.end = s.end || {}; s.note = s.note || {};
+    s.carriedTier = s.carriedTier || {}; s.carriedEnd = s.carriedEnd || {};
+    return s;
+  }
+  function saveSt(s){
+    var all = loadAll(); all[F() + '>' + T()] = s;
+    try { localStorage.setItem(RA_KEY, JSON.stringify(all)); } catch(e){ console.warn('[RollAudit] could not save decisions', e); }
+  }
+
+  // ── matrix helpers ────────────────────────────────────────────────────────
+  function upMap(m){ var o = {}; Object.keys(m || {}).forEach(function(k){ o[up(k)] = m[k]; }); return o; }
+  function toMatrix(){
+    var t = T(); if (!t) return { state: 'none' };
+    var m = seasonMatrixFor(t);
+    if (m.state === 'idle') { try { ensureSeasonMatrix(t); } catch(e){} m = seasonMatrixFor(t); }
+    return m;
+  }
+  function fromCount(tier, row){
+    var d = (typeof effDelivFor === 'function') ? effDelivFor(row, F()) : '';
+    var m = (typeof window.getTierToStoreCount === 'function') ? (window.getTierToStoreCount(d) || {}) : {};
+    var v = upMap(m)[up(tier)];
+    return v == null ? null : v;
+  }
+  // Is `tier` a value the TO season can hold? Returns the canonical value, or
+  // null with a reason in why[0].
+  function carryValue(tier, mxUp, mxKeys, why){
+    var u = up(tier);
+    if (u === 'NONE') return 'None';
+    if (u === 'DO NOT ALLOCATE' || u === 'DROP') return 'DO NOT ALLOCATE';
+    if (u === 'CF' || u === 'CARRY FORWARD') { why[0] = 'CF marker — set the ' + T() + ' group in the panel'; return null; }
+    if (!mxUp) { why[0] = T() + ' matrix not loaded'; return null; }
+    if (!(u in mxUp)) { why[0] = 'not a ' + T() + ' store group'; return null; }
+    for (var i = 0; i < mxKeys.length; i++) if (up(mxKeys[i]) === u) return mxKeys[i];
+    return tier;
+  }
+  function pstTier(row, s){ var x = (row && row.seasons && row.seasons[s]) || {}; return String(x.tier || x.corr_tier || x.store_tier_raw || '').trim(); }
+  function inTo(row){ return !!row && typeof seasonPresent === 'function' && seasonPresent(row, T()); }
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(){
+    var f = F(), t = T(), S = st();
+    var rows = {}; (typeof ALL_ROWS !== 'undefined' ? ALL_ROWS : []).forEach(function(r){ rows[r.sku] = r; });
+    var mx = toMatrix(), mxReady = mx.state === 'ready';
+    var mxUp = mxReady ? upMap(mx.tierToStoreCount) : null, mxKeys = mxReady ? Object.keys(mx.tierToStoreCount || {}) : [];
+    var notesStore = getNotesStore();
+    var tier = [], end = [], notes = [], other = [];
+
+    Object.keys(MANUAL_OW || {}).forEach(function(sku){
+      var row = rows[sku] || null, present = inTo(row);
+      // tier
+      var fa = String(getOWFor(sku, f, 'tier_ow') || '').trim();
+      if (fa) {
+        var ho = String(getOWFor(sku, t, 'tier_ow') || '').trim();
+        var carried = S.carriedTier[sku];
+        var pst = pstTier(row, t);
+        var why = [''], cv = carryValue(fa, mxUp, mxKeys, why);
+        var it = { kind: 'tier', id: sku, sku: sku, row: row, fa: fa, ho: ho, pst: pst, carryVal: cv, carryWhy: why[0],
+                   faCt: row ? fromCount(fa, row) : null,
+                   hoFaCt: mxUp ? (mxUp[up(fa)] == null ? null : mxUp[up(fa)]) : null,
+                   hoPstCt: (mxUp && pst) ? (mxUp[up(pst)] == null ? null : mxUp[up(pst)]) : null };
+        if (!present) it.bucket = 'gone';
+        else if (ho && !(carried && ho === carried)) it.bucket = 'set';
+        else if (!ho && up(fa) === up(pst)) it.bucket = 'pst';
+        else it.bucket = 'review';
+        it.dec = it.bucket !== 'review' ? '' : (ho ? 'carry' : (S.tier[sku] === 'expire' ? 'expire' : ''));
+        tier.push(it);
+      }
+      // end date
+      var fe = String(getOWFor(sku, f, 'end_ow') || '').trim();
+      if (fe) {
+        var he = String(getOWFor(sku, t, 'end_ow') || '').trim(), ce = S.carriedEnd[sku];
+        var e = { kind: 'end', id: sku, sku: sku, row: row, fa: fe, ho: he };
+        e.bucket = !present ? 'gone' : (he && !(ce && he === ce)) ? 'set' : 'review';
+        e.dec = e.bucket !== 'review' ? '' : (he ? 'carry' : (S.end[sku] === 'expire' ? 'expire' : ''));
+        end.push(e);
+      }
+      // export-only: delivery + Force IA are season-specific by nature
+      ['deliv_ow', 'force_ia'].forEach(function(fl){
+        var v = getOWFor(sku, f, fl);
+        if (v) other.push({ sku: sku, row: row, field: fl, fa: String(v), ho: String(getOWFor(sku, t, fl) || ''), present: present });
+      });
+    });
+
+    Object.keys(notesStore || {}).forEach(function(sku){
+      var arr = getNotesFor(notesStore, sku, f); if (!arr || !arr.length) return;
+      var row = rows[sku] || null, present = inTo(row);
+      var hoArr = getNotesFor(notesStore, sku, t) || [];
+      arr.forEach(function(n){
+        var text = String(n.text || '');
+        var m = ADJUST_PREFIX_RE.exec(text.trim());
+        var rs = resolveNoteStores(text);
+        var copy = hoArr.find(function(h){ return h && h.carriedFrom === f && h.srcTs === n.ts; });
+        var native = !copy && hoArr.some(function(h){ return h && !h.carriedFrom && normTxt(h.text) === normTxt(text); });
+        var it = { kind: 'note', id: sku + '|' + n.ts, sku: sku, row: row, ts: n.ts, text: text,
+                   prefix: m ? m[1].toUpperCase() : '', rs: rs,
+                   group: !present ? 'gone' : rs ? 'store' : m ? 'config' : 'context' };
+        it.dec = it.group === 'gone' ? '' : copy ? 'carry' : native ? 'native' : (S.note[it.id] === 'expire' ? 'expire' : '');
+        notes.push(it);
+      });
+    });
+
+    tier.sort(function(a,b){ return a.sku.localeCompare(b.sku); });
+    end.sort(function(a,b){ return a.sku.localeCompare(b.sku); });
+    notes.sort(function(a,b){ return a.sku.localeCompare(b.sku) || a.ts - b.ts; });
+    DATA = { f: f, t: t, mx: mx, tier: tier, end: end, notes: notes, other: other };
+    return DATA;
+  }
+
+  function pending(d){
+    d = d || DATA || build();
+    var tierN = d.tier.filter(function(i){ return i.bucket === 'review' && !i.dec; }).length;
+    var endN  = d.end.filter(function(i){ return i.bucket === 'review' && !i.dec; }).length;
+    var noteN = d.notes.filter(function(i){ return (i.group === 'store' || i.group === 'config') && !i.dec; }).length;
+    return { tier: tierN, end: endN, notes: noteN, total: tierN + endN + noteN, from: d.f, to: d.t };
+  }
+
+  // ── visible list ──────────────────────────────────────────────────────────
+  function hay(i){
+    var r = i.row || {};
+    return (i.sku + ' ' + (r.style_desc || '') + ' ' + (r.color_desc || '') + ' ' + (i.fa || '') + ' ' + (i.pst || '') + ' ' + (i.text || '')).toLowerCase();
+  }
+  function decided(i){ return !!i.dec; }
+  function storesOf(i){
+    if (!i.rs) return [];
+    return i.rs.stores.concat(i.rs.unresolved.map(function(u){ return '? ' + u; })).concat(i.rs.stores.length || i.rs.unresolved.length ? [] : ['(no store named)']);
+  }
+  function visible(){
+    var d = DATA || build(), list;
+    if (RA.section === 'tier') list = d.tier.filter(function(i){ return i.bucket === 'review' || (RA.view === 'all' && i.bucket !== 'gone'); });
+    else if (RA.section === 'end') list = d.end.filter(function(i){ return i.bucket === 'review' || (RA.view === 'all' && i.bucket === 'set'); });
+    else {
+      list = d.notes.filter(function(i){ return i.group === RA.kind; });
+      if (RA.kind === 'store' && RA.store) list = list.filter(function(i){ return storesOf(i).indexOf(RA.store) !== -1; });
+    }
+    if (!(RA.section === 'notes' && RA.kind === 'gone')) {
+      if (RA.view === 'open') list = list.filter(function(i){ return !decided(i) && (i.bucket ? i.bucket === 'review' : true); });
+      else if (RA.view === 'done') list = list.filter(decided);
+    }
+    var q = RA.q.trim().toLowerCase();
+    if (q) list = list.filter(function(i){ return hay(i).indexOf(q) !== -1; });
+    return list;
+  }
+
+  // ── render ────────────────────────────────────────────────────────────────
+  function fmtCt(n){ return n == null ? '—' : String(n); }
+  function decCell(i){
+    if (i.bucket && i.bucket !== 'review') {
+      var lbl = i.bucket === 'set' ? (DATA.t + ' override: ' + (i.ho || '')) : i.bucket === 'pst' ? (DATA.t + ' PST already matches') : 'Expires with SKU';
+      return '<span class="ra-info">' + esc(lbl) + '</span>';
+    }
+    if (i.kind === 'note' && i.group === 'gone') return '<span class="ra-info">Expires with SKU</span>';
+    if (i.dec === 'native') return '<span class="ra-info">Already in ' + esc(DATA.t) + ' notes</span>';
+    var canCarry = i.kind !== 'tier' || !!i.carryVal || i.dec === 'carry';
+    var tip = (i.kind === 'tier' && !i.carryVal && i.dec !== 'carry') ? ' title="' + esc(i.carryWhy) + '"' : '';
+    return '<span class="ra-dec">'
+      + '<button data-act="carry" data-id="' + esc(i.id) + '"' + (i.dec === 'carry' ? ' class="on-carry"' : '') + (canCarry ? '' : ' disabled') + tip + '>Carry</button>'
+      + '<button data-act="expire" data-id="' + esc(i.id) + '"' + (i.dec === 'expire' ? ' class="on-expire"' : '') + '>Expire</button>'
+      + '</span>';
+  }
+  function skuCells(i){
+    var r = i.row || {};
+    return '<td class="l nf-pin"><a href="javascript:void(0)" data-dd="' + esc(i.sku) + '">' + esc(i.sku) + '</a></td>'
+      + '<td class="l"><div class="nf-styledesc" title="' + esc(r.style_desc) + '">' + esc(r.style_desc || '—') + '</div></td>'
+      + '<td class="l"><div class="nf-colordesc" title="' + esc(r.color_desc) + '">' + esc(r.color_desc || '—') + '</div></td>';
+  }
+  function renderHead(){
+    var t = DATA.t, f = DATA.f, h;
+    if (RA.section === 'tier')
+      h = ['SKU','Style','Color','Division', t + ' delivery', f + ' override', t + ' PST tier', f + ' notes', 'Decision'];
+    else if (RA.section === 'end')
+      h = ['SKU','Style','Color', f + ' end date override', t + ' delivery', t + ' tier', 'Decision'];
+    else
+      h = ['SKU','Style','Color', t + ' tier', 'Type', 'Stores', 'Note', 'Logged', 'Decision'];
+    document.getElementById('raHead').innerHTML = '<tr>' + h.map(function(x, k){
+      return '<th class="l' + (k === 0 ? ' nf-pin' : '') + '">' + esc(x) + '</th>'; }).join('') + '</tr>';
+  }
+  function renderBody(list){
+    var t = DATA.t, f = DATA.f, ns = getNotesStore();
+    var html = list.map(function(i){
+      var r = i.row || {};
+      var hoDeliv = r.sku ? effDelivFor(r, t) : '';
+      if (i.kind === 'tier') {
+        var nN = getNotesFor(ns, i.sku, f).length;
+        var faSub = f + ' ' + fmtCt(i.faCt) + ' · ' + t + ' ' + (i.hoFaCt == null ? (i.carryVal ? '—' : '<span class="ra-warn">' + esc(i.carryWhy) + '</span>') : i.hoFaCt) + ' stores';
+        return '<tr>' + skuCells(i)
+          + '<td class="l">' + esc(r.division || '—') + '</td>'
+          + '<td class="l">' + esc(hoDeliv || '—') + '</td>'
+          + '<td class="l"><span class="ra-tier">' + esc(i.fa) + '</span><span class="ra-sub">' + faSub + '</span></td>'
+          + '<td class="l"><span class="ra-tier">' + esc(i.pst || '—') + '</span><span class="ra-sub">' + (i.pst ? t + ' ' + fmtCt(i.hoPstCt) + ' stores' : 'no ' + t + ' PST tier') + '</span></td>'
+          + '<td class="nf-num">' + (nN || '—') + '</td>'
+          + '<td class="l">' + decCell(i) + '</td></tr>';
+      }
+      if (i.kind === 'end') {
+        return '<tr>' + skuCells(i)
+          + '<td class="l ra-tier">' + esc(typeof fmtEndOWDisplay === 'function' ? fmtEndOWDisplay(i.fa) : i.fa) + '</td>'
+          + '<td class="l">' + esc(hoDeliv || '—') + '</td>'
+          + '<td class="l ra-tier">' + esc((r.sku ? effTierFor(r, t) : '') || '—') + '</td>'
+          + '<td class="l">' + decCell(i) + '</td></tr>';
+      }
+      var stores = storesOf(i).map(function(s){
+        return '<span class="ra-store' + (s.charAt(0) === '?' || s.charAt(0) === '(' ? ' unres' : '') + '">' + esc(s) + '</span>'; }).join('');
+      var dt = i.ts ? new Date(i.ts) : null;
+      return '<tr>' + skuCells(i)
+        + '<td class="l ra-tier">' + esc((r.sku ? effTierFor(r, t) : '') || '—') + '</td>'
+        + '<td class="l ra-tier">' + esc(i.prefix || '—') + '</td>'
+        + '<td class="l">' + (stores || '<span class="muted-cell">—</span>') + '</td>'
+        + '<td class="l"><div class="ra-note">' + esc(i.text) + '</div></td>'
+        + '<td class="nf-num">' + (dt && !isNaN(dt) ? (dt.getMonth() + 1) + '/' + dt.getDate() + '/' + String(dt.getFullYear()).slice(2) : '—') + '</td>'
+        + '<td class="l">' + decCell(i) + '</td></tr>';
+    }).join('');
+    document.getElementById('raBody').innerHTML = html;
+    var empty = document.getElementById('raEmpty');
+    if (!list.length) {
+      empty.style.display = '';
+      empty.textContent = RA.view === 'open' ? 'Nothing undecided here. Switch Show to Decided or All to review your choices.' : 'No rows match.';
+    } else empty.style.display = 'none';
+  }
+  function tile(label, val, sub, sec, kind, color, tip){
+    var on = RA.section === sec && (!kind || RA.kind === kind);
+    return '<div class="nf-stat ra-tile' + (on ? ' on' : '') + '" data-sec="' + sec + '"' + (kind ? ' data-kind="' + kind + '"' : '') + ' title="' + esc(tip) + '">'
+      + '<div class="nf-stat-val"' + (color ? ' style="color:' + color + '"' : '') + '>' + val + '</div>'
+      + '<div class="nf-stat-lbl">' + esc(label) + (sub ? ' · ' + esc(sub) : '') + '</div></div>';
+  }
+  function renderStats(){
+    var d = DATA, p = pending(d);
+    function cnt(arr, fn){ return arr.filter(fn).length; }
+    var tierRev = cnt(d.tier, function(i){ return i.bucket === 'review'; });
+    var endRev = cnt(d.end, function(i){ return i.bucket === 'review'; });
+    var g = {}; d.notes.forEach(function(i){ g[i.group] = (g[i.group] || 0) + 1; });
+    var gOpen = {}; d.notes.forEach(function(i){ if (!i.dec && i.group !== 'gone') gOpen[i.group] = (gOpen[i.group] || 0) + 1; });
+    var amber = 'var(--orange)';
+    document.getElementById('raStats').innerHTML = [
+      tile('Tier overrides', p.tier + ' / ' + tierRev, 'undecided', 'tier', null, p.tier ? amber : 'var(--green)',
+        d.f + ' tier overrides on SKUs in ' + d.t + ' whose ' + d.t + ' PST tier is different. ' + cnt(d.tier, function(i){ return i.bucket === 'pst'; }) + ' already match the PST, '
+        + cnt(d.tier, function(i){ return i.bucket === 'set'; }) + ' have their own ' + d.t + ' override, ' + cnt(d.tier, function(i){ return i.bucket === 'gone'; }) + ' expire with the SKU.'),
+      tile('End dates', p.end + ' / ' + endRev, 'undecided', 'end', null, p.end ? amber : 'var(--green)', d.f + ' End Date Overrides on SKUs that continue into ' + d.t + '.'),
+      tile('SR / ADD notes', (gOpen.store || 0) + ' / ' + (g.store || 0), 'undecided', 'notes', 'store', gOpen.store ? amber : 'var(--green)', 'Store-named notes the Configs Generator acts on. Filter by store to decide a whole door at once.'),
+      tile('Other config notes', (gOpen.config || 0) + ' / ' + (g.config || 0), 'undecided', 'notes', 'config', gOpen.config ? amber : 'var(--green)', 'ADJ / ISS / DROP and other prefixed notes on SKUs in ' + d.t + '.'),
+      tile('Context notes', (gOpen.context || 0) + ' / ' + (g.context || 0), 'undecided', 'notes', 'context', '', 'Free-text notes. They do not affect configs and do not block the flip.'),
+      tile('Notes expiring', String(g.gone || 0), 'SKU not in ' + d.t, 'notes', 'gone', '', 'Notes on SKUs with no ' + d.t + ' presence. Nothing to decide.'),
+      tile(d.t + ' matrix', d.mx.state === 'ready' ? '✓' : d.mx.state === 'loading' ? '…' : '✕', d.mx.state, RA.section, null,
+        d.mx.state === 'ready' ? 'var(--green)' : amber, 'Store counts and carry validation use the ' + d.t + ' Store Matrix.')
+    ].join('');
+  }
+  function renderStoreSel(){
+    var sel = document.getElementById('raStoreSel'); if (!sel) return;
+    var cnt = {};
+    DATA.notes.forEach(function(i){
+      if (i.group !== 'store') return;
+      storesOf(i).forEach(function(s){ var c = cnt[s] || (cnt[s] = { all: 0, open: 0 }); c.all++; if (!i.dec) c.open++; });
+    });
+    var names = Object.keys(cnt).sort(function(a,b){ return cnt[b].open - cnt[a].open || a.localeCompare(b); });
+    if (RA.store && !cnt[RA.store]) RA.store = '';
+    sel.innerHTML = '<option value="">All stores</option>' + names.map(function(n){
+      return '<option value="' + esc(n) + '"' + (n === RA.store ? ' selected' : '') + '>' + esc(n) + ' (' + cnt[n].open + ' open / ' + cnt[n].all + ')</option>'; }).join('');
+    var show = RA.kind === 'store';
+    sel.style.display = show ? '' : 'none';
+    document.getElementById('raStoreLbl').style.display = show ? '' : 'none';
+  }
+  function segs(){
+    [['raSecTier','tier'],['raSecEnd','end'],['raSecNotes','notes']].forEach(function(p){ var b = document.getElementById(p[0]); if (b) b.classList.toggle('active', RA.section === p[1]); });
+    [['raViewOpen','open'],['raViewDone','done'],['raViewAll','all']].forEach(function(p){ var b = document.getElementById(p[0]); if (b) b.classList.toggle('active', RA.view === p[1]); });
+    [['raKindStore','store'],['raKindConfig','config'],['raKindContext','context'],['raKindGone','gone']].forEach(function(p){ var b = document.getElementById(p[0]); if (b) b.classList.toggle('active', RA.kind === p[1]); });
+    document.getElementById('raNoteBar').style.display = RA.section === 'notes' ? 'flex' : 'none';
+  }
+  function renderBulk(list){
+    var bar = document.getElementById('raBulk');
+    var open = list.filter(function(i){ return !i.dec && (!i.bucket || i.bucket === 'review') && i.group !== 'gone'; });
+    var carryable = open.filter(function(i){ return i.kind !== 'tier' || !!i.carryVal; });
+    bar.style.display = open.length ? 'flex' : 'none';
+    document.getElementById('raBulkCount').textContent = open.length + ' undecided shown';
+    var cb = document.getElementById('raBulkCarry');
+    cb.textContent = carryable.length === open.length ? 'Carry all undecided shown' : 'Carry ' + carryable.length + ' carryable';
+    cb.disabled = !carryable.length;
+  }
+
+  function raRefresh(){
+    if (!document.getElementById('raPanel')) return;
+    var t = T();
+    if (!t) {
+      document.getElementById('raSubtitle').textContent = 'No next season after ' + F() + '.';
+      return;
+    }
+    build();
+    segs(); renderHead();
+    var list = visible();
+    renderBody(list); renderStats(); renderStoreSel(); renderBulk(list);
+    document.getElementById('raTitle').textContent = '🔁 Season Roll Audit — ' + DATA.f + ' → ' + DATA.t;
+    var p = pending();
+    document.getElementById('raSubtitle').textContent = p.total
+      ? (p.total + ' decision(s) left before flipping to ' + DATA.t + '. Carries write to ' + DATA.t + ' now and take effect when it becomes the working season. Expire is what the flip does anyway.')
+      : ('All overrides and config notes decided. Export the snapshot, then flip the working season to ' + DATA.t + '.');
+  }
+
+  // ── actions ───────────────────────────────────────────────────────────────
+  function find(id){
+    var d = DATA || build();
+    var src = RA.section === 'tier' ? d.tier : RA.section === 'end' ? d.end : d.notes;
+    return src.find(function(i){ return i.id === id; });
+  }
+  // Apply decisions to a list of items in one pass: one MANUAL_OW persist, one
+  // notes save (one cloud push), one recompute per touched row.
+  function apply(items, act){
+    var S = st(), f = F(), t = T(), touchOW = false, touchNotes = false, rowsToRe = {}, notesStore = null, n = 0, skipped = 0;
+    var tsBase = Date.now();
+    items.forEach(function(i, k){
+      if (i.kind === 'tier') {
+        if (act === 'carry' && i.dec !== 'carry') {
+          if (!i.carryVal) { skipped++; return; }
+          setOW(i.sku, 'ns_tier_ow', i.carryVal); S.carriedTier[i.sku] = i.carryVal; delete S.tier[i.sku];
+          touchOW = true; rowsToRe[i.sku] = 1; n++;
+        } else if (act !== 'carry' && i.dec === 'carry') {
+          if (S.carriedTier[i.sku] && getOWFor(i.sku, t, 'tier_ow') === S.carriedTier[i.sku]) { setOW(i.sku, 'ns_tier_ow', ''); touchOW = true; rowsToRe[i.sku] = 1; }
+          delete S.carriedTier[i.sku];
+          if (act === 'expire') S.tier[i.sku] = 'expire'; else delete S.tier[i.sku];
+          n++;
+        } else if (act === 'expire') { S.tier[i.sku] = 'expire'; n++; }
+        else if (act === 'reset') { delete S.tier[i.sku]; n++; }
+      } else if (i.kind === 'end') {
+        var mo = MANUAL_OW[i.sku] || (MANUAL_OW[i.sku] = {});
+        if (act === 'carry' && i.dec !== 'carry') {
+          mo._owv = 2; mo.seasons = mo.seasons || {}; mo.seasons[t] = mo.seasons[t] || {};
+          mo.seasons[t].end_ow = i.fa; owLegacyMirror(mo);
+          S.carriedEnd[i.sku] = i.fa; delete S.end[i.sku]; touchOW = true; n++;
+        } else if (act !== 'carry' && i.dec === 'carry') {
+          if (mo.seasons && mo.seasons[t] && S.carriedEnd[i.sku] && mo.seasons[t].end_ow === S.carriedEnd[i.sku]) { delete mo.seasons[t].end_ow; owLegacyMirror(mo); touchOW = true; }
+          delete S.carriedEnd[i.sku];
+          if (act === 'expire') S.end[i.sku] = 'expire'; else delete S.end[i.sku];
+          n++;
+        } else if (act === 'expire') { S.end[i.sku] = 'expire'; n++; }
+        else if (act === 'reset') { delete S.end[i.sku]; n++; }
+      } else {
+        if (i.group === 'gone' || i.dec === 'native') return;
+        if (!notesStore) notesStore = getNotesStore();
+        if (act === 'carry' && i.dec !== 'carry') {
+          if (!notesStore[i.sku] || Array.isArray(notesStore[i.sku])) notesStore[i.sku] = upgradeNotesRow(notesStore[i.sku]);
+          if (!notesStore[i.sku][t]) notesStore[i.sku][t] = [];
+          notesStore[i.sku][t].push({ ts: tsBase + k, text: i.text, carriedFrom: f, srcTs: i.ts });
+          delete S.note[i.id]; touchNotes = true; n++;
+        } else if (act !== 'carry' && i.dec === 'carry') {
+          var arr = getNotesFor(notesStore, i.sku, t);
+          var kept = arr.filter(function(h){ return !(h && h.carriedFrom === f && h.srcTs === i.ts); });
+          if (kept.length !== arr.length) {
+            if (kept.length) notesStore[i.sku][t] = kept; else delete notesStore[i.sku][t];
+            if (notesStore[i.sku] && !Object.keys(notesStore[i.sku]).length) delete notesStore[i.sku];
+            touchNotes = true;
+          }
+          if (act === 'expire') S.note[i.id] = 'expire'; else delete S.note[i.id];
+          n++;
+        } else if (act === 'expire') { S.note[i.id] = 'expire'; n++; }
+        else if (act === 'reset') { delete S.note[i.id]; n++; }
+      }
+    });
+    saveSt(S);
+    if (touchOW) {
+      try { persistManualOW(); } catch(e){ console.warn('[RollAudit] persistManualOW failed', e); }
+      Object.keys(rowsToRe).forEach(function(sku){
+        var row = ALL_ROWS.find(function(r){ return r.sku === sku; });
+        if (!row) return;
+        row.ns_tier_ow = getOW(sku, 'ns_tier_ow');
+        try { recomputeRowDerived(row); } catch(e){ console.warn('[RollAudit] recompute failed for ' + sku, e); }
+      });
+      try { applyFiltersAndRender(); } catch(e){}
+    }
+    if (touchNotes) { saveNotesStore(notesStore); try { invalidateNoteIndex(); } catch(e){} }
+    raRefresh();
+    return { n: n, skipped: skipped };
+  }
+
+  function onClick(ev){
+    var a = ev.target.closest && ev.target.closest('[data-dd]');
+    if (a) { ev.preventDefault(); openDrilldown(a.getAttribute('data-dd')); return; }
+    var b = ev.target.closest && ev.target.closest('button[data-act]');
+    if (!b || b.disabled) return;
+    var i = find(b.getAttribute('data-id')); if (!i) return;
+    var act = b.getAttribute('data-act');
+    apply([i], i.dec === act ? 'reset' : act);   // clicking the active choice clears it
+  }
+  function onTileClick(ev){
+    var tl = ev.target.closest && ev.target.closest('.ra-tile'); if (!tl) return;
+    RA.section = tl.getAttribute('data-sec') || RA.section;
+    if (tl.getAttribute('data-kind')) RA.kind = tl.getAttribute('data-kind');
+    raRefresh();
+  }
+
+  window.raSetSection = function(s){ RA.section = s; raRefresh(); };
+  window.raSetView    = function(v){ RA.view = v; raRefresh(); };
+  window.raSetKind    = function(k){ RA.kind = k; RA.store = ''; raRefresh(); };
+  window.raSetStore   = function(s){ RA.store = s; raRefresh(); };
+  window.raSetQuery   = function(q){ RA.q = q || ''; raRefresh(); };
+  window.raBulk = function(act){
+    var list = visible().filter(function(i){ return !i.dec && (!i.bucket || i.bucket === 'review') && i.group !== 'gone'; });
+    if (act === 'carry') list = list.filter(function(i){ return i.kind !== 'tier' || !!i.carryVal; });
+    if (!list.length) return;
+    var what = RA.section === 'notes' ? 'note(s)' : RA.section === 'end' ? 'end date override(s)' : 'tier override(s)';
+    var scope = (RA.section === 'notes' && RA.kind === 'store' && RA.store) ? ' for ' + RA.store : '';
+    var msg = act === 'carry'
+      ? 'Carry ' + list.length + ' ' + what + scope + ' into ' + T() + '?\n\nThey are written to ' + T() + ' now and drive configs once ' + T() + ' is the working season.'
+      : 'Mark ' + list.length + ' ' + what + scope + ' as Expire?\n\nNothing in the data changes; they simply stop counting as undecided.';
+    if (!confirm(msg)) return;
+    var r = apply(list, act);
+    toast((act === 'carry' ? 'Carried ' : 'Expired ') + r.n + ' ' + what + (r.skipped ? ' · ' + r.skipped + ' skipped' : ''));
+  };
+  window.raExportCsv = function(){
+    var d = build(), f = d.f, t = d.t;
+    var head = ['Section','SKU','Style','Color','Bucket','Field / note type','Stores', f + ' value', t + ' PST tier', t + ' value now','Decision'];
+    function q(v){ var s = (typeof csvSanitize === 'function') ? csvSanitize(v == null ? '' : v) : String(v == null ? '' : v); return /[",]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; }
+    function decTxt(i){ return i.dec === 'carry' ? 'Carry' : i.dec === 'expire' ? 'Expire' : i.dec === 'native' ? 'Already in ' + t : (i.bucket && i.bucket !== 'review') || i.group === 'gone' ? 'n/a' : 'Undecided'; }
+    var bucketLbl = { review: 'Review', pst: t + ' PST matches', set: t + ' override already set', gone: 'SKU not in ' + t };
+    var out = [head.map(q).join(',')];
+    function rowOut(sec, i, bucket, field, stores, fa, pst, ho, dec){
+      var r = i.row || {};
+      out.push([sec, i.sku, r.style_desc || '', r.color_desc || '', bucket, field, stores, fa, pst, ho, dec].map(q).join(','));
+    }
+    d.tier.forEach(function(i){ rowOut('Tier override', i, bucketLbl[i.bucket], 'tier_ow', '', i.fa, i.pst, i.ho, decTxt(i)); });
+    d.end.forEach(function(i){ rowOut('End date override', i, bucketLbl[i.bucket], 'end_ow', '', i.fa, '', i.ho, decTxt(i)); });
+    d.other.forEach(function(o){ rowOut('Season-specific override', o, o.present ? 'Expires on roll' : bucketLbl.gone, o.field, '', o.fa, '', o.ho, 'Expire (default)'); });
+    var gl = { store: 'SR / ADD', config: 'Other config', context: 'Context', gone: 'SKU not in ' + t };
+    d.notes.forEach(function(i){ rowOut('Strategy note', i, gl[i.group], i.prefix || 'free text', storesOf(i).join('; '), i.text, '', '', decTxt(i)); });
+    var blob = new Blob([out.join('\n')], { type: 'text/csv' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'SeasonRollAudit_' + f + '_to_' + t + '_' + new Date().toISOString().slice(0,10) + '.csv';
+    a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 60000);
+    toast('Exported ' + (out.length - 1) + ' rows');
+  };
+  window.raRefresh = raRefresh;
+  window.rollAuditPending = function(){ try { return pending(build()); } catch(e){ console.warn('[RollAudit] pending check failed', e); return null; } };
+  window.raSeasonMatrixChanged = function(id){
+    if (id === T() && typeof ACTIVE_TAB !== 'undefined' && ACTIVE_TAB === 'roll') raRefresh();
+  };
+  // Console: rollAudit() → bucket counts for the current FROM→TO pair.
+  window.rollAudit = function(){
+    var d = build(), c = {};
+    d.tier.forEach(function(i){ c['tier · ' + i.bucket] = (c['tier · ' + i.bucket] || 0) + 1; });
+    d.end.forEach(function(i){ c['end · ' + i.bucket] = (c['end · ' + i.bucket] || 0) + 1; });
+    d.notes.forEach(function(i){ c['note · ' + i.group] = (c['note · ' + i.group] || 0) + 1; });
+    console.table(c); console.log('[RollAudit] pending', pending(d)); return pending(d);
+  };
+
+  document.addEventListener('DOMContentLoaded', function(){
+    var tb = document.getElementById('raBody'); if (tb) tb.addEventListener('click', onClick);
+    var ts = document.getElementById('raStats'); if (ts) ts.addEventListener('click', onTileClick);
+  });
+  if (document.readyState !== 'loading') {
+    var tb0 = document.getElementById('raBody'); if (tb0) tb0.addEventListener('click', onClick);
+    var ts0 = document.getElementById('raStats'); if (ts0) ts0.addEventListener('click', onTileClick);
+  }
 })();
 </script>
 
