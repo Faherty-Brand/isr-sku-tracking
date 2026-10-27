@@ -356,6 +356,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .ia-skurow-tag.conf{background:#ecfdf5;border-color:#a7f3d0;color:#15803d}
 .ia-skurow-tag.pend{background:#fffbeb;border-color:#fde68a;color:#b45309}
 .ia-skurow-tag.ns{background:#eef2ff;border-color:#c7d2fe;color:#4338ca}
+.ia-skurow-tag.ps{background:#fff7ed;border-color:#fed7aa;color:#c2410c}
 
 /* Wider stack on narrow screens — collapse cards to 1 column at <1100px */
 @media (max-width:1100px){
@@ -1095,7 +1096,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit (p7z24)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts (p7z25)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -4280,6 +4281,7 @@ async function buildFromParsed(P) {
   try { seasonMatricesOnBuild(P); } catch (e) { console.warn('[SeasonMatrix] build hook failed', e); }
   // Expose flowCalMap globally so computeLateList can resolve alloc dates for any season
   window._flowCalMap = lookups.flowCalMap;
+  window._flowCalBySzn = lookups.flowCalBySzn || {};   // [p7z25] late-PS-receipt route
   window._invOnline  = lookups.invOnline;   // SKU → online OH (SUMIFS from ISR INV Pull)
   // [p7k] SKU → { storeName: units } retail OH, for the NF Released view's
   // actual per-store depth. Sparse; only stores actually holding units appear.
@@ -4893,6 +4895,11 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
   // ── Flow Calendar ──
   // Col A (0) = Season, Col B (1) = Flow Month code, Col I (8) = Allocation Drop Date
   const flowCalMap = {}; // month_code → {allocDate}
+  // [p7z25] Season-keyed twin: SEASON → month_code → {allocDate}. flowCalMap is
+  // month-only (last row wins), which is fine for the working season but can
+  // resolve a PRIOR-season month to the wrong year once a calendar carries more
+  // than one season. The late-PS-receipt route reads this first.
+  const flowCalBySzn = {};
   let fcHeaderIdx = -1;
   for (let i = 0; i < Math.min(5, flowCalRows.length); i++) {
     const r0 = String(flowCalRows[i]?.[0]||'').toLowerCase();
@@ -4910,6 +4917,8 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     const allocDate = parseXLDate(r[8]);
     if (monthCode && allocDate && !isNaN(allocDate)) {
       flowCalMap[monthCode] = {allocDate};
+      { const _fcSzn = String(r[0] || '').trim().toUpperCase();   // [p7z25]
+        if (_fcSzn) (flowCalBySzn[_fcSzn] = flowCalBySzn[_fcSzn] || {})[monthCode] = {allocDate}; }
       console.log(`[FlowCal] ${monthCode} → allocDate: ${fmtDate4(allocDate)} (raw: ${r[8]})`);
     }
   }
@@ -5618,7 +5627,7 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     pstBySeasonSku, pstBySku,
     invOnline, invRetail, invTier, invByStore, priceLevel,
     lcwOnline, lcwRetail,
-    newnessMap, flowCalMap,
+    newnessMap, flowCalMap, flowCalBySzn,
     wipMap, wipXSBySku,
     // Single seasonal matrix — one tier→store-count map, delivery-agnostic.
     tierToStoreCount: _m.tierToStoreCount,
@@ -6808,6 +6817,9 @@ function computeAllRows(lookups) {
       get: function(){ return buildSeasonsMap(this); },
       enumerable: false, configurable: true,
     });
+    // [p7z25] Late PS receipts — needs row.seasons, so it runs last. TWO-SITE
+    // PARITY with recomputeRowDerived (after its step 5).
+    applyPsLate(rowObj);
     rows.push(rowObj);
   });
 
@@ -7882,6 +7894,153 @@ function computeStatus({sku, fp_md, is_md, alloc_date, new_cf, cs_deliv1, ns_del
   return 'Pending Allocation: ASAP';
 }
 
+// ════════════════════════════════════════════════════════
+// LATE PS RECEIPTS  [p7z25]
+// ════════════════════════════════════════════════════════
+// ROOT CAUSE: Status reads only the WORKING season's PST row. After a flip
+// (FA26 → HO26) an FA26 SKU that never got its initial drop either
+//   • has no HO26 delivery           → 'N/A: Out of Szn, MD', or
+//   • is re-coded in HO26 as CF      → 'Allocated LS (CF)' (its FA26 tier now
+//                                       reads as a prior-season tier),
+// and the IA Volume tab then drops it (N/A routes to NS, which has nothing).
+// Late receipts against the previous season therefore vanished at the flip.
+//
+// RULE: re-evaluate the row on its PREVIOUS-season delivery — exactly as the
+// previous season's own Status would have — when ALL of these hold:
+//   1. base Status is 'N/A: Out of Szn, MD' (and the CS delivery isn't the
+//      explicit "None" opt-out) or 'Allocated LS (CF)';
+//   2. PS effective delivery + allocating PS tier (override-aware);
+//   3. the SKU was NEWNESS in the PS season (seasonNewCF) — a SKU that was
+//      already CF there was never owed an initial drop, so continuation
+//      programs stay put;
+//   4. the PS delivery resolves to a Flow Cal drop date (season-keyed first);
+//   5. NOT allocated against it: no Newness Log date on/after
+//      (PS drop date − PS_LATE_EARLY_WINDOW_DAYS) — same tolerance as the NS
+//      route in the IA tab, so an early drop still counts;
+//   6. something to allocate: PLG on hand, a Syrup IA ask, or inbound WIP.
+// Status strings are unchanged (READY TO ALLOCATE / READY - Insufficient Inv! /
+// Pending Allocation…) so every filter, stat and pill keeps working; the row
+// carries ps_late* fields and the pill gets a season tag.
+//
+// SCOPE — status/visibility only. new_cf, config checks and the Configs
+// Generator still follow the working season: an N/A-routed SKU emits no config
+// rows (its existing PS-season Syrup IA config is left untouched, since the
+// generator only replaces rows for SKUs it lists). A CF-routed SKU still
+// generates as CF — set Force IA on it if it should drop as IA.
+//
+// TWO-SITE PARITY: applyPsLate runs at the end of each row in computeAllRows
+// and after step 5 of recomputeRowDerived; both start from a freshly computed
+// base Status, so the route can't stick after an override clears it.
+const PS_LATE_EARLY_WINDOW_DAYS = 42;
+
+function psLateAllocDate(psKey, deliv) {
+  const by  = (window._flowCalBySzn || {})[String(psKey || '').toUpperCase()] || {};
+  const hit = by[deliv] || (window._flowCalMap || {})[deliv] || null;
+  return (hit && hit.allocDate instanceof Date && !isNaN(hit.allocDate)) ? hit.allocDate : null;
+}
+
+// Pure: returns the route (or null) plus why. Used by applyPsLate and psLateWhy.
+function psLateResolve(row, explain) {
+  const no = (why) => explain ? { route: null, why } : null;
+  const psKey = (typeof SEASONS !== 'undefined' && SEASONS) ? SEASONS.ps : '';
+  if (!row || !psKey || psKey === CONFIG_SEASON) return no('no previous season');
+  const base  = String(row.status || '');
+  const fromNA = base === 'N/A: Out of Szn, MD';
+  const fromCF = base === 'Allocated LS (CF)';
+  if (!fromNA && !fromCF) return no('base status ' + (base || '—') + ' is not N/A: Out of Szn or Allocated LS (CF)');
+  if (fromNA && String(row.deliv_ow || '').trim().toUpperCase() === 'NONE') return no('CS delivery override is "None" (explicit opt-out)');
+  const deliv = effDelivFor(row, psKey);
+  if (!deliv) return no('no ' + psKey + ' delivery');
+  const tier = effTierFor(row, psKey);
+  if (!tier || NON_ALLOC_TIERS.has(tier) || tier.indexOf('DO NOT ALLOCATE') !== -1) return no(psKey + ' tier "' + (tier || '—') + '" does not allocate');
+  // Minimal projection (only v_deliv1 / v_tier are read) — avoids building a
+  // full seasonProjection (matrix lookups) for every candidate row at load.
+  const psNewCf = seasonNewCF(row, psKey, { v_deliv1: deliv, v_tier: tier });
+  if (psNewCf !== 'Newness') return no('was ' + (psNewCf || 'unclassified') + ' in ' + psKey + ' (not owed an initial drop)');
+  const allocDate = psLateAllocDate(psKey, deliv);
+  if (!allocDate) return no('no Flow Cal drop date for ' + psKey + ' ' + deliv);
+  const ah = row.alloc_date ? parseXLDate(row.alloc_date) : null;
+  if (ah && !isNaN(ah) && ah.getTime() >= allocDate.getTime() - PS_LATE_EARLY_WINDOW_DAYS * 86400000)
+    return no('already allocated (Newness Log ' + fmtDate4(ah) + ' vs ' + psKey + ' drop ' + fmtDate4(allocDate) + ')');
+  const plg = +row.plg_oh || 0, ia = +row.syrup_ia || 0;
+  const pendStr = row.ps_dc_pend || row.xs_pend_date || '';
+  if (plg <= 0 && ia <= 0 && !pendStr) return no('nothing to allocate (no PLG, no Syrup IA, no inbound WIP)');
+  const route = { season: psKey, deliv, tier, allocDate, ah: (ah && !isNaN(ah)) ? ah : null,
+                  from: fromCF ? 'CF' : 'N/A', pendStr };
+  return explain ? { route, why: 'routed' } : route;
+}
+
+function clearPsLate(row) {
+  row.ps_late = ''; row.ps_late_deliv = ''; row.ps_late_alloc = '';
+  row.ps_late_tier = ''; row.ps_late_from = ''; row.ps_late_base = '';
+}
+
+// Mutates the row when the route applies. Returns true if it did.
+function applyPsLate(row) {
+  const r = psLateResolve(row);
+  if (!r) { clearPsLate(row); return false; }
+  const base = row.status;
+  const status = computeStatus({
+    sku: row.sku, fp_md: row.fp_md, is_md: row.fp_md === 'Markdown',
+    alloc_date: r.ah, new_cf: 'Newness',
+    cs_deliv1: r.deliv, ns_deliv1: '',
+    deliv_alloc_date: r.allocDate,
+    force_ia: row.force_ia || '', syrup_ia: +row.syrup_ia || 0, syrup_rp: +row.syrup_rp || 0,
+    syrupCfg: {}, cs_lifecycle: '',
+    omni_oh: row.omni_oh || 0, tier_oh: row.tier_oh || 0, plg_oh: +row.plg_oh || 0,
+    effective_tier: r.tier, ns_tier: '',
+  });
+  row.status       = status;
+  row.ps_late      = r.season;
+  row.ps_late_deliv = r.deliv;
+  row.ps_late_alloc = fmtDate4(r.allocDate);
+  row.ps_late_tier = r.tier;
+  row.ps_late_from = r.from;
+  row.ps_late_base = base;
+  const isIA = row._cfgStatusUpper ? row._cfgStatusUpper === 'IA' : (+row.syrup_ia || 0) > 0;
+  const pend = r.pendStr ? parseXLDate(r.pendStr) : null;
+  row.newness_proj = computeNewnessProj({
+    status, isIA, plg_oh: +row.plg_oh || 0, syrup_ia: +row.syrup_ia || 0,
+    allocDate: r.allocDate, pendDate: (pend && !isNaN(pend)) ? pend : null,
+  });
+  if (typeof computeInStock === 'function') row.in_stock = computeInStock(row);
+  return true;
+}
+
+// Small tag appended to the Status pill on routed rows (grid, repaint, panel).
+function psLateTagHtml(row) {
+  if (!row || !row.ps_late) return '';
+  const cfNote = row.ps_late_from === 'CF'
+    ? ' Configs still generate as CF for ' + CONFIG_SEASON + ' — set Force IA if it should drop as IA.'
+    : ' No ' + CONFIG_SEASON + ' config is generated; the existing ' + row.ps_late + ' Syrup config is left as is.';
+  const t = 'Late ' + row.ps_late + ' receipt — evaluated on its ' + row.ps_late + ' ' + row.ps_late_deliv
+          + ' delivery (drop ' + row.ps_late_alloc + ', tier ' + row.ps_late_tier + ') because it was never allocated.'
+          + ' Would otherwise read: ' + (row.ps_late_base || '—') + '.' + cfNote;
+  return ' <span class="pill pill-muted" style="font-size:9px;padding:0 5px;cursor:help" title="'
+       + t.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;') + '">' + row.ps_late + '</span>';
+}
+
+// F12: psLateList() → every routed row; psLateWhy('SKU') → why a SKU is/isn't.
+function psLateList() {
+  const rows = (typeof ALL_ROWS !== 'undefined' ? ALL_ROWS : []).filter(r => r.ps_late);
+  console.table(rows.map(r => ({ sku: r.sku, from: r.ps_late_base, status: r.status,
+    deliv: r.ps_late + ' ' + r.ps_late_deliv, drop: r.ps_late_alloc, tier: r.ps_late_tier,
+    newnessLog: r.alloc_date || '', plg: +r.plg_oh || 0, ia: +r.syrup_ia || 0,
+    pend: r.ps_dc_pend || r.xs_pend_date || '' })));
+  return rows.length;
+}
+function psLateWhy(sku) {
+  const k = String(sku || '').trim().toUpperCase();
+  const row = (typeof ALL_ROWS !== 'undefined' ? ALL_ROWS : []).find(r => String(r.sku).toUpperCase() === k);
+  if (!row) { console.log('[psLateWhy] SKU not found:', sku); return null; }
+  if (row.ps_late) { console.log('[psLateWhy] ' + row.sku + ': ROUTED on ' + row.ps_late + ' ' + row.ps_late_deliv + ' → ' + row.status + ' (base ' + row.ps_late_base + ')'); return true; }
+  const res = psLateResolve(row, true);
+  console.log('[psLateWhy] ' + row.sku + ': not routed — ' + res.why);
+  return false;
+}
+window.psLateList = psLateList;
+window.psLateWhy  = psLateWhy;
+
 // ── Thursday–Wednesday allocation week anchors ───────────────────────────────
 // Allocation drops ship Thursday morning. The window is anchored to the
 // UPCOMING drop — thisDropThu = the first Thursday on or after `today` (today
@@ -8202,6 +8361,12 @@ function recomputeRowDerived(row) {
     allocDate: newAllocDate,
     pendDate: wipPendDate && !isNaN(wipPendDate) ? wipPendDate : null,
   });
+
+  // 5b. [p7z25] Late PS receipts — re-evaluated from the fresh base Status
+  //     above (and clears itself when an override takes the row out of scope).
+  //     TWO-SITE PARITY with the end of computeAllRows. Also re-derives
+  //     in_stock, which reads status.
+  if (!applyPsLate(row) && typeof computeInStock === 'function') row.in_stock = computeInStock(row);
 
   // 6. Config Status — when a tier override changes cs_store_ct, the
   //    expected-vs-configured count comparison flips. Without this step a
@@ -9545,7 +9710,7 @@ function renderPage() {
         const divPill = v==='Mens'?'pill-blue':v==='Womens'?'pill-purple':v==='Accessories'?'pill-teal':v==='Footwear'?'pill-orange':v==='Kids'?'pill-yellow':'pill-muted';
         return `<td><span class="pill ${divPill}">${v}</span></td>`;
       }
-      if (id === 'status') return `<td><span class="pill ${statusClass(v)}">${v}</span></td>`;
+      if (id === 'status') return `<td><span class="pill ${statusClass(v)}">${v}</span>${psLateTagHtml(row)}</td>`;
       if (id === 'newness_proj') {
         if (!v) return `<td><span class="muted-cell">—</span></td>`;
         const cls = v === 'Allocated' ? 'pill-green'
@@ -9768,7 +9933,7 @@ function openDrilldown(sku) {
   const sections = [
     {title: allocTitle, rows: [
       ...(ddIsConfig ? [] : [['__note__', `Delivery, Store Group, Store Count, Lifecycle &amp; End Week reflect <b>${ddSeasonKey}</b> (season toggle). Status, alloc dates &amp; Newness Proj are for the working season <b>${CONFIG_SEASON}</b>.`]]),
-      ['Status', `<span class="pill ${statusClass(row.status)}">${row.status||'—'}</span>`],
+      ['Status', `<span class="pill ${statusClass(row.status)}">${row.status||'—'}</span>${psLateTagHtml(row)}`],
       ['New/CF', newCfPillHtml(row)],
       ['FP/MD', row.fp_md ? `<span class="pill ${row.fp_md==='Markdown'?'pill-yellow':'pill-blue'}">${row.fp_md}</span>` : '—'],
       ['Lifecycle', V.v_lifecycle || '—'],
@@ -11013,7 +11178,7 @@ function refreshDependentCells(tr, row) {
       cell.innerHTML = newCfPillHtml(row, true);   // [p7z14] season-aware
     }
     if (id === 'status') {
-      cell.innerHTML = `<span class="pill ${statusClass(row.status)}">${row.status||'—'}</span>`;
+      cell.innerHTML = `<span class="pill ${statusClass(row.status)}">${row.status||'—'}</span>${psLateTagHtml(row)}`;
     }
     if (id === 'cs_ontime') {
       cell.innerHTML = onTimePillHtml(row.cs_ontime, row);   // [p7x]
@@ -13316,6 +13481,21 @@ function iaIsNonAllocTier(up) {
 
 function iaRowView(row) {
   if (!row) return null;
+  // [p7z25] Late PS receipt — routed on its previous-season delivery (see
+  // applyPsLate). Checked first: its Status is no longer N/A, so it would
+  // otherwise fall into the CS branch with a blank working-season delivery.
+  if (row.ps_late) {
+    return {
+      scope: 'PS',
+      season: row.ps_late,
+      status: row.status,
+      delivMonth: row.ps_late_deliv || '',
+      allocDate: row.ps_late_alloc ? parseXLDate(row.ps_late_alloc) : null,
+      pendStr: row.ps_dc_pend || row.xs_pend_date || '',
+      recdStr: row.ps_dc_recd || '',
+      ontime: '',
+    };
+  }
   const st = String(row.status || '');
   const csOut = st.indexOf('N/A') === 0 || st.indexOf('NS Pending') === 0;
 
@@ -13374,9 +13554,14 @@ function iaRowView(row) {
 // behind December.
 function iaMonthLabel(scope, season, month) {
   const m = month || '—';
-  return scope === 'NS' ? `${season} · ${m}` : m;
+  return (scope === 'NS' || scope === 'PS') ? `${season} · ${m}` : m;   // [p7z25] PS too
 }
 function iaMonthSortKey(scope, month, allocDate) {
+  // [p7z25] Late PS receipts sort ahead of every CS month, by drop date.
+  if (scope === 'PS') {
+    const d = (allocDate instanceof Date && !isNaN(allocDate)) ? Math.floor(allocDate.getTime() / 86400000) : 0;
+    return -100000 + d;
+  }
   if (scope !== 'NS') return iaMonthKey(month || '');
   const day = (allocDate instanceof Date && !isNaN(allocDate))
     ? Math.floor(allocDate.getTime() / 86400000) : 99999;
@@ -13392,7 +13577,7 @@ function iaWhy(sku) {
   const isIA = row._cfgStatusUpper ? row._cfgStatusUpper === 'IA' : ((+row.syrup_ia||0) > 0);
   const out = {
     sku: row.sku, csStatus: row.status, isIA, syrup_ia: +row.syrup_ia || 0, plg_oh: +row.plg_oh || 0,
-    scope: v ? v.scope : '(excluded — N/A in CS, no allocatable NS season)',
+    scope: v ? v.scope : '(excluded — N/A in CS, no allocatable NS season, not a late PS receipt — see psLateWhy)',
     season: v ? v.season : '', delivMonth: v ? v.delivMonth : '',
     allocDate: v && v.allocDate ? fmtDate4(v.allocDate) : '', wipPend: v ? v.pendStr : '',
     nsAllocated: v && v.scope === 'NS' ? !!v.status : undefined,
@@ -13683,7 +13868,7 @@ function iaCompute() {
 
     out.contribs.push({
       sku: row.sku,
-      scope: view.scope,            // [p7z16] 'CS' | 'NS'
+      scope: view.scope,            // [p7z16] 'CS' | 'NS'  · [p7z25] | 'PS'
       season: view.season,
       monthLbl,
       monthSort: iaMonthSortKey(view.scope, delivMonth, view.allocDate),
@@ -13914,7 +14099,8 @@ function renderSkuRowSet(rows, week) {
     const tag = (r.isConfirmed
       ? `<span class="ia-skurow-tag conf">CONF</span>`
       : `<span class="ia-skurow-tag pend">PEND</span>`)
-      + (r.scope === 'NS' ? `<span class="ia-skurow-tag ns" title="Next-season SKU — routed on its ${iaEsc(r.season)} delivery">${iaEsc(r.season)}</span>` : '');
+      + (r.scope === 'NS' ? `<span class="ia-skurow-tag ns" title="Next-season SKU — routed on its ${iaEsc(r.season)} delivery">${iaEsc(r.season)}</span>` : '')
+      + (r.scope === 'PS' ? `<span class="ia-skurow-tag ps" title="Late ${iaEsc(r.season)} receipt — never allocated, routed on its ${iaEsc(r.season)} delivery">${iaEsc(r.season)}</span>` : '');   // [p7z25]
     const styleTxt = iaEsc(r.style || '—');
     const colorTxt = iaEsc(r.color || '—');
     const subLine  = [r.division, r.category].filter(Boolean).join(' · ');
