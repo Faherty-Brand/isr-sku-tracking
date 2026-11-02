@@ -616,6 +616,25 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .ll-badge-pastdue{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:700;background:var(--text);color:#fff;border:1px solid transparent}
 .ll-days-late{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--red)}
 .ll-days-ok{font-family:var(--mono);font-size:11px;color:var(--muted)}
+/* [p7z26] Pending In-DC override */
+.ll-badge-ontime{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:var(--green-bg);color:var(--green);border:1px solid rgba(27,122,68,.25)}
+.ll-ow-cell{cursor:pointer}
+.ll-ow-cell:hover{background:var(--accent-bg)}
+.ll-ow-date{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-bg);border:1px solid rgba(30,58,95,.25);border-radius:3px;padding:1px 6px}
+.ll-ow-stale{font-family:var(--mono);font-size:11px;color:var(--dim);text-decoration:line-through}
+.ll-ow-stale-tag{font-size:9px;font-family:var(--mono);color:var(--orange);margin-left:4px}
+.ll-ow-add{color:var(--dim);font-size:11px;opacity:.45}
+.ll-ow-cell:hover .ll-ow-add{opacity:1;color:var(--accent)}
+.ll-wip-muted{opacity:.5}
+#llPendOWPop{position:fixed;z-index:1000;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:12px 14px;width:290px;font-family:var(--body);font-size:12px;color:var(--text)}
+#llPendOWPop .po-title{font-family:var(--mono);font-size:11px;font-weight:600;margin-bottom:6px}
+#llPendOWPop .po-meta{font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.5;margin-bottom:8px}
+#llPendOWPop .po-warn{font-family:var(--mono);font-size:10px;color:var(--orange);background:var(--orange-bg);border-radius:4px;padding:5px 7px;margin-bottom:8px;line-height:1.45}
+#llPendOWPop input[type=date]{width:100%;font-family:var(--mono);font-size:12px;padding:5px 7px;border:1px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text)}
+#llPendOWPop .po-btns{display:flex;gap:6px;margin-top:10px;justify-content:flex-end}
+#llPendOWPop button{font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:5px;border:1px solid var(--border);background:var(--surface2);color:var(--text);cursor:pointer}
+#llPendOWPop button.po-save{background:var(--accent);border-color:var(--accent);color:#fff}
+#llPendOWPop button.po-clear{color:var(--red)}
 .ll-empty{padding:60px;text-align:center;color:var(--muted);font-family:var(--mono);font-size:12px}
 .ll-footer{display:flex;align-items:center;justify-content:space-between;padding:6px 20px;background:var(--surface);border-top:1px solid var(--border);flex-shrink:0}
 .ll-search{width:220px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px 5px 28px;font-family:var(--mono);font-size:11px;color:var(--text);outline:none}
@@ -815,6 +834,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
       try { recomputeRowDerived(row); } catch(e){}
     }
     scheduleRender(); flashIncoming(); scheduleSmRebuild();
+    try { if (typeof window.llOnRemoteOW === 'function') window.llOnRemoteOW(); } catch(e){}   // [p7z26]
   }
   // [p7q1] A teammate's tier override recomputes the row but never touched the
   // Store Matrix tab, so group→SKU usage counts silently went stale while you
@@ -1096,7 +1116,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts (p7z25)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow (p7z26)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -14386,6 +14406,173 @@ function llSeasonNewCF(row, seasonId){
   return llSeasonHasPresence(row, prev) ? 'CF' : 'Newness';
 }
 
+// ════════════════════════════════════════════════════════
+// [p7z26] PENDING IN-DC DATE OVERRIDE (Late List)
+// Stored per SKU × EXACT season code in the shared overrides record:
+//   MANUAL_OW[sku].seasons[<code>] = { pend_ow, pend_ow_wip, pend_ow_by, pend_ow_at }
+// pend_ow      effective in-DC date to use instead of WIP (M/D/YYYY)
+// pend_ow_wip  the WIP pending date at the moment the override was set
+// Keyed by exact season code (not CS/NS/PS role), so it rides the season roll
+// with no migration, the same way the NS tier override does.
+//
+// SUPERSEDE RULE: if WIP's pending date has changed since the override was set,
+// WIP has newer information and wins — the override is ignored (shown struck
+// through) until it is re-set or cleared. Without this, an override could
+// silently mask a WIP slip forever (e.g. OW 11/1 ahead of an 11/10 drop keeps
+// the SKU "On Time" while WIP has moved to 11/20).
+// ════════════════════════════════════════════════════════
+function llSetOWFor(sku, seasonId, field, val) {
+  if (!sku || !seasonId) return;
+  if (!MANUAL_OW[sku]) MANUAL_OW[sku] = {};
+  var mo = MANUAL_OW[sku]; mo._owv = 2;
+  if (!mo.seasons) mo.seasons = {};
+  if (!mo.seasons[seasonId]) mo.seasons[seasonId] = {};
+  if (val === '' || val == null) delete mo.seasons[seasonId][field];
+  else mo.seasons[seasonId][field] = val;
+  if (!Object.keys(mo.seasons[seasonId]).length) delete mo.seasons[seasonId];
+}
+// → { state:'none'|'active'|'superseded', date, str, by, at, wipAtSet }
+function llPendOW(sku, code, wipStr) {
+  var str = String(getOWFor(sku, code, 'pend_ow') || '').trim();
+  if (!str) return { state:'none', date:null, str:'' };
+  var d = parseXLDate(str);
+  if (!d || isNaN(d)) return { state:'none', date:null, str:'' };
+  d = new Date(d); d.setHours(0,0,0,0);
+  var wipAtSet = String(getOWFor(sku, code, 'pend_ow_wip') || '').trim();
+  var o = { date:d, str:fmtDate4(d), wipAtSet:wipAtSet,
+            by:getOWFor(sku, code, 'pend_ow_by') || '', at:getOWFor(sku, code, 'pend_ow_at') || '' };
+  o.state = (wipAtSet === String(wipStr || '').trim()) ? 'active' : 'superseded';
+  return o;
+}
+function llFmtOWAt(iso) {
+  if (!iso) return '';
+  var d = new Date(iso); if (isNaN(d)) return '';
+  return (d.getMonth()+1) + '/' + d.getDate() + '/' + d.getFullYear();
+}
+// F12: llPendOWList() → every stored pending in-DC override.
+window.llPendOWList = function(){
+  var out = [];
+  Object.keys(MANUAL_OW || {}).forEach(function(sku){
+    var ss = (MANUAL_OW[sku] && MANUAL_OW[sku].seasons) || {};
+    Object.keys(ss).forEach(function(code){
+      if (ss[code] && ss[code].pend_ow) out.push({ sku:sku, season:code, override:ss[code].pend_ow,
+        wip_when_set:ss[code].pend_ow_wip || '(none)', by:ss[code].pend_ow_by || '', at:llFmtOWAt(ss[code].pend_ow_at) });
+    });
+  });
+  console.table(out); return out;
+};
+
+// Rebuild the Late List in place after an override change, keeping filters,
+// sort and scroll position.
+function llRebuildPreserve() {
+  if (typeof ALL_ROWS === 'undefined' || !ALL_ROWS || !ALL_ROWS.length) return;
+  var area = document.getElementById('llTableArea');
+  var st = area ? area.scrollTop : 0, sl = area ? area.scrollLeft : 0;
+  computeLateList();
+  if (typeof ACTIVE_TAB !== 'undefined' && ACTIVE_TAB === 'late') window._llBuilt = true;
+  if (area) { area.scrollTop = st; area.scrollLeft = sl; }
+}
+// Realtime: a teammate's override edit → debounced Late List recompute.
+var _llRemoteT = null;
+window.llOnRemoteOW = function(){
+  if (!LATE_LIST_ALL.length && !window._llBuilt) return;
+  if (_llRemoteT) clearTimeout(_llRemoteT);
+  _llRemoteT = setTimeout(function(){ _llRemoteT = null; try { llRebuildPreserve(); } catch(e){ console.warn('[LateList] remote rebuild failed', e); } }, 400);
+};
+
+function llClosePendOW() {
+  var p = document.getElementById('llPendOWPop');
+  if (p) p.remove();
+  document.removeEventListener('mousedown', _llPendOWOutside, true);
+}
+function _llPendOWOutside(e) {
+  var p = document.getElementById('llPendOWPop');
+  if (p && !p.contains(e.target)) llClosePendOW();
+}
+function llOpenPendOW(ev, sku, code) {
+  if (ev) ev.stopPropagation();
+  llClosePendOW();
+  var r = LATE_LIST_ALL.find(function(x){ return x.sku === sku && x.season === code; });
+  if (!r) return;
+  var ow = llPendOW(sku, code, r.pend_wip_str);
+  var seed = ow.date || r.pend_indc_raw || r.allocDate || null;
+  var iso = '';
+  if (seed instanceof Date && !isNaN(seed)) {
+    iso = seed.getFullYear() + '-' + String(seed.getMonth()+1).padStart(2,'0') + '-' + String(seed.getDate()).padStart(2,'0');
+  }
+  var warn = '';
+  if (ow.state === 'superseded') {
+    warn = '<div class="po-warn">WIP changed since this override was set (' + (ow.wipAtSet || 'no date') + ' → '
+         + (r.pend_wip_str || 'no date') + '). Override ' + ow.str + ' is being ignored — re-save to apply it, or clear.</div>';
+  }
+  var setBy = (ow.state !== 'none' && (ow.by || ow.at))
+    ? '<br>Override set by ' + (ow.by || '?') + (ow.at ? ' on ' + llFmtOWAt(ow.at) : '') : '';
+  var p = document.createElement('div');
+  p.id = 'llPendOWPop';
+  p.innerHTML =
+      '<div class="po-title">Pending In-DC override · ' + sku + ' · ' + code + '</div>'
+    + '<div class="po-meta">WIP in-DC: ' + (r.pend_wip_str || '—') + '<br>Alloc drop: ' + (r.alloc_drop_date || '—') + ' (' + (r.deliv_month || '') + ')' + setBy + '</div>'
+    + warn
+    + '<input type="date" id="llPendOWInput" value="' + iso + '">'
+    + '<div class="po-btns">'
+    + (ow.state !== 'none' ? '<button class="po-clear" id="llPendOWClear">Clear</button>' : '')
+    + '<button id="llPendOWCancel">Cancel</button>'
+    + '<button class="po-save" id="llPendOWSave">Save</button>'
+    + '</div>';
+  document.body.appendChild(p);
+  var cell = ev && ev.currentTarget ? ev.currentTarget : null;
+  var rect = cell ? cell.getBoundingClientRect() : { left: 200, bottom: 200, top: 200 };
+  var w = 290, h = p.offsetHeight || 170;
+  var left = Math.min(Math.max(8, rect.left), window.innerWidth - w - 8);
+  var top = rect.bottom + 4;
+  if (top + h > window.innerHeight - 8) top = Math.max(8, rect.top - h - 4);
+  p.style.left = left + 'px'; p.style.top = top + 'px';
+  var inp = document.getElementById('llPendOWInput');
+  inp.focus();
+  inp.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') { e.preventDefault(); llSavePendOW(sku, code); }
+    else if (e.key === 'Escape') llClosePendOW();
+  });
+  document.getElementById('llPendOWSave').onclick = function(){ llSavePendOW(sku, code); };
+  document.getElementById('llPendOWCancel').onclick = llClosePendOW;
+  var c = document.getElementById('llPendOWClear');
+  if (c) c.onclick = function(){ llSavePendOW(sku, code, true); };
+  setTimeout(function(){ document.addEventListener('mousedown', _llPendOWOutside, true); }, 0);
+}
+function llSavePendOW(sku, code, clear) {
+  var r = LATE_LIST_ALL.find(function(x){ return x.sku === sku && x.season === code; });
+  var fields = ['pend_ow','pend_ow_wip','pend_ow_by','pend_ow_at'];
+  if (clear) {
+    fields.forEach(function(f){ llSetOWFor(sku, code, f, ''); });
+    persistManualOW();
+    llClosePendOW();
+    llRebuildPreserve();
+    showToast('In-DC override cleared · ' + sku + ' ' + code, 2200);
+    console.log('[pend_ow] ' + sku + ' ' + code + ' → cleared');
+    return;
+  }
+  var inp = document.getElementById('llPendOWInput');
+  var v = (inp && inp.value || '').trim();
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  var d = m ? new Date(+m[1], +m[2]-1, +m[3]) : null;
+  if (!d || isNaN(d) || d.getFullYear() < 2020 || d.getFullYear() > 2099) {
+    if (inp) { inp.style.borderColor = 'var(--red)'; setTimeout(function(){ inp.style.borderColor = ''; }, 700); }
+    showToast('Pick a valid in-DC date (or Clear to remove the override)', 2600);
+    return;
+  }
+  var who = (typeof window.getUserName === 'function') ? window.getUserName() : 'Anonymous';
+  llSetOWFor(sku, code, 'pend_ow', fmtDate4(d));
+  llSetOWFor(sku, code, 'pend_ow_wip', (r && r.pend_wip_str) || '');
+  llSetOWFor(sku, code, 'pend_ow_by', who);
+  llSetOWFor(sku, code, 'pend_ow_at', new Date().toISOString());
+  persistManualOW();
+  llClosePendOW();
+  llRebuildPreserve();
+  var after = LATE_LIST_ALL.find(function(x){ return x.sku === sku && x.season === code; });
+  showToast('In-DC override ' + fmtDate4(d) + ' · ' + sku + ' ' + code + (after ? ' → ' + after.urgency : ' → no longer on the list'), 2800);
+  console.log('[pend_ow] ' + sku + ' ' + code + ' → ' + fmtDate4(d) + ' (WIP was ' + ((r && r.pend_wip_str) || 'none') + ')');
+}
+
 function computeLateList(season) {
   if (season) LL_SEASON = season;
   const wipAgg   = window._wipAgg  || {};
@@ -14496,7 +14683,14 @@ function computeLateList(season) {
       }
 
       // ── Resolve pending in-DC date ──────────────────────────────────────
-      const pendDate = agg.earliestPendDate || parseXLDate(sSlice.dc_pend || '');
+      const wipPendDate = agg.earliestPendDate || parseXLDate(sSlice.dc_pend || '');
+      const wipPendStr  = (wipPendDate && !isNaN(wipPendDate)) ? fmtDate4(wipPendDate) : '';
+      // [p7z26] Planner override of the pending in-DC date (see llPendOW).
+      // An ACTIVE override replaces the WIP date for everything below: past-due,
+      // the on-time skips, Days Late and Urgency. A superseded one is ignored.
+      const pendOW   = llPendOW(sku, code, wipPendStr);
+      const owActive = pendOW.state === 'active';
+      const pendDate = owActive ? pendOW.date : wipPendDate;
 
       // [p7x] WIP PAST DUE — the pending in-DC date is already behind us and
       // the SKU still can't fund its IA ask (the funding gate above has already
@@ -14514,7 +14708,9 @@ function computeLateList(season) {
       // NOTE: This check only applies to CS. For PS, stale pending dates that
       // predate the alloc date are NOT considered on-time — the date simply
       // wasn't updated, so we still surface them as late.
-      if (isCS && pendDate && pendDate < allocDate && !isPastDue) {
+      // [p7z26] An overridden row is never dropped by the date skips — it stays
+      // visible as 'On Time' so the override can be seen, audited and cleared.
+      if (!owActive && isCS && pendDate && pendDate < allocDate && !isPastDue) {
         return;
       }
 
@@ -14526,9 +14722,10 @@ function computeLateList(season) {
       // ── NS (FA26): pure date comparison ──────────────────────────────────
       // Late only when the pend-in-DC date lands on/after the alloc drop date.
       // Anything arriving before its alloc drop is on time and is not surfaced.
-      if (isNS && pendDate < allocDate && !isPastDue) {
+      if (!owActive && isNS && pendDate < allocDate && !isPastDue) {
         return;
       }
+      const onTimeByOW = owActive && pendDate < allocDate && !isPastDue;   // [p7z26]
 
       // Missing units: same math for all seasons now — the shortfall the
       // allocation cannot cover from current funding (IA minus funded OH),
@@ -14539,7 +14736,8 @@ function computeLateList(season) {
       // stale date — which used to produce negatives like "+-6 days".
       const effEta     = isPastDue ? today : pendDate;
       const daysLate   = effEta ? Math.round((effEta - allocDate) / 86400000) : null;
-      const urgency    = isPastDue ? 'Past Due'
+      const urgency    = onTimeByOW ? 'On Time'      // [p7z26] override clears the drop
+        : isPastDue ? 'Past Due'
         : daysLate === null ? 'No ETA'
         : daysLate <= 7  ? 'Late'
         : daysLate <= 21 ? 'At Risk'
@@ -14563,10 +14761,22 @@ function computeLateList(season) {
         qty_ordered:     (agg.recvQty||0) + (agg.pendQty||0),
         recv_qty:        totalFunded,
         missing_qty:     missingQty,
-        pend_indc_date:  pendDate ? fmtDate4(pendDate) : '—',
-        pend_indc_raw:   pendDate,
+        pend_indc_date:  wipPendStr || '—',        // [p7z26] always the WIP date
+        pend_indc_raw:   wipPendDate || null,
+        pend_wip_str:    wipPendStr,
+        pend_ow_date:    owActive ? pendOW.str : '',             // [p7z26] active override only
+        pend_ow_state:   pendOW.state,                           // none | active | superseded
+        pend_ow_stale:   pendOW.state === 'superseded' ? pendOW.str : '',
+        pend_ow_wip_at_set: pendOW.wipAtSet || '',
+        pend_ow_by:      pendOW.by || '',
+        pend_ow_at:      pendOW.at || '',
         days_late:       daysLate,
-        wip_overdue_days: pastDueDays,          // [p7x] days past the WIP in-DC date (null = not past due)
+        // [p7x] days past the WIP in-DC date (null = not past due). [p7z26] Always
+        // measured on the WIP date itself, so a stale WIP line still shows here
+        // even when an In-DC override is driving Urgency / Days Late.
+        wip_overdue_days: owActive
+          ? ((wipPendDate && !isNaN(wipPendDate)) ? wipPastDueDays(wipPendDate, onHandSignal, iaQty, today) : null)
+          : pastDueDays,
         urgency,
         allocDate,
       });
@@ -14796,13 +15006,14 @@ function llClearColFilter(colId) {
 let LL_TB_FILTERS = { deliv_month:new Set(), division:new Set(), category:new Set(), urgency:new Set() };
 let LL_TB_ACTIVE  = null;
 
-const LL_URGENCY_ORDER  = ['Past Due','Critical','At Risk','Late','No ETA'];
+const LL_URGENCY_ORDER  = ['Past Due','Critical','At Risk','Late','No ETA','On Time'];
 const LL_URGENCY_LABELS = {
   'Past Due':'Past Due (WIP date passed, not received)',   // [p7x]
   'Critical':'Critical (>21 days)',
   'At Risk':'At Risk (8–21 days)',
   'Late':'Late (≤7 days)',
-  'No ETA':'No ETA'
+  'No ETA':'No ETA',
+  'On Time':'On Time (per In-DC override)'   // [p7z26]
 };
 
 // Distinct values available for a toolbar field, scoped to the active season.
@@ -15090,8 +15301,10 @@ function updateLLStats() {
     return sum + (agg.recvQty||0) + (agg.pendQty||0);
   }, 0);
 
-  const lateSKUs    = rows.length;
-  const missingUnits = rows.reduce((a,r)=>a+r.missing_qty, 0);
+  // [p7z26] 'On Time' rows (cleared by an In-DC override) stay visible but are not late.
+  const lateOnly    = rows.filter(r => r.urgency !== 'On Time');
+  const lateSKUs    = lateOnly.length;
+  const missingUnits = lateOnly.reduce((a,r)=>a+r.missing_qty, 0);
 
   // % SKUs late
   const pctSku = totalSKUs > 0 ? ((lateSKUs / totalSKUs)*100).toFixed(1)+'%' : '—';
@@ -15107,11 +15320,11 @@ function updateLLStats() {
   document.getElementById('llStatUnitsDenom').textContent =
     totalPOUnits > 0 ? `of ${totalPOUnits.toLocaleString()} ordered` : '';
 
-  const lateRows = rows.filter(r=>r.days_late!==null);
+  const lateRows = lateOnly.filter(r=>r.days_late!==null);
   const avgDays  = lateRows.length
     ? Math.round(lateRows.reduce((a,r)=>a+r.days_late,0)/lateRows.length) : 0;
   document.getElementById('llStatDays').textContent = lateRows.length ? `+${avgDays}` : '—';
-  const months = new Set(rows.map(r=>r.deliv_month).filter(Boolean));
+  const months = new Set(lateOnly.map(r=>r.deliv_month).filter(Boolean));
   document.getElementById('llStatMonths').textContent = months.size;
 }
 
@@ -15175,6 +15388,9 @@ function llSortRows() {
     } else if (LL_SORT_COL === 'wip_overdue_days') {   // [p7x] not-past-due sorts below 0d
       av = (av === null || av === undefined) ? -1 : av;
       bv = (bv === null || bv === undefined) ? -1 : bv;
+    } else if (LL_SORT_COL === 'pend_ow_date') {   // [p7z26] chronological, blanks last
+      const ka = av ? (filterDateKey(av) || 0) : 99999999, kb = bv ? (filterDateKey(bv) || 0) : 99999999;
+      return LL_SORT_DIR * (ka - kb);
     } else if (LL_SORT_COL === 'deliv_month') {
       // Chronological sort using month order map
       return LL_SORT_DIR * (llMonthKey(av) - llMonthKey(bv));
@@ -15211,6 +15427,7 @@ const LL_COLS = [
   { id:'recv_qty',       label:'PLG OH',             grp:'Inventory', num:true },
   { id:'missing_qty',    label:'Missing Qty',       grp:'Inventory', num:true },
   { id:'pend_indc_date', label:'Pend In-DC Date',   grp:'WIP' },
+  { id:'pend_ow_date',   label:'In-DC OW',          grp:'WIP' },   // [p7z26]
   { id:'wip_overdue_days', label:'WIP Overdue',     grp:'WIP',       num:true },   // [p7x]
   { id:'days_late',      label:'Days Late',         grp:'WIP',       num:true },
   { id:'urgency',        label:'Urgency',           grp:'WIP' },
@@ -15276,14 +15493,28 @@ function renderLateListTable() {
           const isCS = v === SEASONS.cs;
           return `<td class="ll-td"><span class="pill ${isCS?'pill-teal':'pill-muted'}">${v}</span></td>`;
         }
+        if (col.id === 'pend_ow_date') {   // [p7z26]
+          const st = row.pend_ow_state;
+          const oc = `onclick="llOpenPendOW(event,'${row.sku}','${row.season}')"`;
+          if (st === 'active') {
+            const t = `Override set by ${row.pend_ow_by||'?'}${row.pend_ow_at?' on '+llFmtOWAt(row.pend_ow_at):''} — WIP said ${row.pend_wip_str||'no date'}. Click to edit.`;
+            return `<td class="ll-td ll-ow-cell" ${oc} title="${t}"><span class="ll-ow-date">${v}</span></td>`;
+          }
+          if (st === 'superseded') {
+            const t = `WIP changed from ${row.pend_ow_wip_at_set||'no date'} to ${row.pend_wip_str||'no date'} after this override was set, so WIP wins. Click to re-apply or clear.`;
+            return `<td class="ll-td ll-ow-cell" ${oc} title="${t}"><span class="ll-ow-stale">${row.pend_ow_stale}</span><span class="ll-ow-stale-tag">WIP upd.</span></td>`;
+          }
+          return `<td class="ll-td ll-ow-cell" ${oc} title="Override the pending in-DC date"><span class="ll-ow-add">✎</span></td>`;
+        }
         if (col.id === 'urgency') {
-          const cls = v==='Past Due'?'ll-badge-pastdue':v==='Critical'?'ll-badge-critical':v==='At Risk'?'ll-badge-atrisk':v==='No ETA'?'ll-badge-noeta':'ll-badge-late';
+          const cls = v==='On Time'?'ll-badge-ontime':v==='Past Due'?'ll-badge-pastdue':v==='Critical'?'ll-badge-critical':v==='At Risk'?'ll-badge-atrisk':v==='No ETA'?'ll-badge-noeta':'ll-badge-late';
           return `<td class="ll-td"><span class="${cls}">${v}</span></td>`;
         }
         if (col.id === 'days_late') {
           if (v === null) return `<td class="ll-td num"><span class="ll-days-ok">No ETA</span></td>`;
           // [p7x] v can be <= 0 (a past-due line whose drop is still ahead) — no "+-N".
-          return `<td class="ll-td num"><span class="${v>0?'ll-days-late':'ll-days-ok'}">${v>0?'+':''}${v} days</span></td>`;
+          const _dt = row.pend_ow_state === 'active' ? ` title="Measured from the In-DC override ${row.pend_ow_date}"` : '';
+          return `<td class="ll-td num"${_dt}><span class="${v>0?'ll-days-late':'ll-days-ok'}">${v>0?'+':''}${v} days</span></td>`;
         }
         if (col.id === 'wip_overdue_days') {   // [p7x]
           if (v === null || v === undefined) return `<td class="ll-td num"><span class="muted-cell">—</span></td>`;
@@ -15300,6 +15531,9 @@ function renderLateListTable() {
         if (col.id === 'division') {
           const cls = v==='Mens'?'pill-blue':v==='Womens'?'pill-purple':'pill-muted';
           return `<td class="ll-td">${v?`<span class="pill ${cls}">${v}</span>`:'<span class="muted-cell">—</span>'}</td>`;
+        }
+        if (col.id === 'pend_indc_date' && row.pend_ow_state === 'active') {   // [p7z26]
+          return `<td class="ll-td" style="font-family:var(--mono);font-size:11px" title="WIP date — not used while the In-DC override is active"><span class="ll-wip-muted">${v||'—'}</span></td>`;
         }
         if (col.id === 'alloc_drop_date' || col.id === 'pend_indc_date') {
           return `<td class="ll-td" style="font-family:var(--mono);font-size:11px">${v||'—'}</td>`;
@@ -15392,20 +15626,25 @@ function exportLateListHTML() {
   const fields = ['sku','season','division','category','subcategory','style_desc','color_desc',
     'tier','new_cf',
     'deliv_month','ship_mode','alloc_drop_date','ia_qty','qty_ordered','recv_qty','missing_qty',
-    'pend_indc_date','pend_indc_raw','wip_overdue_days','days_late','urgency','allocDate'];
+    'pend_indc_date','pend_indc_raw','pend_ow_date','pend_ow_by','pend_ow_at','wip_overdue_days','days_late','urgency','allocDate'];
   const slimData = LATE_LIST_ALL.map(r => {
     const o = {};
     fields.forEach(f => { if (r[f] !== undefined) o[f] = r[f]; });
     // Dates → strings for JSON
     if (o.allocDate instanceof Date) o.allocDate = o.allocDate.toISOString();
     if (o.pend_indc_raw instanceof Date) o.pend_indc_raw = o.pend_indc_raw.toISOString();
+    // [p7z26] only ACTIVE overrides travel (pend_ow_date is '' otherwise)
+    if (!o.pend_ow_date) { delete o.pend_ow_date; delete o.pend_ow_by; delete o.pend_ow_at; }
+    else if (o.pend_ow_at) o.pend_ow_at = llFmtOWAt(o.pend_ow_at);
     return o;
   });
 
   const dateStr = new Date().toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
-  const csCount = slimData.filter(r => r.season === SEASONS.cs).length;
-  const nsCount = slimData.filter(r => r.season === SEASONS.ns).length;
-  const psCount = slimData.filter(r => r.season === SEASONS.ps).length;
+  const _late = r => r.urgency !== 'On Time';   // [p7z26]
+  const csCount = slimData.filter(r => r.season === SEASONS.cs && _late(r)).length;
+  const nsCount = slimData.filter(r => r.season === SEASONS.ns && _late(r)).length;
+  const psCount = slimData.filter(r => r.season === SEASONS.ps && _late(r)).length;
+  const owCount = slimData.filter(r => r.pend_ow_date).length;
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -15464,6 +15703,9 @@ body{font-family:var(--body);background:var(--bg);color:var(--text);display:flex
 .ll-badge-noeta{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:500;background:#ECEAE5;color:#6B6560;border:1px solid #C8C4BC}
 .ll-badge-pastdue{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:700;background:var(--text);color:#fff;border:1px solid transparent}
 .ll-days-late{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--red)}
+.ll-badge-ontime{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-family:var(--mono);font-weight:600;background:var(--green-bg);color:var(--green);border:1px solid rgba(27,122,68,.25)}
+.ll-ow-date{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);background:#E8EDF4;border:1px solid rgba(26,82,118,.25);border-radius:3px;padding:1px 6px}
+.ll-wip-muted{opacity:.5}
 .ll-footer{display:flex;align-items:center;justify-content:space-between;padding:6px 20px;background:var(--surface);border-top:1px solid var(--border);flex-shrink:0}
 .sort-arrow{font-size:9px;margin-left:3px;opacity:.5}
 .sort-arrow.active{opacity:1;color:var(--accent)}
@@ -15483,7 +15725,7 @@ body{font-family:var(--body);background:var(--bg);color:var(--text);display:flex
     <div class="logo">ISR</div>
     <div>
       <div class="topbar-title">Late List</div>
-      <div class="topbar-sub">${SEASONS.cs} / ${SEASONS.ns} · Snapshot ${dateStr} · CS: ${csCount} SKUs · NS: ${nsCount} SKUs · PS: ${psCount} SKUs</div>
+      <div class="topbar-sub">${SEASONS.cs} / ${SEASONS.ns} · Snapshot ${dateStr} · CS: ${csCount} SKUs · NS: ${nsCount} SKUs · PS: ${psCount} SKUs${owCount ? ' · ' + owCount + ' In-DC override' + (owCount===1?'':'s') : ''}</div>
     </div>
   </div>
   <div style="display:flex;gap:6px;align-items:center">
@@ -15524,6 +15766,7 @@ body{font-family:var(--body);background:var(--bg);color:var(--text);display:flex
     <option value="At Risk">At Risk (8–21 days)</option>
     <option value="Late">Late (≤7 days)</option>
     <option value="Past Due">Past Due (WIP date passed)</option>
+    <option value="On Time">On Time (per In-DC override)</option>
   </select>
   <div style="flex:1"></div>
   <span class="ll-filter-label" id="llRowCount">— rows</span>
@@ -15615,14 +15858,15 @@ function llSortRows(){
 function llSetSort(col){if(LL_SORT_COL===col)LL_SORT_DIR=-LL_SORT_DIR;else{LL_SORT_COL=col;LL_SORT_DIR=-1}llSortRows();renderTable()}
 
 function updateStats(){
-  const rows=LATE_LIST_FILTERED;
+  const all=LATE_LIST_FILTERED;
+  const rows=all.filter(r=>r.urgency!=='On Time');
   document.getElementById('llStatCount').textContent=rows.length.toLocaleString();
   const miss=rows.reduce((a,r)=>a+(r.missing_qty||0),0);
   document.getElementById('llStatUnits').textContent=miss.toLocaleString();
   const withDays=rows.filter(r=>r.days_late!==null&&r.days_late>0);
   document.getElementById('llStatDays').textContent=withDays.length?Math.round(withDays.reduce((a,r)=>a+r.days_late,0)/withDays.length):'—';
   document.getElementById('llStatMonths').textContent=new Set(rows.map(r=>r.deliv_month).filter(Boolean)).size;
-  document.getElementById('llRowCount').textContent=rows.length+' rows';
+  document.getElementById('llRowCount').textContent=all.length+' rows';
   updateDivStats(rows);
 }
 
@@ -15672,7 +15916,9 @@ function renderTable(){
   document.getElementById('llTableHead').innerHTML=grpRow+colRow;
   // Body
   const body=slice.map(r=>{let tr='<tr class="ll-row">';LL_COLS.forEach((c,ci)=>{const v=r[c.id];let cell='';
-    if(c.id==='urgency'){const cls=v==='Past Due'?'ll-badge-pastdue':v==='Critical'?'ll-badge-critical':v==='At Risk'?'ll-badge-atrisk':v==='Late'?'ll-badge-late':'ll-badge-noeta';cell='<span class="'+cls+'">'+(v||'—')+'</span>'}
+    if(c.id==='pend_ow_date'){cell=v?'<span class="ll-ow-date" title="Planner override'+(r.pend_ow_by?' by '+r.pend_ow_by:'')+(r.pend_ow_at?' on '+r.pend_ow_at:'')+' — WIP said '+(r.pend_indc_date||'no date')+'">'+v+'</span>':'—'}
+    else if(c.id==='pend_indc_date'&&r.pend_ow_date){cell='<span class="ll-wip-muted" title="WIP date — superseded by the In-DC override">'+(v||'—')+'</span>'}
+    else if(c.id==='urgency'){const cls=v==='On Time'?'ll-badge-ontime':v==='Past Due'?'ll-badge-pastdue':v==='Critical'?'ll-badge-critical':v==='At Risk'?'ll-badge-atrisk':v==='Late'?'ll-badge-late':'ll-badge-noeta';cell='<span class="'+cls+'">'+(v||'—')+'</span>'}
     else if(c.id==='new_cf'){cell=v?'<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:600;'+(v==='Newness'?'background:#efe7fb;color:#6b21a8':v==='CF'?'background:#e3ecf9;color:#1e40af':'background:#ececec;color:#555')+'">'+v+'</span>':'—'}
     else if(c.id==='tier'){cell=v?'<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;background:#ececec;color:#444">'+v+'</span>':'—'}
     else if(c.id==='days_late'){cell=v!==null&&v!==undefined?'<span class="ll-days-late">'+(v>0?'+':'')+v+'</span>':'—'}
