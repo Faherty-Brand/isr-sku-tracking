@@ -1116,7 +1116,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow (p7z26)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix (p7z27)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1691,6 +1691,7 @@ setTimeout(function(){
           <button class="nf-seg-btn active" id="raSecTier" onclick="raSetSection('tier')">Tier overrides</button>
           <button class="nf-seg-btn" id="raSecEnd" onclick="raSetSection('end')">End dates</button>
           <button class="nf-seg-btn" id="raSecNotes" onclick="raSetSection('notes')">Strategy notes</button>
+          <button class="nf-seg-btn" id="raSecAlloc" onclick="raSetSection('alloc')" title="Newness SKUs not yet allocated — decide before the flip so none get lost">Unallocated newness</button>
         </div>
       </div>
       <div class="nf-ctrl">
@@ -1727,7 +1728,7 @@ setTimeout(function(){
   <div class="eol-bulk" id="raBulk" style="display:none">
     <span class="eol-bulk-count" id="raBulkCount"></span>
     <button class="nf-action-btn" id="raBulkCarry" onclick="raBulk('carry')">Carry all undecided shown</button>
-    <button class="nf-action-btn" onclick="raBulk('expire')">Expire all undecided shown</button>
+    <button class="nf-action-btn" id="raBulkExpire" onclick="raBulk('expire')">Expire all undecided shown</button>
     <span class="eol-bulk-hint" id="raBulkHint">Bulk actions only touch undecided rows on screen. Change a decided row with its own buttons.</span>
   </div>
 
@@ -2766,12 +2767,14 @@ function ensureSeasonMatrix(id) {
 function seasonMatrixChanged(id) {
   try {
     if (typeof ALL_ROWS !== 'undefined' && ALL_ROWS && ALL_ROWS.length
-        && (seasonViewKey() === id || (typeof owNextKey === 'function' && owNextKey() === id))   // [p7z8] NS Config needs the NS matrix
+        && (seasonViewKey() === id || (typeof owNextKey === 'function' && owNextKey() === id)   // [p7z8] NS Config needs the NS matrix
+            || (typeof SEASONS !== 'undefined' && SEASONS.ps === id && ALL_ROWS.some(function(r){ return r.ps_late; })))   // [p7z27] late-PS Store Count
         && typeof applyFiltersAndRender === 'function') applyFiltersAndRender();
   } catch (e) { console.warn('[SeasonMatrix] grid repaint failed', e); }
   try {
     if (typeof DD_SKU !== 'undefined' && DD_SKU && typeof ddSeasonNow === 'function'
-        && ddSeasonNow() === id && typeof openDrilldown === 'function') openDrilldown(DD_SKU);
+        && (ddSeasonNow() === id || (typeof SEASONS !== 'undefined' && SEASONS.ps === id))   // [p7z27]
+        && typeof openDrilldown === 'function') openDrilldown(DD_SKU);
   } catch (e) { console.warn('[SeasonMatrix] panel repaint failed', e); }
   try {   // [p7z11] Store Matrix tab, when it is showing this season
     if (typeof window.smSeasonMatrixChanged === 'function') window.smSeasonMatrixChanged(id);
@@ -2881,7 +2884,7 @@ function mxStoreCtLabel(r) {
 }
 
 function renderMxStoreCtCell(r, seasonKey) {
-  const key = seasonKey || seasonViewKey();
+  const key = seasonKey || r.v_late || seasonViewKey();   // [p7z27] late-PS rows read the PS matrix
   const st = r.v_mx_state;
   const src = (function () { const m = seasonMatrixFor(key); return m.state === 'ready'
     ? key + ' matrix · ' + (m.source || '?') + (m.asOf ? ' · ' + String(m.asOf).slice(0, 10) : '') : ''; })();
@@ -3491,7 +3494,9 @@ function viewNewCF(row){
   return (seasonViewKey() === CONFIG_SEASON) ? (row.new_cf || '') : (row.v_new_cf || '');
 }
 function projectSeasonView(row){
-  var v = seasonProjection(row, seasonViewKey());
+  var _vk = seasonViewKey();
+  var v = seasonProjection(row, _vk);
+  if (_vk === CONFIG_SEASON) psLateOverlay(row, v); else v.v_late = '';   // [p7z27]
   for (var k in v) row[k] = v[k];
 }
 function projectAllSeasonViews(){ (ALL_ROWS||[]).forEach(projectSeasonView); }
@@ -3527,6 +3532,9 @@ function owSlotFor(field){
   if (field === 'ps_tier_ow') return { seasonId: owPrevKey(), f: 'tier_ow' };
   if (field === 'ns_tier_ow') return { seasonId: owNextKey(), f: 'tier_ow' };
   if (field === 'ns_deliv_ow') return { seasonId: owNextKey(), f: 'deliv_ow' };   // [p7z10]
+  // [p7z27] Mark Allocated on the PREVIOUS season — the lever for late PS
+  // receipts (applyPsLate evaluates the row on that season's delivery).
+  if (field === 'ps_alloc_ow') return { seasonId: owPrevKey(), f: 'alloc_ow' };
   return { seasonId: owConfigKey(), f: field };
 }
 // Mirror the legacy CS(default)/PS seasons back onto flat keys for old clients.
@@ -3726,6 +3734,12 @@ function isForceIA(v){
   var s = String(v == null ? '' : v).trim().toUpperCase();
   return s === 'Y' || s === 'YES' || s === 'TRUE' || s === '1';
 }
+
+// [p7z27] Mark Allocated — same accepted values as Force IA (Y/YES/TRUE/1).
+// Stored as alloc_ow in a season slot. Status-only: it satisfies the step-4
+// "Allocated for Season" gate for that season's evaluation and touches nothing
+// in new_cf, config dates or the Configs Generator.
+function isMarkAlloc(v){ return isForceIA(v); }
 
 function upgradeForceIA(mo){
   if (!mo || typeof mo !== 'object') return mo || {};
@@ -6284,6 +6298,7 @@ function computeAllRows(lookups) {
       cs_lifecycle: cfg.lifecycle || '', omni_oh, tier_oh,
       plg_oh, effective_tier: eff_tier_for_status,
       ns_tier: effNsTierForStatus(sku, ns.corrTier || ns.storeTier || ''),   // [p7z7]
+      alloc_ow: getOW(sku, 'alloc_ow'),   // [p7z27] two-site parity
     });
 
 
@@ -6686,6 +6701,7 @@ function computeAllRows(lookups) {
       deliv_alloc_date: deliv_alloc_date ? fmtDate4(deliv_alloc_date) : '',
       force_ia,
       end_ow,
+      alloc_ow: getOW(sku, 'alloc_ow'),   // [p7z27]
       // [p7u] True when ANY recognized adjustment-note prefix is present
       // (ADJ / SR / ISS / ADD / MD / DROP). The Configs Generator refuses to
       // auto-emit an end-date amendment for these because its store list is
@@ -7804,7 +7820,7 @@ function computeInStock(row) {
 
 function computeStatus({sku, fp_md, is_md, alloc_date, new_cf, cs_deliv1, ns_deliv1,
     deliv_alloc_date, force_ia, syrup_ia, syrup_rp, syrupCfg,
-    cs_lifecycle, omni_oh, tier_oh, plg_oh, effective_tier, ns_tier}) {
+    cs_lifecycle, omni_oh, tier_oh, plg_oh, effective_tier, ns_tier, alloc_ow}) {
 
   // ── Drop override (Option A): tier override set to a "Do Not Allocate" sentinel ──
   // A manual drop is expressed by overriding the tier to "DO NOT ALLOCATE"
@@ -7881,6 +7897,11 @@ function computeStatus({sku, fp_md, is_md, alloc_date, new_cf, cs_deliv1, ns_del
   if (alloc_date && (!deliv_alloc_date || alloc_date >= deliv_alloc_date)) {
     return 'Allocated for Season';
   }
+  // [p7z27] Mark Allocated — manual stand-in for the Newness Log date, for
+  // drops that never got logged (store-exclusive accessories, off-cycle kids
+  // receipts). Same position as the log gate: it can't resurrect an N/A or
+  // drop-retiered SKU (those return above), and it expires with its season.
+  if (isMarkAlloc(alloc_ow)) return 'Allocated for Season';
 
   // ── Excel step 5: CF without qualifying alloc date → Allocated LS ──
   // $AO4="CF" — catches CF SKUs that didn't pass step 4
@@ -7993,6 +8014,7 @@ function psLateResolve(row, explain) {
 function clearPsLate(row) {
   row.ps_late = ''; row.ps_late_deliv = ''; row.ps_late_alloc = '';
   row.ps_late_tier = ''; row.ps_late_from = ''; row.ps_late_base = '';
+  row.ps_late_marked = false;
 }
 
 // Mutates the row when the route applies. Returns true if it did.
@@ -8009,8 +8031,10 @@ function applyPsLate(row) {
     syrupCfg: {}, cs_lifecycle: '',
     omni_oh: row.omni_oh || 0, tier_oh: row.tier_oh || 0, plg_oh: +row.plg_oh || 0,
     effective_tier: r.tier, ns_tier: '',
+    alloc_ow: getOWFor(row.sku, r.season, 'alloc_ow'),   // [p7z27] PS-scoped Mark Allocated
   });
   row.status       = status;
+  row.ps_late_marked = isMarkAlloc(getOWFor(row.sku, r.season, 'alloc_ow'));
   row.ps_late      = r.season;
   row.ps_late_deliv = r.deliv;
   row.ps_late_alloc = fmtDate4(r.allocDate);
@@ -8030,6 +8054,13 @@ function applyPsLate(row) {
 // Small tag appended to the Status pill on routed rows (grid, repaint, panel).
 function psLateTagHtml(row) {
   if (!row || !row.ps_late) return '';
+  if (row.ps_late_marked) {
+    const tm = 'Late ' + row.ps_late + ' receipt on its ' + row.ps_late + ' ' + row.ps_late_deliv
+      + ' delivery (drop ' + row.ps_late_alloc + ', tier ' + row.ps_late_tier + '). Marked Allocated manually for '
+      + row.ps_late + ' (SKU panel). Would otherwise read: ' + (row.ps_late_base || '—') + '.';
+    return ' <span class="pill pill-muted" style="font-size:9px;padding:0 5px;cursor:help" title="'
+         + tm.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;') + '">' + row.ps_late + ' ✓</span>';
+  }
   const cfNote = row.ps_late_from === 'CF'
     ? ' Configs still generate as CF for ' + CONFIG_SEASON + ' — set Force IA if it should drop as IA.'
     : ' No ' + CONFIG_SEASON + ' config is generated; the existing ' + row.ps_late + ' Syrup config is left as is.';
@@ -8040,12 +8071,145 @@ function psLateTagHtml(row) {
        + t.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;') + '">' + row.ps_late + '</span>';
 }
 
+// ── [p7z27] Late-PS display overlay ─────────────────────────────────────────
+// ROOT CAUSE of the "Ready to Allocate with no tier" rows: applyPsLate evaluates
+// Status on the PS delivery + tier, but the grid's Season block (Delivery,
+// Store Group, Store Count, Group Category) projects the WORKING season, which
+// is blank for an N/A-routed SKU. So the row said READY with nothing to say
+// where to. For those rows only, the view shows the PS values the Status was
+// actually computed on, tagged with the PS season. Display-only: it writes the
+// v_* view fields (grid / CSV / filters / panel), never cs_* or config inputs.
+// CF-routed rows keep their working-season values (they have them).
+function psLateOverlay(row, v) {
+  v.v_late = ''; v.v_late_alloc = '';
+  if (!row || !row.ps_late || row.ps_late_from === 'CF') return v;
+  if (String(v.v_deliv1 || '').trim()) return v;
+  const ps = row.ps_late;
+  const s = (row.seasons && row.seasons[ps]) || {};
+  const rawTier = String(getOWFor(row.sku, ps, 'tier_ow') || s.tier || s.corr_tier || s.store_tier_raw || row.ps_late_tier || '').trim();
+  v.v_late = ps;
+  v.v_late_alloc = row.ps_late_alloc || '';
+  v.v_deliv1 = row.ps_late_deliv || '';
+  v.v_tier = rawTier;
+  v.v_tier_ovr = false; v.v_deliv1_ovr = false;
+  v.v_tier_prev = ''; v.v_deliv1_prev = '';
+  try { if (seasonMatrixFor(ps).state === 'idle') ensureSeasonMatrix(ps); } catch (e) {}
+  const mx = seasonStoreCountInfo(ps, rawTier);
+  v.v_mx_store_ct = mx.count; v.v_mx_state = mx.state; v.v_mx_note = mx.note || '';
+  v.v_mx_category = mxCategoryLabel(mx);
+  v.v_mx_uncat = (mx.state === 'ok' && !mx.category);
+  return v;
+}
+// Small season chip for overlaid cells.
+function psLateCellChip(row) {
+  const k = row && row.v_late;
+  if (!k) return '';
+  return '<span class="pill pill-muted" style="font-size:9px;padding:0 4px;margin-left:4px" title="'
+    + sgEsc(k) + ' value — this late ' + sgEsc(k) + ' receipt has no ' + sgEsc(CONFIG_SEASON)
+    + ' delivery, so Status is evaluated on its ' + sgEsc(k) + ' delivery and store group">' + sgEsc(k) + '</span>';
+}
+
+// ── [p7z27] Pull a late SKU into a target season ────────────────────────────
+// Makes it a real target-season Newness SKU through the EXISTING overrides
+// (nothing new for the Configs Generator to learn): delivery + tier only where
+// the target season has none of its own, plus Force IA so the prior-season
+// tier can't classify it CF. Pure plan; callers write it.
+//   toKey = CONFIG_SEASON → deliv_ow / tier_ow / force_ia          (panel)
+//   toKey = owNextKey()   → ns_deliv_ow / ns_tier_ow / TO force_ia (Roll Audit)
+function lateFlowCalPick(seasonKey) {
+  const by = (window._flowCalBySzn || {})[String(seasonKey || '').toUpperCase()] || null;
+  const src = by || (seasonKey === CONFIG_SEASON ? (window._flowCalMap || {}) : {});
+  const list = Object.keys(src)
+    .map(k => ({ k, d: src[k] && src[k].allocDate }))
+    .filter(x => x.d instanceof Date && !isNaN(x.d))
+    .sort((a, b) => a.d - b.d);
+  if (!list.length) return null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  // First drop on/after today — the next real chance to allocate. Past the
+  // end of the calendar, the last one (Status then reads READY / ASAP).
+  return list.find(x => x.d >= today) || list[list.length - 1];
+}
+function latePullPlan(row, toKey) {
+  const plan = { ok: false, why: '', toKey: toKey, deliv: '', tier: '', writeDeliv: false, writeTier: false, fromTier: '', fromDeliv: '' };
+  if (!row || !toKey) { plan.why = 'no target season'; return plan; }
+  const fromKey = row.ps_late || CONFIG_SEASON;
+  if (fromKey === toKey) { plan.why = 'already ' + toKey; return plan; }
+  plan.fromDeliv = row.ps_late ? (row.ps_late_deliv || '') : (effDelivFor(row, CONFIG_SEASON) || '');
+  plan.fromTier  = row.ps_late ? (row.v_late ? (row.v_tier || row.ps_late_tier) : row.ps_late_tier) : effTierFor(row, CONFIG_SEASON);
+  // Delivery: the target season's own (PST or override) wins.
+  const haveDeliv = effDelivFor(row, toKey);
+  if (haveDeliv) plan.deliv = haveDeliv;
+  else {
+    const pick = lateFlowCalPick(toKey);
+    if (!pick) { plan.why = 'no ' + toKey + ' Flow Cal dates'; return plan; }
+    plan.deliv = pick.k; plan.writeDeliv = true;
+  }
+  // Tier: the target season's own allocating tier wins; else carry the source tier.
+  const haveTier = effTierFor(row, toKey);
+  if (haveTier && !NON_ALLOC_TIERS.has(haveTier) && haveTier.indexOf('DO NOT ALLOCATE') === -1) plan.tier = haveTier;
+  else {
+    const src = String(plan.fromTier || '').trim();
+    if (!src) { plan.why = 'no source store group to carry'; return plan; }
+    if (toKey !== CONFIG_SEASON) {
+      const m = seasonMatrixFor(toKey);
+      if (m.state !== 'ready') { plan.why = toKey + ' matrix not loaded'; return plan; }
+    }
+    const v = validateTierInput(src, toKey === CONFIG_SEASON ? undefined : toKey);
+    if (!v || v === 'None' || v === 'CF' || v === 'DO NOT ALLOCATE') { plan.why = '"' + src + '" is not a ' + toKey + ' store group — set the tier in the panel'; return plan; }
+    plan.tier = v; plan.writeTier = true;
+  }
+  plan.ok = true;
+  return plan;
+}
+
+// Panel action: write a set of working-season overrides in one pass, with the
+// same post-processing saveOverride does (store count chain + recompute).
+function ddWriteOWFields(sku, fields) {
+  Object.keys(fields).forEach(f => setOW(sku, f, fields[f]));
+  persistManualOW();
+  const row = ALL_ROWS.find(r => r.sku === sku);
+  if (row) {
+    Object.keys(fields).forEach(f => { row[f] = getOW(sku, f); });
+    const eff = (row.tier_ow || row.cs_tier || '').trim().toUpperCase();
+    row.cs_store_ct  = window.getTierToStoreCount(row.deliv_ow || row.cs_deliv1)[eff] || 0;
+    row.sku_depth    = row.cs_store_ct > 0 ? Math.round((row.store_oh / row.cs_store_ct) * 100) / 100 : '';
+    row.sku_sz_depth = (row.sku_depth !== '' && row.size_ct > 0) ? Math.round((row.sku_depth / row.size_ct) * 100) / 100 : '';
+    recomputeRowDerived(row);
+    console.log('[late-ow] ' + sku + ' → ' + JSON.stringify(fields) + ' | new_cf=' + row.new_cf + ' | status=' + row.status);
+  }
+  applyFiltersAndRender();
+  ddRefreshActiveTab();
+  setTimeout(() => openDrilldown(sku), 50);
+}
+function ddLateMarkAllocated(sku, on) {
+  ddWriteOWFields(sku, { ps_alloc_ow: on ? 'Y' : '' });
+  showToast(on ? sku + ' marked Allocated for ' + (owPrevKey() || 'PS') : sku + ': Mark Allocated cleared', 2600);
+}
+function ddLatePullIn(sku) {
+  const row = ALL_ROWS.find(r => r.sku === sku);
+  const plan = latePullPlan(row, CONFIG_SEASON);
+  if (!plan.ok) { showToast('Can\'t pull ' + sku + ' into ' + CONFIG_SEASON + ': ' + plan.why, 3600); return; }
+  const lines = [
+    'Pull ' + sku + ' into ' + CONFIG_SEASON + ' as a Newness SKU?', '',
+    'Delivery: ' + plan.deliv + (plan.writeDeliv ? '  (override — next ' + CONFIG_SEASON + ' drop on the Flow Cal)' : '  (' + CONFIG_SEASON + ' value, unchanged)'),
+    'Store Group: ' + plan.tier + (plan.writeTier ? '  (override, carried from ' + (row.ps_late || '') + ')' : '  (' + CONFIG_SEASON + ' value, unchanged)'),
+    'Force IA: Y', '',
+    'Configs then generate as ' + CONFIG_SEASON + ' IA rows for this SKU. Every value is an ordinary override you can change or clear in the panel.'
+  ];
+  if (!confirm(lines.join('\n'))) return;
+  const f = { force_ia: 'Y' };
+  if (plan.writeDeliv) f.deliv_ow = plan.deliv;
+  if (plan.writeTier)  f.tier_ow  = plan.tier;
+  ddWriteOWFields(sku, f);
+  showToast(sku + ' pulled into ' + CONFIG_SEASON, 2600);
+}
+
 // F12: psLateList() → every routed row; psLateWhy('SKU') → why a SKU is/isn't.
 function psLateList() {
   const rows = (typeof ALL_ROWS !== 'undefined' ? ALL_ROWS : []).filter(r => r.ps_late);
   console.table(rows.map(r => ({ sku: r.sku, from: r.ps_late_base, status: r.status,
     deliv: r.ps_late + ' ' + r.ps_late_deliv, drop: r.ps_late_alloc, tier: r.ps_late_tier,
-    newnessLog: r.alloc_date || '', plg: +r.plg_oh || 0, ia: +r.syrup_ia || 0,
+    newnessLog: r.alloc_date || '', marked: r.ps_late_marked ? 'Y' : '', plg: +r.plg_oh || 0, ia: +r.syrup_ia || 0,
     pend: r.ps_dc_pend || r.xs_pend_date || '' })));
   return rows.length;
 }
@@ -8355,6 +8519,7 @@ function recomputeRowDerived(row) {
     plg_oh: row.plg_oh || 0,
     effective_tier: eff_tier_for_status,
     ns_tier: effNsTierForStatus(row.sku, row.ns_tier || ''),   // [p7z7]
+    alloc_ow: (row.alloc_ow = getOW(row.sku, 'alloc_ow')),   // [p7z27] two-site parity
   });
 
   // 4. On-time status (depends on fresh deliv_alloc_date)
@@ -8616,6 +8781,7 @@ function buildFilters() {
     ['READY','READY','orange'],
     ['N/A','N/A',''],
     ['MD','MD','red'],
+    ['Late','Late ' + ((typeof SEASONS !== 'undefined' && SEASONS.ps) || 'PS'),''],   // [p7z27]
   ];
   document.getElementById('statusFilters').innerHTML = statusGroups.map(([k,l,c]) =>
     `<span class="filter-chip ${c}${k==='All'?' on':''}" data-status="${k}" onclick="setFilter('status','${k}')">${l}</span>`
@@ -8690,7 +8856,7 @@ function onWorkingSeasonChange(sel) {
   try {
     const _p = (typeof window.rollAuditPending === 'function' && next === owNextKey()) ? window.rollAuditPending() : null;
     if (_p && _p.total) _raWarn = '⚠ Season Roll Audit: ' + _p.total + ' undecided (' + _p.tier + ' tier override(s), ' + _p.end +
-      ' end date(s), ' + _p.notes + ' config note(s)). Undecided items EXPIRE on the flip. Consider exporting the snapshot first (🔁 Season Roll tab).\n\n';
+      ' end date(s), ' + _p.notes + ' config note(s), ' + (_p.alloc || 0) + ' unallocated newness SKU(s)). Undecided items EXPIRE on the flip. Consider exporting the snapshot first (🔁 Season Roll tab).\n\n';
   } catch (_) {}
   const ok = confirm(_raWarn +
     'Set the CURRENT season to ' + next + '?\n\n' +
@@ -8816,9 +8982,13 @@ function applyFiltersAndRender() {
     if (!divF && !FILTER_DIVISION.has(r.division)) return false;
     if (!statusF) {
       const sv = [...FILTER_STATUS][0];
-      if (sv === 'Alloc'      && !r.status.includes('Allocated'))     return false;
+      // [p7z27] the chips' keys are 'Allocated' / 'NS Pending' (data-status);
+      // the old checks compared 'Alloc' / 'NS', so those two chips filtered nothing.
+      if ((sv === 'Allocated' || sv === 'Alloc') && !r.status.includes('Allocated'))     return false;
       if (sv === 'Pending'    && !(r.status.includes('Pending') && !r.status.startsWith('NS'))) return false;
-      if (sv === 'NS'         && !r.status.startsWith('NS Pending'))   return false;
+      if ((sv === 'NS Pending' || sv === 'NS') && !r.status.startsWith('NS Pending'))   return false;
+      // [p7z27] Late PS receipts still to act on (routed, not yet allocated)
+      if (sv === 'Late'       && !(r.ps_late && !r.status.startsWith('Allocated'))) return false;
       if (sv === 'READY'      && !r.status.includes('READY'))          return false;
       if (sv === 'N/A'        && !r.status.includes('N/A: Do Not'))    return false;
       if (sv === 'MD'         && !r.status.includes('Out of Szn'))     return false;
@@ -9654,6 +9824,7 @@ function renderPage() {
       if (id === 'v_tier') {
         const eff = (row.v_tier || '').trim();
         const deliv = row.v_deliv1;
+        if (row.v_late && eff) return `<td>${sgValueSpan(eff, eff, deliv, 'color:var(--muted)', 'sg-trunc', row.v_late)}${psLateCellChip(row)}</td>`;   // [p7z27]
         if (row.v_tier_ovr) {
           return `<td title="PST: ${sgEsc(row.v_tier_pst)||'—'} · Override: ${sgEsc(eff)}">
             ${sgValueSpan(eff, eff, deliv, 'color:var(--orange);font-weight:500', 'sg-trunc', seasonViewKey())}
@@ -9678,6 +9849,7 @@ function renderPage() {
       // Season view: Delivery (v_deliv1) — mirrors v_tier, with None sentinel.
       if (id === 'v_deliv1') {
         const eff = (row.v_deliv1 || '').trim();
+        if (row.v_late && eff) return `<td><span style="color:var(--muted)">${sgEsc(eff)}</span>${psLateCellChip(row)}</td>`;   // [p7z27]
         if (row.v_deliv1_ovr) {
           if (eff.toUpperCase() === 'NONE') {
             return `<td title="PST: ${sgEsc(row.v_deliv1_pst)||'—'} · Override: None (force blank delivery)">
@@ -9717,6 +9889,10 @@ function renderPage() {
         return `<td class="col-note"><span class="note-box" title="Click to see strategy notes"`
           + ` onclick="event.stopPropagation();showNotePopover(event,'${row.sku}')"></span></td>`;
       }
+
+      // [p7z27] Cal Alloc Drop Date on a late-PS row with no working-season date
+      if (id === 'deliv_alloc_date' && !v && row.v_late && row.v_late_alloc)
+        return `<td><span style="color:var(--muted)">${sgEsc(row.v_late_alloc)}</span>${psLateCellChip(row)}</td>`;
 
       if (v === '' || v === null || v === undefined) return `<td class="${isNum?'num':''}"><span class="muted-cell">—</span></td>`;
 
@@ -9941,6 +10117,8 @@ function openDrilldown(sku) {
   // Detached projection — reading `V` instead of `row.v_*` is what lets the
   // panel show FA26 while the grid behind it stays on SU26.
   const V = seasonProjection(row, ddSeasonKey);
+  if (ddIsConfig) psLateOverlay(row, V); else V.v_late = '';   // [p7z27] same overlay as the grid
+  const ddMxKey = V.v_late || ddSeasonKey;
   ddRenderSeasonSeg(ddSeasonKey);
 
   // ── Conditionals: only show NS / PS groups if there's actual data ─────────
@@ -9959,6 +10137,7 @@ function openDrilldown(sku) {
       ['Lifecycle', V.v_lifecycle || '—'],
       ['End Week (MD Exit)', V.v_md_exit || '—'],
       ['Effective Delivery', (function(){
+        if (V.v_late) return `${sgEsc(V.v_deliv1)} <span class="pill pill-muted" style="font-size:9px;padding:0 4px">${sgEsc(V.v_late)}</span>`;   // [p7z27]
         const eff = V.v_deliv1 || '—';
         const wasHtml = V.v_deliv1_ovr ? ` <span style="color:var(--orange);font-weight:500">(override)</span>`
           + sgWasLine(V.v_deliv1_prev) : '';
@@ -9969,7 +10148,7 @@ function openDrilldown(sku) {
         // [p7z12] Pass ddSeasonKey so the popover reads the SAME season's matrix
         // as this row's value. Omitting it fell back to CONFIG_SEASON, so on the
         // HO26 toggle the popover listed FA26 members (25 vs the grid's 27).
-        const disp = eff ? sgValueSpan(sgEsc(eff), eff, V.v_deliv1, V.v_tier_ovr?'color:var(--orange);font-weight:500':'', '', ddSeasonKey) : '—';
+        const disp = eff ? sgValueSpan(sgEsc(eff), eff, V.v_deliv1, V.v_tier_ovr?'color:var(--orange);font-weight:500':'', '', ddMxKey) : '—';   // [p7z27] ddMxKey
         const wasHtml = V.v_tier_ovr ? ` <span style="color:var(--orange);font-weight:500">(override)</span>`
           + sgWasLine(V.v_tier_prev) : '';
         return `${disp}${wasHtml}`;
@@ -9983,11 +10162,11 @@ function openDrilldown(sku) {
         // [p7z12] Off the working season, count from THAT season's matrix (the
         // projection already resolved it) — same source as the grid's Store Count
         // and the Store Group popover. getTierToStoreCount() is config-season only.
-        if (!ddIsConfig) {
+        if (!ddIsConfig || V.v_late) {   // [p7z27] late-PS row: count from the PS matrix
           if (!t) return '—';
-          const mxCell = renderMxStoreCtCell(V, ddSeasonKey);
+          const mxCell = renderMxStoreCtCell(V, ddMxKey);
           const mtxN = (V.v_mx_state === 'ok') ? String(V.v_mx_store_ct || 0) : null;
-          const lbl = `<span style="color:var(--dim);font-size:10px">${sgEsc(ddSeasonKey)} matrix</span>`;
+          const lbl = `<span style="color:var(--dim);font-size:10px">${sgEsc(ddMxKey)} matrix</span>`;
           if (pst === '' || mtxN === null || pst === mtxN) return `${mxCell} ${lbl}`;
           return `${mxCell} ${lbl}`
                + ` <span style="color:var(--dim)">·</span> `
@@ -10024,6 +10203,21 @@ function openDrilldown(sku) {
         row.newness_proj === 'Pending - No WIP Date' ? 'pill-red' : 'pill-yellow'
       }">${row.newness_proj}</span>` : '—'],
     ]},
+    ...(row.ps_late ? [{title: 'LATE ' + row.ps_late + ' RECEIPT', rows: [
+      ['__note__', 'Not allocated against its <b>' + sgEsc(row.ps_late) + ' ' + sgEsc(row.ps_late_deliv) + '</b> delivery'
+        + ' (drop ' + sgEsc(row.ps_late_alloc) + ', ' + sgEsc(row.ps_late_tier) + '), so Status is evaluated on that delivery.'
+        + ' It would otherwise read <i>' + sgEsc(row.ps_late_base || '—') + '</i>.'],
+      ['Mark Allocated', row.ps_late_marked
+        ? '<span class="pill pill-green">Allocated · ' + sgEsc(row.ps_late) + '</span> <button class="dd-save" onclick="ddLateMarkAllocated(\'' + sku + '\', false)">Undo</button>'
+        : '<button class="dd-save" title="Already dropped, just not in the Newness Log. Status reads Allocated for Season; expires with ' + sgEsc(row.ps_late) + '." onclick="ddLateMarkAllocated(\'' + sku + '\', true)">Mark Allocated</button>'],
+      ['Pull into ' + CONFIG_SEASON, (function(){
+        const pl = latePullPlan(row, CONFIG_SEASON);
+        if (!pl.ok) return '<span style="color:var(--muted)">' + sgEsc(pl.why) + '</span>';
+        return '<button class="dd-save" title="Writes ' + sgEsc(CONFIG_SEASON) + ' delivery ' + sgEsc(pl.deliv) + ', store group ' + sgEsc(pl.tier)
+          + ' and Force IA, so it allocates and configs as ' + sgEsc(CONFIG_SEASON) + ' Newness" onclick="ddLatePullIn(\'' + sku + '\')">Pull in</button>'
+          + ' <span style="color:var(--dim);font-size:10px">' + sgEsc(pl.deliv) + ' · ' + sgEsc(pl.tier) + '</span>';
+      })()],
+    ]}] : []),
     {title: 'MANUAL OVERRIDES', editable: true, rows: [
       // [p7z20] Standardized layout: [label, field, value, inputType, {scope, hint}].
       // Scope renders as a chip next to the label; hint as a muted sub-line.
@@ -10035,6 +10229,9 @@ function openDrilldown(sku) {
       ...(owNextKey() ? [['Tier', 'ns_tier_ow', getOW(sku, 'ns_tier_ow'), 'tier', {scope: `NS · ${owNextKey()}`}]] : []),   // [p7z7]
       ...(nsHalfSetWarning(row) ? [['__warn__', '__warn__', nsHalfSetWarning(row), 'warn']] : []),   // [p7z10]
       ['Force IA', 'force_ia', getOW(sku, 'force_ia'), 'text', {hint: '"Y" forces Newness + IA config dates'}],
+      ['Mark Allocated', 'alloc_ow', getOW(sku, 'alloc_ow'), 'text', {scope: 'CS', hint: '"Y" → Allocated for Season (no Newness Log entry)'}],   // [p7z27]
+      ...((row.ps_late || getOW(sku, 'ps_alloc_ow')) && owPrevKey()
+        ? [['Mark Allocated', 'ps_alloc_ow', getOW(sku, 'ps_alloc_ow'), 'text', {scope: `PS · ${owPrevKey()}`, hint: 'Late receipt drop already happened'}]] : []),
       ['End Date', 'end_ow', fmtEndOWDisplay(getOW(sku, 'end_ow')), 'text', {hint: 'Date, "+13w", or "INDEF"'}],
     ]},
     // ── INVENTORY: includes the depth metrics that previously lived in their
@@ -10269,6 +10466,7 @@ function openDrilldown(sku) {
     'SYRUP CONFIG ACCURACY': '#5a4a8a',
   };
   ddSectionColors[allocTitle] = 'var(--grp-alloc)';
+  if (row.ps_late) ddSectionColors['LATE ' + row.ps_late + ' RECEIPT'] = 'var(--orange)';   // [p7z27]
   if (nsCfgTitle) ddSectionColors[nsCfgTitle] = 'var(--grp-ns)';   // [p7z8]
   ddSectionColors[ddSeasonTitle] = (ddSeasonKey === CONFIG_SEASON) ? 'var(--grp-syrup)' : 'var(--grp-ns)';
 
@@ -10686,6 +10884,18 @@ function saveOverride(sku, field) {
     if (inputEl) inputEl.value = fmtEndOWDisplay(val);
   }
 
+  // [p7z27] Mark Allocated: Y-style flag only; normalize to 'Y'.
+  if (field === 'alloc_ow' || field === 'ps_alloc_ow') {
+    if (field === 'ps_alloc_ow' && !owPrevKey()) { showToast('No previous season is configured', 2600); return; }
+    if (val && !isMarkAlloc(val)) {
+      if (inputEl) { inputEl.style.borderColor = 'var(--red)'; setTimeout(() => { inputEl.style.borderColor = ''; }, 600); }
+      showToast(`"${val}" — use Y to mark allocated, or blank to clear`, 2800);
+      return;
+    }
+    val = val ? 'Y' : '';
+    if (inputEl) inputEl.value = val;
+  }
+
   setOW(sku, field, val);  // season-pivot p4
   persistManualOW();
 
@@ -10711,7 +10921,8 @@ function saveOverride(sku, field) {
     // dependents (new_cf / deliv_alloc_date / status / on-time) so a delivery
     // edit also updates the in-season gate, a tier edit updates new_cf, and
     // a PS tier edit updates the CF tag.
-    if (field === 'tier_ow' || field === 'deliv_ow' || field === 'ps_tier_ow' || field === 'ns_tier_ow' || field === 'ns_deliv_ow' || field === 'force_ia' || field === 'end_ow') {
+    if (field === 'tier_ow' || field === 'deliv_ow' || field === 'ps_tier_ow' || field === 'ns_tier_ow' || field === 'ns_deliv_ow' || field === 'force_ia' || field === 'end_ow'
+        || field === 'alloc_ow' || field === 'ps_alloc_ow') {   // [p7z27]
       recomputeRowDerived(row);   // [p7z7] ns_tier_ow: NS-only Status branch reads the effective NS tier
       console.log(`[${field}-DD] ${sku} → "${val||'(cleared)'}" | new_cf=${row.new_cf} | status=${row.status} | newnessProj=${row.newness_proj}`);
     }
@@ -11105,7 +11316,9 @@ function refreshDependentCells(tr, row) {
     if (id === 'v_tier') {
       const eff = (row.v_tier || '').trim();
       const deliv = row.v_deliv1;
-      if (row.v_tier_ovr) {
+      if (row.v_late && eff) {   // [p7z27]
+        cell.innerHTML = sgValueSpan(eff, eff, deliv, 'color:var(--muted)', 'sg-trunc', row.v_late) + psLateCellChip(row);
+      } else if (row.v_tier_ovr) {
         cell.innerHTML = `<span title="PST: ${sgEsc(row.v_tier_pst)||'—'} · Override: ${sgEsc(eff)}">`
           + sgValueSpan(eff, eff, deliv, 'color:var(--orange);font-weight:500', 'sg-trunc', seasonViewKey())
           + `<span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span></span>`;
@@ -11114,7 +11327,9 @@ function refreshDependentCells(tr, row) {
     }
     if (id === 'v_deliv1') {
       const eff = (row.v_deliv1 || '').trim();
-      if (row.v_deliv1_ovr && eff.toUpperCase() === 'NONE') {
+      if (row.v_late && eff) {   // [p7z27]
+        cell.innerHTML = '<span style="color:var(--muted)">' + sgEsc(eff) + '</span>' + psLateCellChip(row);
+      } else if (row.v_deliv1_ovr && eff.toUpperCase() === 'NONE') {
         cell.innerHTML = `<span title="PST: ${row.v_deliv1_pst || '—'} · Override: None (force blank delivery)">
           <span style="color:#6b21a8;font-weight:500">🚫 None</span>
           <span style="color:var(--muted);font-size:9px;font-family:var(--mono);margin-left:4px">(ow)</span></span>`;
@@ -11186,7 +11401,9 @@ function refreshDependentCells(tr, row) {
       cell.innerHTML = `<span class="pill ${cls}">${v}</span>`;
     }
     if (id === 'deliv_alloc_date') {
-      cell.innerHTML = row.deliv_alloc_date || '<span class="muted-cell">—</span>';
+      cell.innerHTML = row.deliv_alloc_date
+        || ((row.v_late && row.v_late_alloc) ? '<span style="color:var(--muted)">' + sgEsc(row.v_late_alloc) + '</span>' + psLateCellChip(row) : '')   // [p7z27]
+        || '<span class="muted-cell">—</span>';
     }
     // [p7v] Moves with deliv_ow: a delivery change can flip the on-time test
     // and swing this date by a week, so it repaints alongside the cal drop
@@ -13182,6 +13399,9 @@ function csvCellsFor(row, id) {
   }
 
   if (id === 'v_mx_store_ct') return [mxStoreCtLabel(row) ?? ''];   // [p7y]
+  // [p7z27] Late-PS overlay: say which season the value belongs to.
+  if (id === 'v_deliv1' && row.v_late && row.v_deliv1) return [row.v_late + ' ' + row.v_deliv1];
+  if (id === 'deliv_alloc_date' && !row.deliv_alloc_date && row.v_late && row.v_late_alloc) return [row.v_late_alloc];
   if (id === 'new_cf') return [viewNewCF(row)];   // [p7z14] matches the grid's season view
 
   const map = CSV_VALUE_OVERRIDE[id];
@@ -19834,6 +20054,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var s = all[k] || {};
     s.tier = s.tier || {}; s.end = s.end || {}; s.note = s.note || {};
     s.carriedTier = s.carriedTier || {}; s.carriedEnd = s.carriedEnd || {};
+    s.alloc = s.alloc || {}; s.pulled = s.pulled || {};   // [p7z27]
     return s;
   }
   function saveSt(s){
@@ -19933,10 +20154,35 @@ tr.nf-strow-shifted {background:#DBEAFE}
       });
     });
 
+    // [p7z27] Unallocated newness — the SKUs a flip would bury. Every working-
+    // season Newness SKU still Pending / READY, plus every late-PS row still
+    // routed (those fall off entirely on this flip: PS-of-PS is never routed).
+    // Rows already marked Allocated stay listed so "Decided" can show them.
+    var alloc = [];
+    (typeof ALL_ROWS !== 'undefined' ? ALL_ROWS : []).forEach(function(r){
+      var stt = String(r.status || '');
+      var evalKey = r.ps_late || f;
+      var marked = isMarkAlloc(getOWFor(r.sku, evalKey, 'alloc_ow'));
+      if (!(r.ps_late || r.new_cf === 'Newness')) return;
+      var open = stt.indexOf('READY') === 0 || stt.indexOf('Pending Allocation') === 0;
+      if (!open && !(marked && stt.indexOf('Allocated') === 0)) return;
+      var plan = (typeof latePullPlan === 'function') ? latePullPlan(r, t) : { ok: false, why: 'unavailable' };
+      var pr = S.pulled[r.sku];
+      var pulledLive = !!(pr && isForceIA(getOWFor(r.sku, t, 'force_ia')));
+      var it = { kind: 'alloc', id: r.sku, sku: r.sku, row: r, late: !!r.ps_late, evalKey: evalKey,
+                 deliv: r.ps_late ? r.ps_late_deliv : (effDelivFor(r, f) || ''),
+                 drop: r.ps_late ? r.ps_late_alloc : (r.deliv_alloc_date || ''),
+                 fa: r.ps_late ? (r.ps_late_tier || '') : (effTierFor(r, f) || ''),
+                 pst: '', status: stt, plan: plan, marked: marked };
+      it.dec = marked ? 'alloc' : pulledLive ? 'pull' : (S.alloc[r.sku] === 'late' ? 'late' : '');
+      alloc.push(it);
+    });
+    alloc.sort(function(a,b){ return (a.late === b.late ? 0 : a.late ? -1 : 1) || a.sku.localeCompare(b.sku); });
+
     tier.sort(function(a,b){ return a.sku.localeCompare(b.sku); });
     end.sort(function(a,b){ return a.sku.localeCompare(b.sku); });
     notes.sort(function(a,b){ return a.sku.localeCompare(b.sku) || a.ts - b.ts; });
-    DATA = { f: f, t: t, mx: mx, tier: tier, end: end, notes: notes, other: other };
+    DATA = { f: f, t: t, mx: mx, tier: tier, end: end, notes: notes, other: other, alloc: alloc };
     return DATA;
   }
 
@@ -19945,7 +20191,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var tierN = d.tier.filter(function(i){ return i.bucket === 'review' && !i.dec; }).length;
     var endN  = d.end.filter(function(i){ return i.bucket === 'review' && !i.dec; }).length;
     var noteN = d.notes.filter(function(i){ return (i.group === 'store' || i.group === 'config') && !i.dec; }).length;
-    return { tier: tierN, end: endN, notes: noteN, total: tierN + endN + noteN, from: d.f, to: d.t };
+    var allocN = (d.alloc || []).filter(function(i){ return !i.dec; }).length;   // [p7z27]
+    return { tier: tierN, end: endN, notes: noteN, alloc: allocN, total: tierN + endN + noteN + allocN, from: d.f, to: d.t };
   }
 
   // ── visible list ──────────────────────────────────────────────────────────
@@ -19962,6 +20209,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var d = DATA || build(), list;
     if (RA.section === 'tier') list = d.tier.filter(function(i){ return i.bucket === 'review' || (RA.view === 'all' && i.bucket !== 'gone'); });
     else if (RA.section === 'end') list = d.end.filter(function(i){ return i.bucket === 'review' || (RA.view === 'all' && i.bucket === 'set'); });
+    else if (RA.section === 'alloc') list = d.alloc.slice();   // [p7z27]
     else {
       list = d.notes.filter(function(i){ return i.group === RA.kind; });
       if (RA.kind === 'store' && RA.store) list = list.filter(function(i){ return storesOf(i).indexOf(RA.store) !== -1; });
@@ -19978,6 +20226,18 @@ tr.nf-strow-shifted {background:#DBEAFE}
   // ── render ────────────────────────────────────────────────────────────────
   function fmtCt(n){ return n == null ? '—' : String(n); }
   function decCell(i){
+    if (i.kind === 'alloc') {   // [p7z27]
+      var canPull = i.plan.ok || i.dec === 'pull';
+      var lateLbl = i.late ? 'Let expire' : 'Late route';
+      var lateTip = i.late
+        ? 'Already a late ' + i.evalKey + ' receipt; after this flip it is two seasons back and no longer routed — it drops off.'
+        : 'After the flip the late-receipt route re-evaluates it on its ' + DATA.f + ' delivery (check with psLateWhy).';
+      return '<span class="ra-dec">'
+        + '<button data-act="alloc" data-id="' + esc(i.id) + '"' + (i.dec === 'alloc' ? ' class="on-carry"' : '') + ' title="Already dropped — Status reads Allocated for Season">Mark allocated</button>'
+        + '<button data-act="pull" data-id="' + esc(i.id) + '"' + (i.dec === 'pull' ? ' class="on-carry"' : '') + (canPull ? '' : ' disabled title="' + esc(i.plan.why) + '"') + '>Pull into ' + esc(DATA.t) + '</button>'
+        + '<button data-act="late" data-id="' + esc(i.id) + '"' + (i.dec === 'late' ? ' class="on-expire"' : '') + ' title="' + esc(lateTip) + '">' + lateLbl + '</button>'
+        + '</span>';
+    }
     if (i.bucket && i.bucket !== 'review') {
       var lbl = i.bucket === 'set' ? (DATA.t + ' override: ' + (i.ho || '')) : i.bucket === 'pst' ? (DATA.t + ' PST already matches') : 'Expires with SKU';
       return '<span class="ra-info">' + esc(lbl) + '</span>';
@@ -20003,6 +20263,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
       h = ['SKU','Style','Color','Division', t + ' delivery', f + ' override', t + ' PST tier', f + ' notes', 'Decision'];
     else if (RA.section === 'end')
       h = ['SKU','Style','Color', f + ' end date override', t + ' delivery', t + ' tier', 'Decision'];
+    else if (RA.section === 'alloc')   // [p7z27]
+      h = ['SKU','Style','Color','Division','Status','Delivery · drop','Store group','PLG / IA','Next in-DC', 'Pull into ' + t, 'Decision'];
     else
       h = ['SKU','Style','Color', t + ' tier', 'Type', 'Stores', 'Note', 'Logged', 'Decision'];
     document.getElementById('raHead').innerHTML = '<tr>' + h.map(function(x, k){
@@ -20022,6 +20284,22 @@ tr.nf-strow-shifted {background:#DBEAFE}
           + '<td class="l"><span class="ra-tier">' + esc(i.fa) + '</span><span class="ra-sub">' + faSub + '</span></td>'
           + '<td class="l"><span class="ra-tier">' + esc(i.pst || '—') + '</span><span class="ra-sub">' + (i.pst ? t + ' ' + fmtCt(i.hoPstCt) + ' stores' : 'no ' + t + ' PST tier') + '</span></td>'
           + '<td class="nf-num">' + (nN || '—') + '</td>'
+          + '<td class="l">' + decCell(i) + '</td></tr>';
+      }
+      if (i.kind === 'alloc') {   // [p7z27]
+        var pl = i.plan;
+        var plTxt = pl.ok
+          ? '<span class="ra-tier">' + esc(pl.deliv) + ' · ' + esc(pl.tier) + '</span><span class="ra-sub">' + (pl.writeDeliv || pl.writeTier ? 'override' + (pl.writeDeliv && pl.writeTier ? 's' : '') + ' + Force IA' : t + ' values + Force IA') + '</span>'
+          : '<span class="ra-warn">' + esc(pl.why) + '</span>';
+        var pend = r.ps_late ? (r.ps_dc_pend || r.xs_pend_date || '') : (r.cs_dc_pend || r.xs_pend_date || '');
+        return '<tr>' + skuCells(i)
+          + '<td class="l">' + esc(r.division || '—') + '</td>'
+          + '<td class="l"><span class="pill ' + statusClass(i.status) + '">' + esc(i.status) + '</span>' + (i.late ? ' <span class="pill pill-muted" style="font-size:9px;padding:0 4px">' + esc(i.evalKey) + '</span>' : '') + '</td>'
+          + '<td class="l">' + esc(i.late ? i.evalKey + ' ' + i.deliv : (i.deliv || '—')) + '<span class="ra-sub">' + esc(i.drop || '—') + '</span></td>'
+          + '<td class="l ra-tier">' + esc(i.fa || '—') + '</td>'
+          + '<td class="nf-num">' + ((+r.plg_oh || 0).toLocaleString()) + ' / ' + ((+r.syrup_ia || 0).toLocaleString()) + '</td>'
+          + '<td class="nf-num">' + esc(pend || '—') + '</td>'
+          + '<td class="l">' + plTxt + '</td>'
           + '<td class="l">' + decCell(i) + '</td></tr>';
       }
       if (i.kind === 'end') {
@@ -20071,6 +20349,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
       tile('SR / ADD notes', (gOpen.store || 0) + ' / ' + (g.store || 0), 'undecided', 'notes', 'store', gOpen.store ? amber : 'var(--green)', 'Store-named notes the Configs Generator acts on. Filter by store to decide a whole door at once.'),
       tile('Other config notes', (gOpen.config || 0) + ' / ' + (g.config || 0), 'undecided', 'notes', 'config', gOpen.config ? amber : 'var(--green)', 'ADJ / ISS / DROP and other prefixed notes on SKUs in ' + d.t + '.'),
       tile('Context notes', (gOpen.context || 0) + ' / ' + (g.context || 0), 'undecided', 'notes', 'context', '', 'Free-text notes. They do not affect configs and do not block the flip.'),
+      tile('Unallocated newness', p.alloc + ' / ' + d.alloc.length, 'undecided', 'alloc', null, p.alloc ? amber : 'var(--green)',
+        d.f + ' Newness SKUs still Pending / READY, plus late ' + ((typeof SEASONS !== 'undefined' && SEASONS.ps) || 'PS') + ' receipts. Mark allocated, pull into ' + d.t + ', or leave to the late-receipt route.'),
       tile('Notes expiring', String(g.gone || 0), 'SKU not in ' + d.t, 'notes', 'gone', '', 'Notes on SKUs with no ' + d.t + ' presence. Nothing to decide.'),
       tile(d.t + ' matrix', d.mx.state === 'ready' ? '✓' : d.mx.state === 'loading' ? '…' : '✕', d.mx.state, RA.section, null,
         d.mx.state === 'ready' ? 'var(--green)' : amber, 'Store counts and carry validation use the ' + d.t + ' Store Matrix.')
@@ -20092,7 +20372,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     document.getElementById('raStoreLbl').style.display = show ? '' : 'none';
   }
   function segs(){
-    [['raSecTier','tier'],['raSecEnd','end'],['raSecNotes','notes']].forEach(function(p){ var b = document.getElementById(p[0]); if (b) b.classList.toggle('active', RA.section === p[1]); });
+    [['raSecTier','tier'],['raSecEnd','end'],['raSecNotes','notes'],['raSecAlloc','alloc']].forEach(function(p){ var b = document.getElementById(p[0]); if (b) b.classList.toggle('active', RA.section === p[1]); });
     [['raViewOpen','open'],['raViewDone','done'],['raViewAll','all']].forEach(function(p){ var b = document.getElementById(p[0]); if (b) b.classList.toggle('active', RA.view === p[1]); });
     [['raKindStore','store'],['raKindConfig','config'],['raKindContext','context'],['raKindGone','gone']].forEach(function(p){ var b = document.getElementById(p[0]); if (b) b.classList.toggle('active', RA.kind === p[1]); });
     document.getElementById('raNoteBar').style.display = RA.section === 'notes' ? 'flex' : 'none';
@@ -20100,12 +20380,15 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function renderBulk(list){
     var bar = document.getElementById('raBulk');
     var open = list.filter(function(i){ return !i.dec && (!i.bucket || i.bucket === 'review') && i.group !== 'gone'; });
-    var carryable = open.filter(function(i){ return i.kind !== 'tier' || !!i.carryVal; });
+    var carryable = open.filter(function(i){ return i.kind === 'alloc' ? i.plan.ok : (i.kind !== 'tier' || !!i.carryVal); });
     bar.style.display = open.length ? 'flex' : 'none';
     document.getElementById('raBulkCount').textContent = open.length + ' undecided shown';
     var cb = document.getElementById('raBulkCarry');
-    cb.textContent = carryable.length === open.length ? 'Carry all undecided shown' : 'Carry ' + carryable.length + ' carryable';
+    var verb = RA.section === 'alloc' ? 'Pull' : 'Carry';   // [p7z27]
+    cb.textContent = carryable.length === open.length ? verb + ' all undecided shown' : verb + ' ' + carryable.length + (RA.section === 'alloc' ? ' pullable' : ' carryable');
     cb.disabled = !carryable.length;
+    var eb = document.getElementById('raBulkExpire');
+    if (eb) eb.textContent = RA.section === 'alloc' ? 'Leave all undecided shown to late route' : 'Expire all undecided shown';
   }
 
   function raRefresh(){
@@ -20123,13 +20406,13 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var p = pending();
     document.getElementById('raSubtitle').textContent = p.total
       ? (p.total + ' decision(s) left before flipping to ' + DATA.t + '. Carries write to ' + DATA.t + ' now and take effect when it becomes the working season. Expire is what the flip does anyway.')
-      : ('All overrides and config notes decided. Export the snapshot, then flip the working season to ' + DATA.t + '.');
+      : ('All overrides, config notes and unallocated newness decided. Export the snapshot, then flip the working season to ' + DATA.t + '.');
   }
 
   // ── actions ───────────────────────────────────────────────────────────────
   function find(id){
     var d = DATA || build();
-    var src = RA.section === 'tier' ? d.tier : RA.section === 'end' ? d.end : d.notes;
+    var src = RA.section === 'tier' ? d.tier : RA.section === 'end' ? d.end : RA.section === 'alloc' ? d.alloc : d.notes;
     return src.find(function(i){ return i.id === id; });
   }
   // Apply decisions to a list of items in one pass: one MANUAL_OW persist, one
@@ -20137,7 +20420,42 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function apply(items, act){
     var S = st(), f = F(), t = T(), touchOW = false, touchNotes = false, rowsToRe = {}, notesStore = null, n = 0, skipped = 0;
     var tsBase = Date.now();
+    // [p7z27] write one field into a season slot (same pattern as end_ow).
+    function slot(sku, key, field, val){
+      var mo = MANUAL_OW[sku] || (MANUAL_OW[sku] = {});
+      mo._owv = 2; mo.seasons = mo.seasons || {}; mo.seasons[key] = mo.seasons[key] || {};
+      if (val) mo.seasons[key][field] = val; else delete mo.seasons[key][field];
+      owLegacyMirror(mo); touchOW = true; rowsToRe[sku] = 1;
+    }
+    function undoAlloc(i){
+      if (i.dec === 'alloc') slot(i.sku, i.evalKey, 'alloc_ow', '');
+      if (i.dec === 'pull') {
+        var pr = S.pulled[i.sku] || {};
+        if (pr.deliv && getOWFor(i.sku, t, 'deliv_ow') === pr.deliv) slot(i.sku, t, 'deliv_ow', '');
+        if (pr.tier  && getOWFor(i.sku, t, 'tier_ow')  === pr.tier)  slot(i.sku, t, 'tier_ow', '');
+        if (pr.fia) slot(i.sku, t, 'force_ia', '');
+        delete S.pulled[i.sku];
+      }
+      delete S.alloc[i.sku];
+    }
     items.forEach(function(i, k){
+      if (i.kind === 'alloc') {
+        var want = act === 'carry' ? 'pull' : act === 'expire' ? 'late' : act;   // bulk verbs map onto this section's
+        if (want === 'reset') { undoAlloc(i); n++; return; }
+        if (i.dec === want) return;
+        if (want === 'pull' && !i.plan.ok) { skipped++; return; }
+        undoAlloc(i);
+        if (want === 'alloc') slot(i.sku, i.evalKey, 'alloc_ow', 'Y');
+        else if (want === 'pull') {
+          var pl = i.plan, rec = { deliv: '', tier: '', fia: false };
+          if (pl.writeDeliv) { slot(i.sku, t, 'deliv_ow', pl.deliv); rec.deliv = pl.deliv; }
+          if (pl.writeTier)  { slot(i.sku, t, 'tier_ow',  pl.tier);  rec.tier  = pl.tier; }
+          if (!isForceIA(getOWFor(i.sku, t, 'force_ia'))) { slot(i.sku, t, 'force_ia', 'Y'); rec.fia = true; }
+          S.pulled[i.sku] = rec;
+        } else if (want === 'late') S.alloc[i.sku] = 'late';
+        n++;
+        return;
+      }
       if (i.kind === 'tier') {
         if (act === 'carry' && i.dec !== 'carry') {
           if (!i.carryVal) { skipped++; return; }
@@ -20192,6 +20510,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
         var row = ALL_ROWS.find(function(r){ return r.sku === sku; });
         if (!row) return;
         row.ns_tier_ow = getOW(sku, 'ns_tier_ow');
+        row.ns_deliv_ow = getOW(sku, 'ns_deliv_ow');   // [p7z27]
         try { recomputeRowDerived(row); } catch(e){ console.warn('[RollAudit] recompute failed for ' + sku, e); }
       });
       try { applyFiltersAndRender(); } catch(e){}
@@ -20224,8 +20543,17 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.raSetQuery   = function(q){ RA.q = q || ''; raRefresh(); };
   window.raBulk = function(act){
     var list = visible().filter(function(i){ return !i.dec && (!i.bucket || i.bucket === 'review') && i.group !== 'gone'; });
-    if (act === 'carry') list = list.filter(function(i){ return i.kind !== 'tier' || !!i.carryVal; });
+    if (act === 'carry') list = list.filter(function(i){ return i.kind === 'alloc' ? i.plan.ok : (i.kind !== 'tier' || !!i.carryVal); });
     if (!list.length) return;
+    if (RA.section === 'alloc') {   // [p7z27]
+      var m2 = act === 'carry'
+        ? 'Pull ' + list.length + ' SKU(s) into ' + T() + ' as Newness?\n\nWrites ' + T() + ' delivery / store group overrides where ' + T() + ' has none, plus Force IA. They allocate and config as ' + T() + ' once it is the working season.'
+        : 'Leave ' + list.length + ' SKU(s) to the late-receipt route?\n\nNothing in the data changes. Rows that are already late ' + ((typeof SEASONS !== 'undefined' && SEASONS.ps) || 'PS') + ' receipts drop off on this flip.';
+      if (!confirm(m2)) return;
+      var r2 = apply(list, act);
+      toast((act === 'carry' ? 'Pulled ' : 'Left ') + r2.n + ' SKU(s)' + (r2.skipped ? ' · ' + r2.skipped + ' skipped' : ''));
+      return;
+    }
     var what = RA.section === 'notes' ? 'note(s)' : RA.section === 'end' ? 'end date override(s)' : 'tier override(s)';
     var scope = (RA.section === 'notes' && RA.kind === 'store' && RA.store) ? ' for ' + RA.store : '';
     var msg = act === 'carry'
@@ -20251,6 +20579,11 @@ tr.nf-strow-shifted {background:#DBEAFE}
     d.other.forEach(function(o){ rowOut('Season-specific override', o, o.present ? 'Expires on roll' : bucketLbl.gone, o.field, '', o.fa, '', o.ho, 'Expire (default)'); });
     var gl = { store: 'SR / ADD', config: 'Other config', context: 'Context', gone: 'SKU not in ' + t };
     d.notes.forEach(function(i){ rowOut('Strategy note', i, gl[i.group], i.prefix || 'free text', storesOf(i).join('; '), i.text, '', '', decTxt(i)); });
+    (d.alloc || []).forEach(function(i){   // [p7z27]
+      var dt = i.dec === 'alloc' ? 'Mark allocated' : i.dec === 'pull' ? 'Pull into ' + t : i.dec === 'late' ? (i.late ? 'Let expire' : 'Late route') : 'Undecided';
+      rowOut('Unallocated newness', i, i.status + (i.late ? ' (late ' + i.evalKey + ')' : ''), 'delivery / store group', '',
+        (i.late ? i.evalKey + ' ' : '') + i.deliv + ' · ' + i.fa, '', i.plan.ok ? i.plan.deliv + ' · ' + i.plan.tier : i.plan.why, dt);
+    });
     var blob = new Blob([out.join('\n')], { type: 'text/csv' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -20270,6 +20603,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     d.tier.forEach(function(i){ c['tier · ' + i.bucket] = (c['tier · ' + i.bucket] || 0) + 1; });
     d.end.forEach(function(i){ c['end · ' + i.bucket] = (c['end · ' + i.bucket] || 0) + 1; });
     d.notes.forEach(function(i){ c['note · ' + i.group] = (c['note · ' + i.group] || 0) + 1; });
+    (d.alloc || []).forEach(function(i){ var k2 = 'alloc · ' + (i.dec || 'open'); c[k2] = (c[k2] || 0) + 1; });   // [p7z27]
     console.table(c); console.log('[RollAudit] pending', pending(d)); return pending(d);
   };
 
