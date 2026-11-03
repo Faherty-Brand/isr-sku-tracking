@@ -5,7 +5,7 @@ A single-page web app used by Faherty Brand's Allocation & Store Planning team t
 It replaces what used to be a multi-file Excel workflow with one shared tool: everyone works from the same published dataset, and overrides, notes, and review decisions sync in real time across users.
 
 > **Owner:** Christian Schmidt (Allocation & Store Planning)
-> **Companion tool:** Store Matrix (Google Apps Script), owned by Lauren
+> **Companion tool:** Store Matrix (Google Apps Script), owned by Lauren Fuchs
 
 ---
 
