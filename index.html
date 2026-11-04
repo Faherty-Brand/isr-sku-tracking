@@ -1164,7 +1164,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets (p7z30)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week (p7z31)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1486,7 +1486,7 @@ setTimeout(function(){
         <p><b>Bucket meanings:</b> Confirmed (≥99%, on-hand only) · Likely (80–98%) · Possible (50–79%) · Long-shot (&lt;50%).</p>
         <p><b>Roll-forward:</b> the leftover probability from <i>this</i> week's Pending SKUs. A Pending SKU with IA of 1,000 units at 85% contributes 850 units to This Week and the remaining 150 (1&nbsp;−&nbsp;0.85) to Next Week. The units aren't cancelled if the WIP misses its date — they slip. Only <b>Pending – Allocate This Week</b> SKUs generate roll-forward; on-hand ("Here") SKUs are certain and have no remainder. In the Drop Day Breakdown the same remainder lands on the <i>following</i> Tue/Thu drop.</p>
         <p><b>Excluded:</b> Pending SKUs without a WIP date (no signal to estimate from). They appear in the Risk Factors strip below.</p>
-        <p><b>Pending receipts (below the forecast):</b> current-season newness plus late prior-season receipts, in IA rec units (Allocated uses the Newness Log units, since Syrup's rec goes to zero once a SKU is released). The <b>status bars</b> split each delivery month by state — Pending is split by the week the SKU is projected to <i>drop</i>. The <b>receipt calendar</b> places each pending receipt in the column of the first drop it can make (in the DC the day before); a red outline means it lands after that delivery's Flow Cal drop. Click a bar segment, month name or calendar cell to filter the SKU list; the likelihood pill uses the same scoring as the toplines. Next-season SKUs count in the toplines but are not shown here.</p>
+        <p><b>Pending receipts (below the forecast):</b> current-season newness plus late prior-season receipts, in IA rec units (Allocated uses the Newness Log units, since Syrup's rec goes to zero once a SKU is released). The <b>status bars</b> split each delivery month by state — Pending is split by the week the SKU is projected to <i>drop</i>. The <b>receipt calendar</b> places each pending receipt under the drop it will go out on — its Flow Cal drop, or the first drop after it lands if that's later (in the DC the day before); a red outline means it lands after that delivery's Flow Cal drop. Click a bar segment, month name or calendar cell to filter the SKU list; the likelihood pill uses the same scoring as the toplines. Next-season SKUs count in the toplines but are not shown here.</p>
         <p><b>Next-season SKUs:</b> a SKU that's N/A or NS Pending in the current season (e.g. Wholesale Exclusive now, a store tier next season) is placed on its <b>next-season</b> delivery — that month's Flow Cal drop date, its NS WIP date and NS on-time — and tagged with the season in the lists. It only counts if next season would allocate it (an NS delivery and an allocatable NS tier, overrides included). It clears once a Newness Log allocation lands within 6 weeks before that NS drop date. N/A SKUs with no allocatable next season are left out entirely.</p>
       </div>
     </div>
@@ -1559,9 +1559,9 @@ setTimeout(function(){
       <div id="iaPrBars"></div>
       <div class="ia-pr-legend" id="iaPrLegend"></div>
 
-      <div class="ia-pr-block">Receipt calendar · IA units by the drop each receipt can make</div>
+      <div class="ia-pr-block">Receipt calendar · pending IA units by the drop they'll go out on</div>
       <div class="ia-pr-calwrap"><div id="iaPrCal"></div></div>
-      <div class="ia-pr-note">A receipt lands in the column of the first drop it can make (it must be in the DC the day before). <span class="ia-pr-latekey"></span> = landing after that delivery's Flow Cal drop (late stock). Past due = WIP date already behind us, not yet received.</div>
+      <div class="ia-pr-note">Each pending receipt sits under the drop it'll go out on: its Flow Cal drop, or the first drop after it lands if that's later (it must be in the DC the day before). Already-received SKUs aren't shown here. <span class="ia-pr-latekey"></span> = landing after that delivery's Flow Cal drop (late stock). Past due = WIP date already behind us, not yet received.</div>
 
       <div class="ia-pr-listhead">
         <div class="ia-pr-block" style="margin:0">SKUs <span class="ia-pr-count" id="iaPrCount"></span></div>
@@ -14545,13 +14545,21 @@ function iaComputePending(todayIn) {
       let pd = parseXLDate(r.pendStr);
       if (pd && !isNaN(pd)) {
         pd.setHours(0, 0, 0, 0);
-        if (pd < today) { r.pastDue = true; r.col = -1; r.feeds = cols[0]; }
+        // [p7z30] Column = the drop the SKU will actually go out on: the LATER of
+        // the first drop its receipt can make and its own Flow Cal drop. Before,
+        // an early receipt (e.g. a December SKU landing 11/9 for an 11/19 drop)
+        // sat under the first drop it could physically make (11/12), which read
+        // as volume going out that week. Past-due receipts keep their own column.
+        const eff = pd < today ? today : pd;
+        const firstDrop = iaPrThuOnOrAfter(new Date(eff.getTime() + 86400000));   // must be in DC the day before
+        const calThu = r.allocDate ? iaPrThuOnOrAfter(r.allocDate) : null;
+        r.feeds = (calThu && calThu.getTime() > firstDrop.getTime()) ? calThu : firstDrop;
+        r.late = !!(calThu && firstDrop.getTime() > calThu.getTime());
+        if (pd < today) { r.pastDue = true; r.col = -1; }
         else {
-          let k = cols.findIndex(c => pd.getTime() < c.getTime());
-          if (k === -1) { r.col = cols.length; r.feeds = iaPrThuOnOrAfter(new Date(pd.getTime() + 86400000)); }
-          else { r.col = k; r.feeds = cols[k]; }
+          const k = cols.findIndex(c => c.getTime() === r.feeds.getTime());
+          r.col = k === -1 ? cols.length : k;
         }
-        r.late = !!(r.allocDate && r.feeds && r.feeds.getTime() > r.allocDate.getTime());
       }
       const c = cmap[r.sku];
       if (state === 'p1' && c) r.prob = c.probThis;
