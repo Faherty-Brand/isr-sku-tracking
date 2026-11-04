@@ -271,6 +271,52 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .dd-notes-empty{font-size:11px;color:var(--muted);font-style:italic;text-align:center;padding:8px}
 
 /* ── IA VOLUME ESTIMATOR PANEL ──────────────────────────────── */
+/* [p7z29] Pending receipts */
+.ia-pr-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:6px}
+.ia-pr-sub{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+.ia-pr-filter{font-size:11px;color:var(--accent);text-align:right}
+.ia-pr-filter a{margin-left:8px;color:var(--accent);cursor:pointer;text-decoration:underline}
+.ia-pr-block{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:18px 0 8px}
+.ia-pr-barrow{display:grid;grid-template-columns:150px minmax(0,1fr) 120px;gap:10px;align-items:center;margin-bottom:6px;font-size:11.5px}
+.ia-pr-mlbl{color:var(--text);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ia-pr-mlbl:hover{text-decoration:underline}
+.ia-pr-track{display:flex;height:16px;border-radius:4px;overflow:hidden;background:#f0f2f5}
+.ia-pr-seg{height:100%;cursor:pointer}
+.ia-pr-seg:hover{filter:brightness(.88)}
+.ia-pr-seg.dim{opacity:.3}
+.ia-pr-open{text-align:right;font-family:var(--mono);font-size:11px}
+.ia-pr-open span{color:var(--muted)}
+.ia-pr-legend{display:flex;flex-wrap:wrap;gap:14px;font-size:10.5px;color:var(--muted);margin-top:6px}
+.ia-pr-sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.ia-pr-calwrap{overflow-x:auto}
+.ia-pr-cal{display:grid;gap:3px;font-size:11px;min-width:640px}
+.ia-pr-ch{text-align:center;color:var(--muted);font-family:var(--mono);font-size:10px;padding-bottom:2px}
+.ia-pr-crow{color:var(--text);font-size:11.5px;align-self:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ia-pr-cell{text-align:center;font-family:var(--mono);font-size:11px;padding:7px 2px;border-radius:4px;cursor:pointer;background:var(--surface2)}
+.ia-pr-cell.empty{cursor:default}
+.ia-pr-cell.late{outline:1.5px solid #dc2626;outline-offset:-1.5px}
+.ia-pr-cell.sel{box-shadow:0 0 0 2px var(--accent)}
+.ia-pr-ctot{text-align:center;font-family:var(--mono);font-size:11px;font-weight:600;padding-top:4px;border-top:1px solid var(--border)}
+.ia-pr-latekey{display:inline-block;width:14px;height:10px;border-radius:2px;outline:1.5px solid #dc2626;outline-offset:-1.5px;vertical-align:-1px}
+.ia-pr-note{font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.5}
+.ia-pr-listhead{display:flex;justify-content:space-between;align-items:center;margin:20px 0 8px;gap:10px;flex-wrap:wrap}
+.ia-pr-count{text-transform:none;letter-spacing:0}
+.ia-pr-groupby{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--muted)}
+.ia-pr-chip{font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;font-family:var(--body)}
+.ia-pr-chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.ia-pr-tbl{width:100%;border-collapse:collapse;font-size:11.5px;table-layout:fixed}
+.ia-pr-tbl th{font-family:var(--mono);font-size:10px;font-weight:500;color:var(--muted);text-align:left;padding:5px 8px;border-bottom:1px solid var(--border)}
+.ia-pr-tbl td{padding:5px 8px;border-bottom:1px solid #eeeae4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ia-pr-tbl .num{text-align:right;font-family:var(--mono)}
+.ia-pr-grp td{background:var(--surface2);font-weight:600;cursor:pointer}
+.ia-pr-grp .ia-pr-gmeta{font-weight:400;color:var(--muted)}
+.ia-pr-sub2 td{color:var(--muted);font-size:10.5px;font-family:var(--mono);letter-spacing:.04em;padding-left:24px;background:#faf9f6}
+.ia-pr-row{cursor:pointer}
+.ia-pr-row:hover td{background:#f5f3ef}
+.ia-pr-pill{font-family:var(--mono);font-size:10px;padding:1px 6px;border-radius:4px;font-weight:600}
+.ia-pr-tag{font-family:var(--mono);font-size:9px;padding:0 4px;border-radius:3px;margin-left:5px;background:#f3e8ff;color:#6b21a8}
+.ia-pr-pastdue{color:#b91c1c;font-weight:600}
+.ia-pr-empty{font-size:11px;color:var(--muted);padding:14px 0;text-align:center}
 #iaPanel{display:none;flex-direction:column;flex:1;overflow-y:auto;background:var(--bg);padding:24px 28px}
 .ia-header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:24px;padding-bottom:18px;border-bottom:1px solid var(--border)}
 .ia-title{font-family:var(--head);font-size:24px;font-weight:700;line-height:1.1;color:var(--text)}
@@ -1116,7 +1162,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window (p7z28)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view (p7z29)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1438,6 +1484,7 @@ setTimeout(function(){
         <p><b>Bucket meanings:</b> Confirmed (≥99%, on-hand only) · Likely (80–98%) · Possible (50–79%) · Long-shot (&lt;50%).</p>
         <p><b>Roll-forward:</b> the leftover probability from <i>this</i> week's Pending SKUs. A Pending SKU with IA of 1,000 units at 85% contributes 850 units to This Week and the remaining 150 (1&nbsp;−&nbsp;0.85) to Next Week. The units aren't cancelled if the WIP misses its date — they slip. Only <b>Pending – Allocate This Week</b> SKUs generate roll-forward; on-hand ("Here") SKUs are certain and have no remainder. In the Drop Day Breakdown the same remainder lands on the <i>following</i> Tue/Thu drop.</p>
         <p><b>Excluded:</b> Pending SKUs without a WIP date (no signal to estimate from). They appear in the Risk Factors strip below.</p>
+        <p><b>Pending receipts (below the forecast):</b> current-season newness plus late prior-season receipts, in IA rec units (Allocated uses the Newness Log units, since Syrup's rec goes to zero once a SKU is released). The <b>status bars</b> split each delivery month by state — Pending is split by the week the SKU is projected to <i>drop</i>. The <b>receipt calendar</b> places each pending receipt in the column of the first drop it can make (in the DC the day before); a red outline means it lands after that delivery's Flow Cal drop. Click a bar segment, month name or calendar cell to filter the SKU list; the likelihood pill uses the same scoring as the toplines. Next-season SKUs count in the toplines but are not shown here.</p>
         <p><b>Next-season SKUs:</b> a SKU that's N/A or NS Pending in the current season (e.g. Wholesale Exclusive now, a store tier next season) is placed on its <b>next-season</b> delivery — that month's Flow Cal drop date, its NS WIP date and NS on-time — and tagged with the season in the lists. It only counts if next season would allocate it (an NS delivery and an allocatable NS tier, overrides included). It clears once a Newness Log allocation lands within 6 weeks before that NS drop date. N/A SKUs with no allocatable next season are left out entirely.</p>
       </div>
     </div>
@@ -1472,13 +1519,6 @@ setTimeout(function(){
           <div class="ia-card-unit" id="iaThisSub">units expected to drop</div>
           <div class="ia-card-bars" id="iaThisBars"></div>
         </div>
-        <div class="ia-skulist-wrap">
-          <div class="ia-skulist-header">
-            <span class="ia-skulist-title">Contributing SKUs</span>
-            <span class="ia-skulist-count" id="iaThisListCount">0</span>
-          </div>
-          <div class="ia-skulist" id="iaThisList"></div>
-        </div>
       </div>
       <div class="ia-col">
         <div class="ia-card ia-card-next">
@@ -1486,13 +1526,6 @@ setTimeout(function(){
           <div class="ia-card-value" id="iaNextVal">—</div>
           <div class="ia-card-unit" id="iaNextSub">units expected to drop (incl. this-week roll-forward)</div>
           <div class="ia-card-bars" id="iaNextBars"></div>
-        </div>
-        <div class="ia-skulist-wrap">
-          <div class="ia-skulist-header">
-            <span class="ia-skulist-title">Contributing SKUs</span>
-            <span class="ia-skulist-count" id="iaNextListCount">0</span>
-          </div>
-          <div class="ia-skulist" id="iaNextList"></div>
         </div>
       </div>
     </div>
@@ -1505,15 +1538,39 @@ setTimeout(function(){
       <div class="ia-drops" id="iaDrops"></div>
     </div>
 
-    <div class="ia-section ia-grid-2">
-      <div>
-        <div class="ia-section-title">By Delivery Month (this week)</div>
-        <div class="ia-div-list" id="iaByMonth"></div>
+    <div class="ia-section">
+      <div class="ia-section-title">Risk factors</div>
+      <div class="ia-risk-list" id="iaRisks"></div>
+    </div>
+
+    <!-- [p7z29] PENDING RECEIPTS — delivery month status, receipt calendar, SKU list -->
+    <div class="ia-section ia-pr" id="iaPrSection">
+      <div class="ia-pr-top">
+        <div>
+          <div class="ia-section-title" style="margin-bottom:2px">Pending receipts</div>
+          <div class="ia-pr-sub">Current season + late prior-season receipts · units are Syrup IA rec (allocated = Newness Log units)</div>
+        </div>
+        <div class="ia-pr-filter" id="iaPrFilter"></div>
       </div>
-      <div>
-        <div class="ia-section-title">Risk factors</div>
-        <div class="ia-risk-list" id="iaRisks"></div>
+
+      <div class="ia-pr-block">Delivery month status</div>
+      <div id="iaPrBars"></div>
+      <div class="ia-pr-legend" id="iaPrLegend"></div>
+
+      <div class="ia-pr-block">Receipt calendar · IA units by the drop each receipt can make</div>
+      <div class="ia-pr-calwrap"><div id="iaPrCal"></div></div>
+      <div class="ia-pr-note">A receipt lands in the column of the first drop it can make (it must be in the DC the day before). <span class="ia-pr-latekey"></span> = landing after that delivery's Flow Cal drop (late stock). Past due = WIP date already behind us, not yet received.</div>
+
+      <div class="ia-pr-listhead">
+        <div class="ia-pr-block" style="margin:0">SKUs <span class="ia-pr-count" id="iaPrCount"></span></div>
+        <div class="ia-pr-groupby">
+          <span>Group by</span>
+          <button class="ia-pr-chip" data-g="div" onclick="iaPrSetGroup('div')">Division → category</button>
+          <button class="ia-pr-chip" data-g="deliv" onclick="iaPrSetGroup('deliv')">Delivery month</button>
+          <button class="ia-pr-chip" data-g="week" onclick="iaPrSetGroup('week')">Receipt week</button>
+        </div>
       </div>
+      <div id="iaPrList"></div>
     </div>
   </div>
 
@@ -4900,6 +4957,7 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
   // ── Newness Log ──
   // Headers row 1 (index 1): Date, Sku, Gender, Category, Description, Color, Month+Week, Total
   const newnessMap = {}; // SKU → {date, total, week}
+  const newnessAll = {}; // [p7z29] SKU → [{t: ms, u: units}] every dated entry (IA pending view)
   let newnessHeaderIdx = -1;
   for (let i = 0; i < Math.min(4, newnessRows.length); i++) {
     if (newnessRows[i] && String(newnessRows[i][0]||'').toLowerCase().includes('date')) {
@@ -4924,6 +4982,7 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     if (!newnessMap[sku] || (date && (!newnessMap[sku].date || date > newnessMap[sku].date))) {
       newnessMap[sku] = {date, total, week};
     }
+    if (date && !isNaN(date)) (newnessAll[sku] = newnessAll[sku] || []).push({ t: date.getTime(), u: total });   // [p7z29]
   }
 
   // ── Flow Calendar ──
@@ -5661,7 +5720,7 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     pstBySeasonSku, pstBySku,
     invOnline, invRetail, invTier, invByStore, priceLevel,
     lcwOnline, lcwRetail,
-    newnessMap, flowCalMap, flowCalBySzn,
+    newnessMap, newnessAll, flowCalMap, flowCalBySzn,   // [p7z29] newnessAll
     wipMap, wipXSBySku,
     // Single seasonal matrix — one tier→store-count map, delivery-agnostic.
     tierToStoreCount: _m.tierToStoreCount,
@@ -6008,6 +6067,7 @@ function computeAllRows(lookups) {
   const {pstBySku, invOnline, invRetail, invTier, priceLevel, lcwOnline, lcwRetail,
     newnessMap, flowCalMap, wipMap, wipXSBySku,
     tierToStoreCount,
+    newnessAll = {},   // [p7z29] absent on older cached lookups → no allocated units
     ssQtyByProduct,
     syrupIAByProduct, syrupIAStoreCountByProduct, syrupRPByProduct, syrupCfgBySku} = lookups;
 
@@ -6688,6 +6748,7 @@ function computeAllRows(lookups) {
       omni_turn, plg_turn, store_turn,
       omni_lcw, plg_lcw, store_lcw,
       alloc_date: alloc_date ? fmtDate(alloc_date) : '',
+      nl_drops: newnessAll[sku] || [],   // [p7z29] Newness Log entries → allocated units
       // [nf-release-p6h] NF Review auto-Release trigger inputs.
       //   in_newness  — SKU appears in the Newness Log at all (date optional)
       //   newness_ts  — its drop date as an epoch ms number, or null
@@ -14238,10 +14299,9 @@ function iaRefresh() {
   IA_DATA = iaCompute();
   iaUpdateSubtitle();
   iaRenderCards();
-  iaRenderSkuLists();
   iaRenderDrops();
-  iaRenderByMonth();
   iaRenderRisks();
+  iaRenderPending();   // [p7z29] replaces iaRenderSkuLists + iaRenderByMonth
   iaRenderProbTable();
 }
 
@@ -14288,113 +14348,6 @@ function iaBars(arr) {
       <span class="ia-cardbar-lbl">${a.lbl}</span>
       <div class="ia-cardbar-track"><div class="ia-cardbar-fill ${a.cls}" style="width:${pct}%"></div></div>
       <span class="ia-cardbar-val">${iaFmtN(a.val)}</span>
-    </div>`;
-  }).join('');
-}
-
-// ── Per-card SKU lists ──────────────────────────────────────────────────
-// Renders the sorted SKU contribution list directly under each metric card.
-// Different from the bottom "filterable contributors" widget — this one is
-// always sorted by anticipated volume, no filter switcher, and includes the
-// in-DC date (pend/recd) which the bottom widget omits.
-function iaRenderSkuLists() {
-  const thisRows = IA_DATA.contribs.filter(r => r.thisVol > 0);
-  const nextRows = IA_DATA.contribs.filter(r => r.nextVol > 0);
-
-  document.getElementById('iaThisListCount').textContent =
-    thisRows.length === 1 ? '1 SKU' : `${thisRows.length} SKUs`;
-  document.getElementById('iaNextListCount').textContent =
-    nextRows.length === 1 ? '1 SKU' : `${nextRows.length} SKUs`;
-
-  document.getElementById('iaThisList').innerHTML = renderSkuListRows(thisRows, 'this');
-  document.getElementById('iaNextList').innerHTML = renderSkuListRows(nextRows, 'next');
-}
-
-// Groups the contributing SKUs by delivery month (season order: Nov → Oct).
-// Inside each month: Confirmed (on-hand) first, then Pending ordered by
-// likelihood descending, then by volume as the tiebreak.
-function renderSkuListRows(rows, week) {
-  if (rows.length === 0) {
-    return `<div class="ia-skulist-empty">No SKUs contributing this week</div>`;
-  }
-  const volOf  = r => (week === 'this' ? r.thisVol  : r.nextVol);
-  const probOf = r => (week === 'this' ? r.probThis : r.probNext);
-
-  // [p7z16] Group on the season-qualified label ("HO26 · November") so NS
-  // months never merge with CS months, and order CS before NS.
-  const groups = new Map(), gSort = new Map();
-  rows.forEach(r => {
-    const m = r.monthLbl || r.delivMonth || '—';
-    if (!groups.has(m)) { groups.set(m, []); gSort.set(m, r.monthSort != null ? r.monthSort : iaMonthKey(r.delivMonth)); }
-    groups.get(m).push(r);
-  });
-
-  const ordered = [...groups.entries()].sort((a, b) => {
-    const ka = gSort.get(a[0]), kb = gSort.get(b[0]);
-    if (ka !== kb) return ka - kb;
-    return String(a[0]).localeCompare(String(b[0]));
-  });
-
-  return ordered.map(([month, list]) => {
-    list.sort((a, b) => {
-      if (a.isConfirmed !== b.isConfirmed) return a.isConfirmed ? -1 : 1;
-      const pd = probOf(b) - probOf(a);
-      if (Math.abs(pd) > 1e-9) return pd;
-      return volOf(b) - volOf(a);
-    });
-    const units = list.reduce((s, r) => s + volOf(r), 0);
-    const head = `<div class="ia-mgroup-head">
-      <span class="ia-mgroup-name">${iaEsc(month)}</span>
-      <span class="ia-mgroup-ct">${list.length} SKU${list.length === 1 ? '' : 's'}</span>
-      <span class="ia-mgroup-units">${iaFmtN(units)}</span>
-    </div>`;
-    return head + renderSkuRowSet(list, week);
-  }).join('');
-}
-
-function renderSkuRowSet(rows, week) {
-  return rows.map(r => {
-    const prob = week === 'this' ? r.probThis : r.probNext;
-    const vol  = week === 'this' ? r.thisVol  : r.nextVol;
-    // Confidence stripe class — same buckets as the cards
-    let stripeCls = 'longshot';
-    if (prob >= 0.99) stripeCls = 'confirmed';
-    else if (prob >= 0.80) stripeCls = 'likely';
-    else if (prob >= 0.50) stripeCls = 'possible';
-
-    // In-DC date: prefer received (already in DC) over pending
-    let dcLabel, dcCls;
-    if (r.dcRecd) {
-      dcLabel = `Recd ${r.dcRecd}`;
-      dcCls = 'ia-skurow-dc-recd';
-    } else if (r.dcPend) {
-      dcLabel = `Pend ${r.dcPend}`;
-      dcCls = 'ia-skurow-dc-pend';
-    } else {
-      dcLabel = 'No WIP date';
-      dcCls = '';
-    }
-
-    const probPct = Math.round(prob * 100);
-    const tag = (r.isConfirmed
-      ? `<span class="ia-skurow-tag conf">CONF</span>`
-      : `<span class="ia-skurow-tag pend">PEND</span>`)
-      + (r.scope === 'NS' ? `<span class="ia-skurow-tag ns" title="Next-season SKU — routed on its ${iaEsc(r.season)} delivery">${iaEsc(r.season)}</span>` : '')
-      + (r.scope === 'PS' ? `<span class="ia-skurow-tag ps" title="Late ${iaEsc(r.season)} receipt — never allocated, routed on its ${iaEsc(r.season)} delivery">${iaEsc(r.season)}</span>` : '');   // [p7z25]
-    const styleTxt = iaEsc(r.style || '—');
-    const colorTxt = iaEsc(r.color || '—');
-    const subLine  = [r.division, r.category].filter(Boolean).join(' · ');
-
-    return `<div class="ia-skurow" title="${iaEsc(r.proj || '')}" onclick="openDrilldown('${r.sku}')">
-      <div class="ia-skurow-stripe ${stripeCls}"></div>
-      <span class="ia-skurow-sku">${tag}${r.sku}</span>
-      <div class="ia-skurow-meta">
-        <span class="ia-skurow-style">${styleTxt}</span>
-        <span class="ia-skurow-color">${colorTxt}${subLine ? ' · ' + iaEsc(subLine) : ''}</span>
-        <span class="ia-skurow-dc ${dcCls}">${dcLabel}</span>
-      </div>
-      <span class="ia-skurow-prob">${probPct}%</span>
-      <span class="ia-skurow-vol">${iaFmtN(vol)}</span>
     </div>`;
   }).join('');
 }
@@ -14467,27 +14420,339 @@ function iaRenderDrops() {
     + `</div>`;
 }
 
-// Volume this week by delivery month — replaces the old By Division rollup.
-// Month order follows the retail season (Nov -> Oct), not alphabetical.
-function iaRenderByMonth() {
-  const el = document.getElementById('iaByMonth');
-  if (!el) return;
-  const bms = IA_DATA.byMonthSort || {};
-  const sk = k => (bms[k] != null ? bms[k] : iaMonthKey(k));
-  const entries = Object.entries(IA_DATA.byMonth || {})
-    .sort((a, b) => sk(a[0]) - sk(b[0]) || String(a[0]).localeCompare(String(b[0])));
-  const max = Math.max(...entries.map(e => e[1]), 1);
-  if (entries.length === 0) {
-    el.innerHTML = `<div class="ia-card-empty">No SKUs in this-week scope.</div>`;
-    return;
+// ════════════════════════════════════════════════════════
+// [p7z29] IA PENDING RECEIPTS VIEW
+// ════════════════════════════════════════════════════════
+// One row per SKU in scope — current season plus late prior-season receipts
+// (next-season rows are left out; the forecast toplines still include them).
+// Three lenses over the same rows, sharing one filter:
+//   · Delivery month status — IA units by state per month
+//   · Receipt calendar      — pending IA units by the drop each receipt can make
+//   · SKU list              — grouped by division→category / month / week
+//
+// States (Pending splits follow the forecast's Newness Proj, i.e. the week the
+// SKU is projected to DROP; the calendar is where receipt timing shows):
+//   alloc  Allocated              — units from the Newness Log (Syrup's IA rec
+//                                   goes to zero once a SKU is released)
+//   here   Here, not allocated    — PLG OH > IA rec
+//   p1/p2/p3 Pending · drops this week / next week / 2+ weeks
+//   nowip  No WIP date            — pending with nothing to date it
+//
+// Calendar columns are Thu–Wed drop weeks keyed by their drop Thursday, the
+// same windows the forecast uses: a receipt before a Thursday feeds that drop.
+// Likelihood for this/next week is read from IA_DATA.contribs (exact parity
+// with the toplines); 2+ weeks is scored the same way against the drop its
+// receipt feeds (iaPendingDetail).
+const IA_PR_WEEKS = 5;                 // drop-week columns after "Past due"
+const IA_PR_ALLOC_WINDOW_DAYS = 42;    // Newness Log entries this far before the drop count as its allocation
+const IA_PR_STATES = [
+  { k: 'alloc', l: 'Allocated',                 c: '#c4bfb7' },
+  { k: 'here',  l: 'Here, not allocated',       c: '#16a34a' },
+  { k: 'p1',    l: 'Pending · drops this week', c: '#4338ca' },
+  { k: 'p2',    l: 'Pending · drops next week', c: '#818cf8' },
+  { k: 'p3',    l: 'Pending · drops 2+ weeks',  c: '#c7d2fe' },
+  { k: 'nowip', l: 'No WIP date',               c: '#ea580c' },
+];
+const IA_PR_STATE = {}; IA_PR_STATES.forEach(x => { IA_PR_STATE[x.k] = x; });
+let IA_PR = { group: 'div', filter: null, collapsed: {}, data: null };
+
+function iaPrThuOnOrAfter(d) {
+  const x = new Date(d); x.setHours(0, 0, 0, 0);
+  x.setDate(x.getDate() + ((4 - x.getDay() + 7) % 7));
+  return x;
+}
+
+// Allocated units for a SKU's delivery: Newness Log entries dated on/after
+// (drop − window). With no drop date, the latest entry.
+function iaPrAllocUnits(row, allocDate) {
+  const L = row.nl_drops || [];
+  if (!L.length) return 0;
+  if (!(allocDate instanceof Date) || isNaN(allocDate)) {
+    return L.reduce((m, e) => (e.t > m.t ? e : m), L[0]).u || 0;
   }
-  el.innerHTML = entries.map(([month, val]) => `
-    <div class="ia-div-row">
-      <span class="ia-div-name">${iaEsc(month || '—')}</span>
-      <div class="ia-div-track"><div class="ia-div-fill" style="width:${(val / max) * 100}%"></div></div>
-      <span class="ia-div-val">${iaFmtN(val)}</span>
-    </div>
-  `).join('');
+  const from = allocDate.getTime() - IA_PR_ALLOC_WINDOW_DAYS * 86400000;
+  return L.reduce((s, e) => s + (e.t >= from ? (+e.u || 0) : 0), 0);
+}
+
+function iaComputePending(todayIn) {
+  const today = todayIn ? new Date(todayIn) : new Date(); today.setHours(0, 0, 0, 0);
+  const A = iaWeekAnchors(today);
+  const cols = [];
+  for (let k = 0; k < IA_PR_WEEKS; k++) cols.push(new Date(A.thisDropThu.getTime() + 7 * k * 86400000));
+  const cmap = {};
+  ((IA_DATA && IA_DATA.contribs) || []).forEach(c => { cmap[c.sku] = c; });
+
+  const out = { cols, rows: [], months: {}, monthSort: {}, today };
+  const PROJ_STATE = {
+    'Here - Allocate This Week': 'here', 'Here - Allocate Next Week': 'here', 'Here - Allocation 2+ weeks away': 'here',
+    'Pending - Allocate This Week': 'p1', 'Pending - Allocate Next Week': 'p2',
+    'Pending - Allocation 2+ Weeks away': 'p3', 'Pending - No WIP Date': 'nowip',
+  };
+
+  (ALL_ROWS || []).forEach(row => {
+    const view = iaRowView(row);
+    if (!view || view.scope === 'NS') return;
+    const delivMonth = view.delivMonth || '';
+    if (!delivMonth) return;
+    const st  = String(view.status || '');
+    const ia  = +row.syrup_ia || 0;
+    const plg = +row.plg_oh || 0;
+    let state = null, units = 0;
+
+    if (st.indexOf('Allocated') === 0) {
+      // Newness allocations only — a carry-forward 'Allocated LS (CF)' is replen.
+      if (st.indexOf('(CF)') !== -1) return;
+      if (view.scope === 'CS' && String(row.new_cf || '') !== 'Newness') return;
+      state = 'alloc';
+      units = iaPrAllocUnits(row, view.allocDate);
+    } else {
+      const isIA = row._cfgStatusUpper ? row._cfgStatusUpper === 'IA' : ia > 0;
+      if (!isIA || ia <= 0) return;
+      const pend = view.pendStr ? parseXLDate(view.pendStr) : null;
+      const proj = computeNewnessProj({ status: st, isIA, plg_oh: plg, syrup_ia: ia,
+        allocDate: view.allocDate, pendDate: (pend && !isNaN(pend)) ? pend : null });
+      state = PROJ_STATE[proj] || null;
+      if (!state) return;
+      units = ia;
+    }
+
+    const r = {
+      sku: row.sku, scope: view.scope, season: view.season,
+      monthLbl: iaMonthLabel(view.scope, view.season, delivMonth),
+      monthSort: iaMonthSortKey(view.scope, delivMonth, view.allocDate),
+      style: row.style_desc || '', color: row.color_desc || '',
+      division: row.division || '—', category: row.category || '—',
+      state, units, ia, plg,
+      allocDate: view.allocDate, pendStr: view.pendStr || '', recdStr: view.recdStr || '',
+      wipUnits: +(view.scope === 'PS' ? row.ps_po_pend : row.cs_po_pend) || 0,
+      col: null, feeds: null, late: false, prob: null, pastDue: false,
+    };
+
+    if (state === 'here') r.prob = 1;
+    if (state === 'p1' || state === 'p2' || state === 'p3') {
+      let pd = parseXLDate(r.pendStr);
+      if (pd && !isNaN(pd)) {
+        pd.setHours(0, 0, 0, 0);
+        if (pd < today) { r.pastDue = true; r.col = -1; r.feeds = cols[0]; }
+        else {
+          let k = cols.findIndex(c => pd.getTime() < c.getTime());
+          if (k === -1) { r.col = cols.length; r.feeds = iaPrThuOnOrAfter(new Date(pd.getTime() + 86400000)); }
+          else { r.col = k; r.feeds = cols[k]; }
+        }
+        r.late = !!(r.allocDate && r.feeds && r.feeds.getTime() > r.allocDate.getTime());
+      }
+      const c = cmap[r.sku];
+      if (state === 'p1' && c) r.prob = c.probThis;
+      else if (state === 'p2' && c) r.prob = c.probNext;
+      else {
+        const d = iaPendingDetail(row, view, r.feeds);
+        r.prob = d ? d.prob : null;
+      }
+    }
+
+    out.rows.push(r);
+    const m = (out.months[r.monthLbl] = out.months[r.monthLbl] || { units: {}, skus: {} });
+    m.units[state] = (m.units[state] || 0) + units;
+    m.skus[state]  = (m.skus[state]  || 0) + 1;
+    out.monthSort[r.monthLbl] = r.monthSort;
+  });
+  return out;
+}
+window.iaComputePending = iaComputePending;
+
+function iaPrColLabel(cols, k) {
+  if (k === -1) return 'Past due';
+  if (k >= cols.length) return 'Later';
+  return 'Drop ' + (cols[k].getMonth() + 1) + '/' + cols[k].getDate();
+}
+
+function iaPrPasses(r, f) {
+  if (!f) return r.state !== 'alloc';
+  if (f.month && r.monthLbl !== f.month) return false;
+  if (f.state) return r.state === f.state;
+  if (f.col != null) return r.col === f.col;
+  return r.state !== 'alloc';
+}
+
+function iaPrSetFilter(f) { IA_PR.filter = f; IA_PR.collapsed = {}; iaRenderPendingBody(); }
+function iaPrSetGroup(g) { IA_PR.group = g; IA_PR.collapsed = {}; iaRenderPendingBody(); }
+function iaPrToggleGroup(key) { IA_PR.collapsed[key] = !IA_PR.collapsed[key]; iaRenderPrList(); }
+window.iaPrSetFilter = iaPrSetFilter; window.iaPrSetGroup = iaPrSetGroup; window.iaPrToggleGroup = iaPrToggleGroup;
+
+function iaRenderPending() {
+  IA_PR.data = iaComputePending();
+  // A filter pointing at a month/state that no longer exists is dropped.
+  const f = IA_PR.filter;
+  if (f && f.month && !IA_PR.data.months[f.month]) IA_PR.filter = null;
+  iaRenderPendingBody();
+}
+
+function iaRenderPendingBody() {
+  if (!IA_PR.data || !document.getElementById('iaPrSection')) return;
+  iaRenderPrFilter(); iaRenderPrBars(); iaRenderPrCal(); iaRenderPrList();
+  document.querySelectorAll('.ia-pr-chip').forEach(b => b.classList.toggle('on', b.dataset.g === IA_PR.group));
+}
+
+function iaPrMonthsOrdered() {
+  const D = IA_PR.data;
+  return Object.keys(D.months).sort((a, b) => (D.monthSort[a] - D.monthSort[b]) || a.localeCompare(b));
+}
+
+function iaPrFilterAttr(f) { return iaEsc(JSON.stringify(f)); }
+
+function iaRenderPrFilter() {
+  const el = document.getElementById('iaPrFilter'); if (!el) return;
+  const f = IA_PR.filter, D = IA_PR.data;
+  if (!f) { el.innerHTML = ''; return; }
+  const bits = [];
+  if (f.month) bits.push(iaEsc(f.month));
+  if (f.state) bits.push(iaEsc(IA_PR_STATE[f.state].l));
+  if (f.col != null) bits.push(iaEsc(iaPrColLabel(D.cols, f.col)));
+  el.innerHTML = 'Filtered: ' + bits.join(' · ') + '<a onclick="iaPrSetFilter(null)">Clear</a>';
+}
+
+function iaRenderPrBars() {
+  const el = document.getElementById('iaPrBars'); if (!el) return;
+  const D = IA_PR.data, f = IA_PR.filter;
+  const months = iaPrMonthsOrdered();
+  if (!months.length) { el.innerHTML = '<div class="ia-pr-empty">No current-season newness in scope.</div>'; return; }
+  const tot = m => IA_PR_STATES.reduce((s, x) => s + (D.months[m].units[x.k] || 0), 0);
+  const max = Math.max(1, ...months.map(tot));
+  el.innerHTML = months.map(m => {
+    const M = D.months[m], t = tot(m);
+    const open = t - (M.units.alloc || 0);
+    const openSkus = IA_PR_STATES.filter(x => x.k !== 'alloc').reduce((s, x) => s + (M.skus[x.k] || 0), 0);
+    const segs = IA_PR_STATES.filter(x => (M.units[x.k] || 0) > 0).map(x => {
+      const sel = f && f.month === m && f.state === x.k;
+      const dim = f && f.state && !sel;
+      const fa = iaPrFilterAttr({ month: m, state: x.k });
+      return `<div class="ia-pr-seg${dim ? ' dim' : ''}" style="width:${(M.units[x.k] / t) * 100}%;background:${x.c}"
+        title="${iaEsc(m)} · ${iaEsc(x.l)}: ${iaFmtN(M.units[x.k])} units · ${M.skus[x.k]} SKU${M.skus[x.k] === 1 ? '' : 's'}"
+        onclick='iaPrSetFilter(JSON.parse(this.dataset.f))' data-f="${fa}"></div>`;
+    }).join('');
+    const fm = iaPrFilterAttr({ month: m });
+    return `<div class="ia-pr-barrow">
+      <span class="ia-pr-mlbl" title="Show all open SKUs for ${iaEsc(m)}" onclick='iaPrSetFilter(JSON.parse(this.dataset.f))' data-f="${fm}">${iaEsc(m)}</span>
+      <div style="min-width:0"><div class="ia-pr-track" style="width:${Math.max(2, (t / max) * 100)}%">${segs}</div></div>
+      <span class="ia-pr-open">${iaFmtN(open)} <span>open · ${openSkus} SKU${openSkus === 1 ? '' : 's'}</span></span>
+    </div>`;
+  }).join('');
+  const lg = document.getElementById('iaPrLegend');
+  if (lg) lg.innerHTML = IA_PR_STATES.map(x => `<span><span class="ia-pr-sw" style="background:${x.c}"></span>${iaEsc(x.l)}</span>`).join('');
+}
+
+function iaRenderPrCal() {
+  const el = document.getElementById('iaPrCal'); if (!el) return;
+  const D = IA_PR.data, f = IA_PR.filter;
+  const colKeys = [-1]; for (let k = 0; k <= D.cols.length; k++) colKeys.push(k);
+  const pend = D.rows.filter(r => r.col != null);
+  const months = iaPrMonthsOrdered().filter(m => pend.some(r => r.monthLbl === m));
+  if (!months.length) { el.innerHTML = '<div class="ia-pr-empty">No dated pending receipts.</div>'; return; }
+  const cell = {}, colTot = {};
+  let max = 1;
+  pend.forEach(r => {
+    const key = r.monthLbl + '|' + r.col;
+    const c = (cell[key] = cell[key] || { u: 0, n: 0, lateU: 0 });
+    c.u += r.units; c.n++; if (r.late) c.lateU += r.units;
+    colTot[r.col] = (colTot[r.col] || 0) + r.units;
+    if (c.u > max) max = c.u;
+  });
+  let h = `<div class="ia-pr-cal" style="grid-template-columns:150px repeat(${colKeys.length},minmax(0,1fr))"><span></span>`
+        + colKeys.map(k => `<span class="ia-pr-ch">${iaEsc(iaPrColLabel(D.cols, k))}</span>`).join('');
+  months.forEach(m => {
+    h += `<span class="ia-pr-crow" title="${iaEsc(m)}">${iaEsc(m)}</span>`;
+    colKeys.forEach(k => {
+      const c = cell[m + '|' + k];
+      if (!c) { h += `<div class="ia-pr-cell empty"></div>`; return; }
+      const a = Math.min(1, 0.15 + c.u / max * 0.85);
+      const sel = f && f.month === m && f.col === k;
+      const fa = iaPrFilterAttr({ month: m, col: k });
+      h += `<div class="ia-pr-cell${c.lateU > 0 ? ' late' : ''}${sel ? ' sel' : ''}"
+        style="background:rgba(67,56,202,${a.toFixed(2)});color:${a > 0.55 ? '#fff' : 'var(--text)'}"
+        title="${iaEsc(m)} · ${iaEsc(iaPrColLabel(D.cols, k))}: ${iaFmtN(c.u)} IA units · ${c.n} SKU${c.n === 1 ? '' : 's'}${c.lateU > 0 ? ' · ' + iaFmtN(c.lateU) + ' late' : ''}"
+        onclick='iaPrSetFilter(JSON.parse(this.dataset.f))' data-f="${fa}">${iaFmtN(c.u)}</div>`;
+    });
+  });
+  h += `<span class="ia-pr-crow" style="color:var(--muted);font-family:var(--mono);font-size:10px">TOTAL</span>`
+     + colKeys.map(k => `<span class="ia-pr-ctot">${colTot[k] ? iaFmtN(colTot[k]) : ''}</span>`).join('');
+  el.innerHTML = h + '</div>';
+}
+
+// Sort key inside a group: in DC first, then by WIP date, no-WIP last; IA desc.
+function iaPrSortKey(r) {
+  if (r.state === 'here' || r.state === 'alloc') return -2;
+  if (r.col == null) return 1e15;
+  const d = parseXLDate(r.pendStr);
+  return d && !isNaN(d) ? d.getTime() : 1e15;
+}
+
+function iaPrPill(r) {
+  if (r.state === 'alloc') return `<span class="ia-pr-pill" style="background:#ece9e4;color:#57534e">Alloc</span>`;
+  if (r.state === 'here')  return `<span class="ia-pr-pill" style="background:#dcfce7;color:#15803d">Here</span>`;
+  if (r.state === 'nowip' || r.prob == null) return `<span class="ia-pr-pill" style="background:#ffedd5;color:#c2410c">No WIP</span>`;
+  const p = r.prob;
+  const [bg, fg] = p >= 0.80 ? ['#e0e7ff', '#3730a3'] : p >= 0.50 ? ['#fef3c7', '#92400e'] : ['#fee2e2', '#b91c1c'];
+  return `<span class="ia-pr-pill" style="background:${bg};color:${fg}">${Math.round(p * 100)}%</span>`;
+}
+
+function iaRenderPrList() {
+  const el = document.getElementById('iaPrList'); if (!el) return;
+  const D = IA_PR.data, f = IA_PR.filter, G = IA_PR.group;
+  const vis = D.rows.filter(r => iaPrPasses(r, f));
+  const cnt = document.getElementById('iaPrCount');
+  if (cnt) cnt.textContent = `· ${vis.length} SKU${vis.length === 1 ? '' : 's'} · ${iaFmtN(vis.reduce((s, r) => s + r.units, 0))} units`;
+  if (!vis.length) { el.innerHTML = '<div class="ia-pr-empty">No SKUs match.</div>'; return; }
+
+  const keyOf = r => G === 'div' ? r.division
+    : G === 'deliv' ? r.monthLbl
+    : (r.state === 'here' ? 'In DC' : r.state === 'alloc' ? 'Allocated' : r.col == null ? 'No WIP date' : iaPrColLabel(D.cols, r.col));
+  const gSort = r => G === 'deliv' ? r.monthSort
+    : G === 'week' ? (r.state === 'alloc' ? -3 : r.state === 'here' ? -2 : r.col == null ? 999 : r.col)
+    : 0;
+  const groups = new Map(), gs = new Map();
+  vis.forEach(r => { const k = keyOf(r); if (!groups.has(k)) { groups.set(k, []); gs.set(k, gSort(r)); } groups.get(k).push(r); });
+  const order = [...groups.keys()].sort((a, b) => (gs.get(a) - gs.get(b)) || a.localeCompare(b));
+
+  const thirdHdr = G === 'deliv' ? 'Division' : 'Delivery';
+  let h = `<table class="ia-pr-tbl"><colgroup><col style="width:16%"><col style="width:27%"><col style="width:15%"><col style="width:12%"><col style="width:11%"><col style="width:10%"><col style="width:9%"></colgroup>
+    <tr><th>SKU</th><th>Style · color</th><th>${thirdHdr}</th><th>WIP in-DC</th><th class="num">WIP units / OH</th><th class="num">IA rec</th><th>Likely</th></tr>`;
+  order.forEach(g => {
+    const rs = groups.get(g);
+    const collapsed = !!IA_PR.collapsed[g];
+    const units = rs.reduce((s, r) => s + r.units, 0);
+    const ga = iaEsc(JSON.stringify(g));
+    h += `<tr class="ia-pr-grp" onclick='iaPrToggleGroup(JSON.parse(this.dataset.g))' data-g="${ga}">
+      <td colspan="5">${collapsed ? '▸' : '▾'} ${iaEsc(g)} <span class="ia-pr-gmeta">· ${rs.length} SKU${rs.length === 1 ? '' : 's'}</span></td>
+      <td class="num">${iaFmtN(units)}</td><td></td></tr>`;
+    if (collapsed) return;
+    rs.sort((a, b) => (G === 'div' ? a.category.localeCompare(b.category) : 0)
+      || (iaPrSortKey(a) - iaPrSortKey(b)) || (b.units - a.units));
+    let lastCat = null;
+    rs.forEach(r => {
+      if (G === 'div' && r.category !== lastCat) {
+        lastCat = r.category;
+        const cu = rs.filter(x => x.category === lastCat);
+        h += `<tr class="ia-pr-sub2"><td colspan="5">${iaEsc(lastCat)} · ${cu.length}</td><td class="num">${iaFmtN(cu.reduce((s, x) => s + x.units, 0))}</td><td></td></tr>`;
+      }
+      const tag = r.scope === 'PS' ? `<span class="ia-pr-tag" title="Late ${iaEsc(r.season)} receipt">${iaEsc(r.season)}</span>` : '';
+      const third = G === 'deliv' ? r.division : r.monthLbl;
+      let wip, wipCls = '';
+      if (r.state === 'here' || r.state === 'alloc') wip = r.recdStr ? 'Recd ' + iaEsc(r.recdStr) : 'In DC';
+      else if (r.pendStr) { wip = iaEsc(r.pendStr); if (r.pastDue) { wipCls = 'ia-pr-pastdue'; wip += ' · past due'; } }
+      else wip = '—';
+      const wu = r.state === 'here' ? iaFmtN(r.plg) + ' OH' : r.state === 'alloc' ? '' : (r.wipUnits ? iaFmtN(r.wipUnits) : '—');
+      const late = r.late ? ' <span title="Lands after its Flow Cal drop" style="color:#dc2626">●</span>' : '';
+      h += `<tr class="ia-pr-row" onclick="openDrilldown('${iaEsc(r.sku)}')" title="${iaEsc(IA_PR_STATE[r.state].l)}">
+        <td style="padding-left:${G === 'div' ? 32 : 18}px">${iaEsc(r.sku)}${tag}</td>
+        <td>${iaEsc(r.style)}${r.color ? ' · ' + iaEsc(r.color) : ''}</td>
+        <td>${iaEsc(third)}</td>
+        <td class="${wipCls}">${wip}${late}</td>
+        <td class="num">${wu}</td>
+        <td class="num">${iaFmtN(r.units)}</td>
+        <td>${iaPrPill(r)}</td></tr>`;
+    });
+  });
+  el.innerHTML = h + '</table>';
 }
 
 function iaRenderRisks() {
