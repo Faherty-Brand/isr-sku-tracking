@@ -1116,7 +1116,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix (p7z27)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window (p7z28)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1424,7 +1424,7 @@ setTimeout(function(){
       <div class="ia-explainer-title">How each SKU's probability is calculated</div>
       <div class="ia-explainer-body">
         <p><b>Here SKUs (PLG OH &gt; Syrup IA):</b> inventory is on hand, so probability is <b>100% — Confirmed</b>. Both "Here - Allocate This Week" and "Here - Allocate Next Week" SKUs land here.</p>
-        <p><b>Pending SKUs (waiting on WIP):</b> probability is keyed off the <b>buffer days</b> between the WIP-pending date and the alloc drop date — more buffer means higher confidence. Pending SKUs always carry some WIP risk and are <b>capped at 97%</b>, so they never reach the Confirmed bucket.</p>
+        <p><b>Pending SKUs (waiting on WIP):</b> probability is keyed off the <b>buffer days</b> between the WIP-pending date and the <b>last drop it can make in its projected week</b> (that week's Thursday, or its Flow Cal drop if later) — more buffer means higher confidence. A late-stock SKU whose Flow Cal date has already passed is scored on whether it lands before this week's Thursday, not on how far it is behind the calendar. A WIP date already in the past is treated as today. Pending SKUs always carry some WIP risk and are <b>capped at 97%</b>, so they never reach the Confirmed bucket.</p>
         <ul class="ia-explainer-buckets">
           <li><span class="ia-bucket-pct ia-bucket-likely">95%</span> 3+ days early</li>
           <li><span class="ia-bucket-pct ia-bucket-likely">90%</span> 2 days early</li>
@@ -1434,7 +1434,7 @@ setTimeout(function(){
           <li><span class="ia-bucket-pct ia-bucket-longshot">40%</span> 2 days late</li>
           <li><span class="ia-bucket-pct ia-bucket-longshot">25%</span> 3+ days late</li>
         </ul>
-        <p><b>Modifiers stacked on top:</b> SKUs with PLG already partially staged get the on-hand portion guaranteed (1.0); on-time history adds ±5%; a generosity multiplier (default 1.05×, adjustable in Settings) leans estimates slightly high to keep the warehouse from being underprepared.</p>
+        <p><b>Modifiers stacked on top:</b> SKUs with PLG already partially staged get the on-hand portion guaranteed (1.0); on time adds +5% and a Past Due WIP date (already missed, not yet received) takes −5% — a WIP date that is simply after the Flow Cal drop is not penalized; a generosity multiplier (default 1.05×, adjustable in Settings) leans estimates slightly high to keep the warehouse from being underprepared.</p>
         <p><b>Bucket meanings:</b> Confirmed (≥99%, on-hand only) · Likely (80–98%) · Possible (50–79%) · Long-shot (&lt;50%).</p>
         <p><b>Roll-forward:</b> the leftover probability from <i>this</i> week's Pending SKUs. A Pending SKU with IA of 1,000 units at 85% contributes 850 units to This Week and the remaining 150 (1&nbsp;−&nbsp;0.85) to Next Week. The units aren't cancelled if the WIP misses its date — they slip. Only <b>Pending – Allocate This Week</b> SKUs generate roll-forward; on-hand ("Here") SKUs are certain and have no remainder. In the Drop Day Breakdown the same remainder lands on the <i>following</i> Tue/Thu drop.</p>
         <p><b>Excluded:</b> Pending SKUs without a WIP date (no signal to estimate from). They appear in the Risk Factors strip below.</p>
@@ -13588,6 +13588,10 @@ function switchTab(tab) {
 // on isIA) as the SKU universe, then probability-weights each SKU's syrup_ia
 // rec by lead-time + PLG-already-here + on-time history.
 //
+// Buffer = days between the (effective) WIP date and the target drop: the drop
+// Thursday closing the week the SKU is projected into, never earlier than its
+// Flow Cal drop  [p7z28 — previously the Flow Cal drop alone; see iaPendingDetail].
+//
 // Probability buckets (configurable in settings drawer):
 //   buffer ≥ 3 days early  → 0.95
 //   buffer = 2 days early  → 0.90
@@ -13599,7 +13603,7 @@ function switchTab(tab) {
 //
 // Modifiers:
 //   PLG-already-here       → that portion is guaranteed (1.0 weight)
-//   On-time history        → ±0.05 nudge
+//   On-time history        → +0.05 On Time / -0.05 Past Due  [p7z28: no 'Late' penalty]
 //   Generosity multiplier  → applied last, capped at 1.0
 //
 // Excluded from volume but flagged in the risk strip:
@@ -13637,27 +13641,48 @@ function iaWipProb(bufferDays) {
 
 function iaOnTimeBonus(cs_ontime) {
   if (cs_ontime === 'On Time') return 0.05;
-  if (cs_ontime === 'Late' || cs_ontime === 'Past Due') return -0.05;   // [p7x]
+  // [p7z28] 'Late' no longer penalized. 'Late' only means the WIP date is after
+  // the Flow Cal drop date — true of every late-stock receipt by definition —
+  // and the buffer is now measured against the drop the SKU can still make
+  // (see iaPendingDetail), so a calendar penalty would count lateness twice.
+  // 'Past Due' (WIP date already blown, goods not here) is a real slip signal
+  // and keeps its -0.05.
+  if (cs_ontime === 'Past Due') return -0.05;   // [p7x]
   return 0;
 }
 
-// Returns probability that a Pending SKU actually drops at its scheduled drop.
-// Returns null if SKU lacks the data to estimate (e.g., no WIP date).
-function iaPendingProb(row, view) {
-  // [p7z16] Season-aware: reads the drop date / WIP date / on-time flag from the
-  // IA view (CS fields for current-season rows, NS fields for next-season rows).
+// [p7z28] Probability that a Pending SKU lands in time for a drop inside its
+// projected week. Returns null if SKU lacks the data to estimate (no WIP date).
+//
+// ROOT CAUSE of the low weekly topline (Mon 11/2: 8k forecast vs ~15k actual):
+// the buffer used to be measured against the Flow Cal drop date. For late stock
+// (e.g. a November SKU, drop 10/22, receiving 11/3) that date is in the past, so
+// buffer = 10/22 - today = -11 days -> 0.25, minus the 'Late' nudge, x1.05 ->
+// ~0.21 — however close the receipt actually was to the next drop. 79% of each
+// such SKU was rolled to next week, depressing this week and inflating next.
+//
+// Now the buffer is measured against the DEADLINE of the week the SKU is
+// projected into: the drop Thursday closing that window (thisDropThu for
+// "Pending - Allocate This Week", nextDropThu for "...Next Week"), never
+// earlier than its Flow Cal drop. A receipt any time before that Thursday makes
+// a drop in that week, which is the question the weekly card is answering.
+// On-calendar SKUs (Flow Cal drop = that Thursday) score exactly as before.
+function iaPendingDetail(row, view, deadline) {
   const v = view || iaRowView(row);
   if (!v || !v.pendStr) return null; // no WIP date — caller handles separately
 
-  const dropDate = v.allocDate;
-  let   wipDate  = parseXLDate(v.pendStr);
-  if (!dropDate || !wipDate) return null;
+  const calDrop = v.allocDate;
+  let   wipDate = parseXLDate(v.pendStr);
+  if (!calDrop || !wipDate) return null;
   // [p7x] A pending date already behind us is stale — the goods can't arrive
-  // yesterday. Use today as the effective ETA so a past-due line isn't scored
-  // as if it had landed comfortably ahead of the drop.
+  // yesterday. Use today as the effective ETA.
   { const _t = new Date(); _t.setHours(0,0,0,0); if (wipDate < _t) wipDate = _t; }
 
-  const bufferDays = Math.round((dropDate - wipDate) / 86400000);
+  // Target drop: the window's closing Thursday, but not before the Flow Cal drop.
+  let target = calDrop;
+  if (deadline instanceof Date && !isNaN(deadline) && deadline.getTime() > target.getTime()) target = deadline;
+
+  const bufferDays = Math.round((target - wipDate) / 86400000);
   const wipProb = iaWipProb(bufferDays);
 
   // PLG-already-here ratio: that portion is guaranteed regardless of WIP timing
@@ -13665,8 +13690,8 @@ function iaPendingProb(row, view) {
   const plg = +row.plg_oh   || 0;
   const plgRatio = ia > 0 ? Math.min(plg / ia, 1) : 0;
 
-  // On-time nudge
-  const adjusted = Math.max(0, Math.min(1, wipProb + iaOnTimeBonus(v.ontime)));
+  const bonus = iaOnTimeBonus(v.ontime);
+  const adjusted = Math.max(0, Math.min(1, wipProb + bonus));
 
   // Blend: guaranteed PLG + WIP-conditional remainder
   const blended = plgRatio + (1 - plgRatio) * adjusted;
@@ -13675,10 +13700,15 @@ function iaPendingProb(row, view) {
   //   - Hard cap of 1.00 prevents probabilities exceeding 100%
   //   - Soft cap of 0.97 reserves the "Confirmed" bucket (≥0.99) exclusively
   //     for physically-on-hand SKUs (Here - Allocate This/Next Week). A Pending
-  //     SKU always has *some* WIP risk no matter how favorable the timing —
-  //     calling it Confirmed implies a guarantee that doesn't exist.
+  //     SKU always has *some* WIP risk no matter how favorable the timing.
   const PENDING_PROB_CAP = 0.97;
-  return Math.min(PENDING_PROB_CAP, blended * IA_SETTINGS.generosity);
+  const prob = Math.min(PENDING_PROB_CAP, blended * IA_SETTINGS.generosity);
+  return { calDrop, target, wipEff: wipDate, bufferDays, wipProb, bonus, plgRatio, prob };
+}
+
+function iaPendingProb(row, view, deadline) {
+  const d = iaPendingDetail(row, view, deadline);
+  return d ? d.prob : null;
 }
 
 // Returns the drop Date for this SKU's scheduled allocation, or null.
@@ -13828,6 +13858,16 @@ function iaWhy(sku) {
       status: v.status, isIA, plg_oh: out.plg_oh, syrup_ia: out.syrup_ia,
       allocDate: v.allocDate, pendDate: v.pendStr ? parseXLDate(v.pendStr) : null,
     });
+    // [p7z28] How a Pending SKU is scored: target drop, buffer, probability.
+    if (out.proj === 'Pending - Allocate This Week' || out.proj === 'Pending - Allocate Next Week') {
+      const _a = iaWeekAnchors();
+      const _d = iaPendingDetail(row, v, out.proj.indexOf('This') !== -1 ? _a.thisDropThu : _a.nextDropThu);
+      if (_d) {
+        out.targetDrop = fmtDate4(_d.target); out.wipEff = fmtDate4(_d.wipEff);
+        out.bufferDays = _d.bufferDays; out.onTime = v.ontime || '';
+        out.prob = Math.round(_d.prob * 1000) / 1000;
+      }
+    }
   }
   console.table(out);
   return out;
@@ -13982,7 +14022,7 @@ function iaCompute() {
       probThis = 1.0;
       contribBucket = 'this';
     } else if (proj === 'Pending - Allocate This Week') {
-      const p = iaPendingProb(row, view);
+      const p = iaPendingProb(row, view, thisDropThu);   // [p7z28]
       if (p === null) {
         isNoWip = true; // excluded from volume per spec
         out.risks.noWip++;
@@ -13996,7 +14036,7 @@ function iaCompute() {
       probNext = IA_SETTINGS.hereNextWeekProb;
       contribBucket = 'next';
     } else if (proj === 'Pending - Allocate Next Week') {
-      const p = iaPendingProb(row, view);
+      const p = iaPendingProb(row, view, nextDropThu);   // [p7z28]
       if (p === null) {
         // No WIP for next-week pending — flag but don't error
         out.risks.noWip++;
