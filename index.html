@@ -421,6 +421,8 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .ia-drop-split{margin-top:10px;padding-top:8px;border-top:1px solid #f0f2f5;display:flex;flex-direction:column;gap:3px}
 .ia-drop-splitrow{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--muted)}
 .ia-drop-splitrow b{color:var(--text);font-weight:600}
+.ia-drop-bk{display:flex;flex-direction:column;gap:5px;margin-top:10px}
+.ia-drop-bk .ia-cardbar-row{grid-template-columns:70px 1fr 52px}
 .ia-drop-item{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
 .ia-drop-day{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;margin-bottom:4px}
 .ia-drop-date{font-family:var(--head);font-size:14px;font-weight:600;color:var(--text);margin-bottom:10px}
@@ -1162,7 +1164,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view (p7z29)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets (p7z30)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -14033,6 +14035,7 @@ function iaCompute() {
     // roll-forward slipping in from the prior drop's Pending misses.
     dropDays: dropDays.map(d => ({
       date: d, units: 0, rollUnits: 0, skus: 0, rollSkus: 0,
+      bk: {confirmed: 0, likely: 0, possible: 0, longshot: 0},   // [p7z30] scheduled units by confidence bucket
       // Does this drop sit inside the This Week card's window? Drives the
       // reconciliation strip.
       inThisWeek: d.getTime() <= thisDropThu.getTime(),
@@ -14182,6 +14185,9 @@ function iaCompute() {
         out.dropsBeyond.skus++;
       } else {
         out.dropDays[idx].units += primaryVol;
+        { const _b = iaBucketLabel(primaryProb);   // [p7z30] same buckets as the week cards
+          const _k = _b === 'Confirmed' ? 'confirmed' : _b === 'Likely' ? 'likely' : _b === 'Possible' ? 'possible' : 'longshot';
+          out.dropDays[idx].bk[_k] += primaryVol; }
         out.dropDays[idx].skus++;
         if (rollVol > 0) {
           if (idx + 1 < out.dropDays.length) {
@@ -14387,6 +14393,12 @@ function iaRenderDrops() {
       <div class="ia-drop-units">${iaFmtN(d.units)}</div>
       <div class="ia-drop-skus">${d.skus} SKU${d.skus === 1 ? '' : 's'} scheduled${d.rollSkus ? ` · ${d.rollSkus} rolling in` : ''}</div>
       <div class="ia-drop-bar"><div class="ia-drop-bar-fill" style="width:${((d.units + d.rollUnits) / max) * 100}%"></div></div>
+      <div class="ia-drop-bk">${d.units > 0.5 ? iaBars([   // [p7z30] scheduled units by confidence
+        {lbl:'Confirmed', val:d.bk.confirmed, total:d.units, cls:'ia-cardbar-confirmed'},
+        {lbl:'Likely',    val:d.bk.likely,    total:d.units, cls:'ia-cardbar-likely'},
+        {lbl:'Possible',  val:d.bk.possible,  total:d.units, cls:'ia-cardbar-possible'},
+        {lbl:'Long-shot', val:d.bk.longshot,  total:d.units, cls:'ia-cardbar-longshot'},
+      ]) : ''}</div>
       ${split}
     </div>`;
   }).join('');
