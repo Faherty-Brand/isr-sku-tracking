@@ -1164,7 +1164,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week (p7z31)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg (p7z32)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -3795,9 +3795,11 @@ function isForceIA(v){
 }
 
 // [p7z27] Mark Allocated — same accepted values as Force IA (Y/YES/TRUE/1).
-// Stored as alloc_ow in a season slot. Status-only: it satisfies the step-4
-// "Allocated for Season" gate for that season's evaluation and touches nothing
-// in new_cf, config dates or the Configs Generator.
+// Stored as alloc_ow in a season slot. It satisfies the step-4 "Allocated
+// for Season" gate for that season's evaluation. [p7z32] The CS flag also
+// counts as the drop for config dates (cfgDropState → 'dropped', start AJ+11),
+// so marking a late SKU moves it out of the IA hold and toward Replen. It still
+// touches nothing in new_cf.
 function isMarkAlloc(v){ return isForceIA(v); }
 
 function upgradeForceIA(mo){
@@ -6635,8 +6637,9 @@ function computeAllRows(lookups) {
     //   • Otherwise: Syrup start exists AND (Syrup start ≠ calc start OR Syrup end ≠ calc end) → "Off"
     //   • Otherwise → "Correct"
     const _pendForCfg = (wip_cs_pend && wip_cs_pend.inDCDate instanceof Date) ? wip_cs_pend.inDCDate : null;  // [p7x]
+    const _markAllocCfg = isMarkAlloc(getOW(sku, 'alloc_ow'));   // [p7z32] three-site parity
     const calc_start = computeCalcStartDate({
-      new_cf, deliv_alloc_date, alloc_date, pend_indc: _pendForCfg,
+      new_cf, deliv_alloc_date, alloc_date, pend_indc: _pendForCfg, mark_alloc: _markAllocCfg,
     });
     const calc_end   = computeCalcEndDate({
       calc_start, new_cf, md_exit: cs.mdExit, weeks_bought: cs.weeksBought,
@@ -6677,6 +6680,7 @@ function computeAllRows(lookups) {
         md_exit: cs.mdExit, weeks_bought: cs.weeksBought,
         end_ow,
         pend_indc: _pendForCfg,
+        mark_alloc: _markAllocCfg,   // [p7z32]
       })) {
       config_dt_status = 'Off';
     }
@@ -7018,9 +7022,20 @@ function _nextMondayOnOrAfter(d) {
 }
 
 // 'upcoming' | 'dropped' | 'held' for a Newness row. aj/ah are Date|null.
-function cfgDropState(aj, ah, today) {
+// [p7z32] `marked` = CS Mark Allocated (alloc_ow = Y). It stands in for the
+// missing Newness Log entry here exactly as it does in computeStatus step 4,
+// so a SKU the Status column calls "Allocated for Season" can no longer be
+// treated as undropped on the config side (which held its start out in IA and
+// fired the "already carry store inventory" warning). Only once AJ has passed:
+// a marked SKU whose drop is still ahead stays 'upcoming' (AJ+11). Needs an AJ:
+// with no Flow Cal date there's no start to snap to, so it stays 'held'.
+// Every caller must pass it — computeAllRows, recomputeRowDerived,
+// configDateParts, the Configs Generator and dbgConfigDate. NS config checks
+// deliberately don't: Mark Allocated is CS-season-scoped.
+function cfgDropState(aj, ah, today, marked) {
   if (aj && aj > today) return 'upcoming';
   if (ah && (!aj || ah >= _addDays(aj, -CFG_DROP_WINDOW_DAYS))) return 'dropped';
+  if (marked && aj) return 'dropped';
   return 'held';
 }
 
@@ -7052,7 +7067,7 @@ function cfgHoldStart(aj, pend, today) {
 // [p7x] `pend_indc` feeds the hold. `legacy: true` returns the pre-p7x value
 // and exists ONLY for the CF carve-out in configDateParts, whose tolerance
 // ceiling was tuned against the old formula — CF behaviour must not move.
-function computeCalcStartDate({new_cf, deliv_alloc_date, alloc_date, pend_indc, legacy}) {
+function computeCalcStartDate({new_cf, deliv_alloc_date, alloc_date, pend_indc, legacy, mark_alloc}) {
   if (!new_cf) return null;                    // no expectation
   if (new_cf === 'CF') return CFG_CF_START_DATE;
 
@@ -7062,9 +7077,11 @@ function computeCalcStartDate({new_cf, deliv_alloc_date, alloc_date, pend_indc, 
 
   if (legacy) return _legacyCalcStart(aj, ah, today);
 
-  const state = cfgDropState(aj, ah, today);
+  const state = cfgDropState(aj, ah, today, mark_alloc);
   if (state === 'upcoming') return _addDays(aj, 11);
-  if (state === 'dropped')  return aj ? _maxDate(_addDays(ah, 3), _addDays(aj, 11)) : _addDays(ah, 3);
+  // [p7z32] A Mark-Allocated drop has no usable AH (none, or a prior drop's,
+  // which is older than AJ−14 and so below AJ+11 anyway) → AJ+11.
+  if (state === 'dropped')  return aj ? (ah ? _maxDate(_addDays(ah, 3), _addDays(aj, 11)) : _addDays(aj, 11)) : _addDays(ah, 3);
   const pend = pend_indc instanceof Date ? pend_indc : null;
   return cfgHoldStart(aj, pend, today);
 }
@@ -7203,6 +7220,7 @@ function configDateParts({
   md_exit, weeks_bought,
   end_ow,
   pend_indc,
+  mark_alloc,   // [p7z32]
 }) {
   if (!syrup_start) return { startOk: true, endOk: true };  // no Syrup config row → nothing to flag
 
@@ -7237,7 +7255,7 @@ function configDateParts({
     }
   } else {
     // (B) NEWNESS  [p7x]. Classified by drop state, not formula branch.
-    const state = cfgDropState(aj, ah, today);
+    const state = cfgDropState(aj, ah, today, mark_alloc);   // [p7z32]
 
     if (state === 'held') {
       // Late and undropped. calc_start moves with today, so an exact match is
@@ -7290,7 +7308,7 @@ function configDateParts({
     // also 'held' (no Newness Log entry), the held-start rule would demand a
     // future start and the generator would switch replen OFF — the opposite of
     // the override's intent. The override wins; the start is left alone.
-    if (new_cf !== 'CF' && cfgDropState(aj, ah, today) === 'held') startOk = true;
+    if (new_cf !== 'CF' && cfgDropState(aj, ah, today, mark_alloc) === 'held') startOk = true;
   }
 
   return { startOk: !!startOk, endOk: !!endOk };
@@ -7423,8 +7441,9 @@ window.dbgConfigDate = function(sku) {
            : row.deliv_alloc_date ? parseXLDate(row.deliv_alloc_date) : null;
   const _dbgPend = row.cs_dc_pend ? parseXLDate(row.cs_dc_pend) : null;
   const pend = (_dbgPend && !isNaN(_dbgPend)) ? _dbgPend : null;   // [p7x]
+  const _dbgMark = isMarkAlloc(getOW(sku, 'alloc_ow'));   // [p7z32]
   const calc_start = computeCalcStartDate({
-    new_cf: row.new_cf, deliv_alloc_date: aj, alloc_date: ah, pend_indc: pend,
+    new_cf: row.new_cf, deliv_alloc_date: aj, alloc_date: ah, pend_indc: pend, mark_alloc: _dbgMark,
   });
   const calc_end = computeCalcEndDate({
     calc_start, new_cf: row.new_cf, md_exit: row._cs_md_exit_raw, weeks_bought: row.cs_weeks_bought,
@@ -7494,9 +7513,11 @@ window.dbgConfigDate = function(sku) {
   } else {
     // [p7x] Newness drop state: upcoming / dropped / held.
     const today = new Date(); today.setHours(0,0,0,0);
-    const state = cfgDropState(aj, ah, today);
+    const state = cfgDropState(aj, ah, today, _dbgMark);
+    const _byMark = state === 'dropped' && cfgDropState(aj, ah, today) === 'held';   // [p7z32]
     console.log('Drop state:', state,
       state === 'upcoming' ? '(AJ in future → strict AJ+11)'
+    : _byMark              ? '(Mark Allocated = Y, no Newness Log entry → strict AJ+11)'
     : state === 'dropped'  ? '(Newness Log date for this delivery → strict max(AH+3, AJ+11))'
     :                        '(AJ passed, no drop logged → hold; Syrup start must stay in the future)');
     if (ah && aj && state === 'held') {
@@ -8703,9 +8724,12 @@ function recomputeRowDerived(row) {
   // exactly as in computeAllRows.
   const _pendCfg = row.cs_dc_pend ? parseXLDate(row.cs_dc_pend) : null;
   const pendForCfg = (_pendCfg && !isNaN(_pendCfg)) ? _pendCfg : null;
+  // [p7z32] THREE-SITE PARITY: Mark Allocated (row.alloc_ow, refreshed in
+  // step 3 above) counts as the drop for config dates.
+  const markAllocCfg = isMarkAlloc(row.alloc_ow);
   const calcStart = computeCalcStartDate({
     new_cf: row.new_cf, deliv_alloc_date: newAllocDate, alloc_date: ahDate,
-    pend_indc: pendForCfg,
+    pend_indc: pendForCfg, mark_alloc: markAllocCfg,
   });
   // [p7u] TWO-SITE PARITY: end_ow must be read and applied here exactly as in
   // computeAllRows, or an override saved from the grid would compute correctly
@@ -8742,6 +8766,7 @@ function recomputeRowDerived(row) {
       md_exit: row.cs_md_exit,        weeks_bought: row.cs_weeks_bought,
       end_ow: endOw,
       pend_indc: pendForCfg,
+      mark_alloc: markAllocCfg,   // [p7z32]
     })) {
     dtStatus2 = 'Off';
   }
@@ -10292,7 +10317,7 @@ function openDrilldown(sku) {
       ...(owNextKey() ? [['Tier', 'ns_tier_ow', getOW(sku, 'ns_tier_ow'), 'tier', {scope: `NS · ${owNextKey()}`}]] : []),   // [p7z7]
       ...(nsHalfSetWarning(row) ? [['__warn__', '__warn__', nsHalfSetWarning(row), 'warn']] : []),   // [p7z10]
       ['Force IA', 'force_ia', getOW(sku, 'force_ia'), 'text', {hint: '"Y" forces Newness + IA config dates'}],
-      ['Mark Allocated', 'alloc_ow', getOW(sku, 'alloc_ow'), 'text', {scope: 'CS', hint: '"Y" → Allocated for Season (no Newness Log entry)'}],   // [p7z27]
+      ['Mark Allocated', 'alloc_ow', getOW(sku, 'alloc_ow'), 'text', {scope: 'CS', hint: '"Y" → Allocated for Season (no Newness Log entry); config start snaps to Flow Cal drop + 11 days'}],   // [p7z27]
       ...((row.ps_late || getOW(sku, 'ps_alloc_ow')) && owPrevKey()
         ? [['Mark Allocated', 'ps_alloc_ow', getOW(sku, 'ps_alloc_ow'), 'text', {scope: `PS · ${owPrevKey()}`, hint: 'Late receipt drop already happened'}]] : []),
       ['End Date', 'end_ow', fmtEndOWDisplay(getOW(sku, 'end_ow')), 'text', {hint: 'Date, "+13w", or "INDEF"'}],
@@ -12564,6 +12589,7 @@ function buildConfigsExport() {
         md_exit: r.cs_md_exit, weeks_bought: r.cs_weeks_bought,
         end_ow: r.end_ow,
         pend_indc: r.cs_dc_pend ? parseXLDate(r.cs_dc_pend) : null,
+        mark_alloc: isMarkAlloc(getOW(r.sku, 'alloc_ow')),   // [p7z32]
       });
       if (parts.startOk && r.config_syrup_start) {
         amendFrom = _fmtConfigDate(r.config_syrup_start);
@@ -12619,9 +12645,18 @@ function buildConfigsExport() {
     if (!amendFrom && String(r.new_cf||'').trim().toUpperCase() !== 'CF') {
       const _aj = r.deliv_alloc_date ? parseXLDate(r.deliv_alloc_date) : null;
       const _ah = r.alloc_date       ? parseXLDate(r.alloc_date)       : null;
-      if (cfgDropState(_aj && !isNaN(_aj) ? _aj : null, _ah && !isNaN(_ah) ? _ah : null, _cfgToday) === 'held') {
-        heldSkus.push(r.sku);
-        if ((+r.store_oh || 0) > 0) heldWithStoreOH.push(r.sku);
+      const _ajD = _aj && !isNaN(_aj) ? _aj : null;
+      if (cfgDropState(_ajD, _ah && !isNaN(_ah) ? _ah : null, _cfgToday, isMarkAlloc(getOW(r.sku, 'alloc_ow'))) === 'held') {
+        // [p7z32] Only count it when the start really is pushed out. The grace
+        // rule in cfgHoldStart keeps the planned AJ+11 while it is still more
+        // than CFG_HOLD_LEAD_DAYS ahead, and such a row emits the same date as
+        // an on-time SKU — warning about it was a false alarm.
+        const _cs = r.config_calc_start ? parseXLDate(r.config_calc_start) : null;
+        const _pushed = !_ajD || !_cs || isNaN(_cs) || !sameDay(_cs, _addDays(_ajD, 11));
+        if (_pushed) {
+          heldSkus.push(r.sku);
+          if ((+r.store_oh || 0) > 0) heldWithStoreOH.push(r.sku);
+        }
       }
     }
 
