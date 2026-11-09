@@ -463,7 +463,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .ia-prob-pct{font-weight:600;color:var(--text)}
 
 /* ── LOOKUP MODAL ── */
-#lookupModal,#nfBulkModal,#eolLookupModal{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:300;display:none;align-items:center;justify-content:center}
+#lookupModal,#nfBulkModal,#nfCommitModal,#eolLookupModal{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:300;display:none;align-items:center;justify-content:center}
 #lookupModal.open,#eolLookupModal.open{display:flex}
 #bulkNotesModal{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:300;display:none;align-items:center;justify-content:center}
 #bulkNotesModal.open{display:flex}
@@ -1164,7 +1164,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc (p7z33)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers (p7z34)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1595,6 +1595,7 @@ setTimeout(function(){
         <span class="nf-ctrl-lbl">View</span>
         <div class="nf-seg" id="nfModeSeg"></div>
       </div>
+      <button class="nf-action-btn nf-commit-btn" id="nfCommitBtn" onclick="nfCommitOpen()" style="display:none">⇪ Commit Retiers</button>
       <button class="nf-action-btn" onclick="nfBulkOpen()">✎ Bulk Update</button>
       <button class="nf-action-btn" onclick="nfCopySkus()">⎘ Copy SKUs</button>
       <button class="nf-action-btn" onclick="nfExportCSV()">⬇ Export CSV</button>
@@ -1841,6 +1842,19 @@ setTimeout(function(){
     <div class="modal-actions">
       <button class="modal-btn" onclick="nfBulkApply()">Apply</button>
       <button class="modal-btn sec" onclick="nfBulkClose()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- [p7z34] Commit Alt Tier tests → real tier overrides -->
+<div id="nfCommitModal">
+  <div class="modal-box" style="width:760px;max-width:94vw">
+    <div class="modal-title">Commit Retier Tests → Tier Overrides</div>
+    <div id="nfCommitIntro" style="font-size:12px;color:var(--muted);margin-bottom:8px;line-height:1.45"></div>
+    <div class="nf-cm-wrap"><table class="nf-cm-table" id="nfCommitTable"></table></div>
+    <div class="modal-actions">
+      <button class="modal-btn" id="nfCommitGo" onclick="nfCommitApply()">Commit</button>
+      <button class="modal-btn sec" onclick="nfCommitClose()">Cancel</button>
     </div>
   </div>
 </div>
@@ -16714,6 +16728,15 @@ ${'</' + 'script>'}
 .nf-seg-btn:disabled{opacity:.4;cursor:not-allowed}
 .nf-seg-btn:disabled.active{background:transparent;color:var(--muted)}
 .nf-select{padding:5px 8px;font-family:var(--mono);font-size:11px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);cursor:pointer}
+/* [p7z34] Commit retier tests */
+.nf-commit-btn{border-color:var(--orange);color:var(--orange);font-weight:600}
+.nf-commit-btn[disabled]{opacity:.45;cursor:not-allowed;border-color:var(--border);color:var(--muted);font-weight:400}
+.nf-cm-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px;margin:4px 0 10px}
+.nf-cm-table th{text-align:left;font-weight:600;color:var(--muted);border-bottom:1px solid var(--border);padding:4px 6px;position:sticky;top:0;background:var(--surface)}
+.nf-cm-table td{padding:4px 6px;border-bottom:1px solid var(--border);vertical-align:top}
+.nf-cm-table td.n{text-align:right}
+.nf-cm-skip td{color:var(--dim)}
+.nf-cm-wrap{max-height:46vh;overflow-y:auto;border:1px solid var(--border);border-radius:6px}
 .nf-action-btn{padding:6px 12px;font-family:var(--mono);font-size:11px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);cursor:pointer}
 .nf-action-btn:hover{background:var(--surface2)}
 .nf-stats{display:flex;gap:10px;padding:0 24px 12px;flex-wrap:wrap}
@@ -17935,6 +17958,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
         return nfAlpha(a.sku, b.sku);
       });
       _lastRecs = recs;
+      nfUpdateCommitBtn();   // [p7z34]
       nfRenderStats(statsRecs);
       nfRenderBody(recs);
       var sub = document.getElementById('nfSubtitle');
@@ -18417,6 +18441,149 @@ tr.nf-strow-shifted {background:#DBEAFE}
     if (typeof showToast==='function') showToast(msg);
   }
 
+  // ═══════════ COMMIT RETIER TESTS  [p7z34] ═══════════
+  // Alt Tier is a SANDBOX: it lives only in NF_DATA[season][sku].tier and
+  // changes Stores / New Rec / % Retail / % Omni here, nowhere else. Commit
+  // promotes the tests to the REAL season-scoped tier override — the same
+  // MANUAL_OW slot the grid / side panel / SKU Tracking Bulk Update write
+  // (config season → tier_ow, next season → ns_tier_ow) — then clears the
+  // test. After commit the row reads Store Tier = <new tier> (ow) and every
+  // number is unchanged, because nfCompute already sizes Stores off the
+  // override's footprint.
+  //
+  // Only the config season and the next season can commit: those are the only
+  // seasons whose tier override anything downstream reads (effTierFor /
+  // Configs Generator). Other seasons keep Alt Tier as a pure what-if.
+  //
+  // Alt Tier equal to the PST tier (a test that undoes an existing override)
+  // CLEARS the override instead of writing a no-op copy of the PST value.
+  var _nfCommitItems = [];
+  function nfCommitField(code){
+    if (code === CONFIG_SEASON) return 'tier_ow';
+    var ns = nfNsKey();
+    return (ns && code === ns) ? 'ns_tier_ow' : '';
+  }
+  function nfCommitBlocker(code){
+    if (!nfCommitField(code)) return code + ' is not the working or next season — its tier override is not read by configs, so Alt Tier stays a what-if here.';
+    if (nfMatrixState(code) !== 'ready') return code + ' store matrix is not loaded yet — tiers can\'t be validated.';
+    return '';
+  }
+  function nfCommitCandidates(code){
+    var out = [], bag = NF_DATA[code] || {};
+    var byS = {};
+    var rows = (typeof ALL_ROWS !== 'undefined' && Array.isArray(ALL_ROWS)) ? ALL_ROWS : [];
+    rows.forEach(function(r){ if (r && r.sku) byS[r.sku] = r; });
+    var tmap = {};
+    try { tmap = tierMap('', code) || {}; } catch(e){}
+    Object.keys(bag).forEach(function(sku){
+      var alt = String((bag[sku] || {}).tier || '').trim();
+      if (!alt) return;
+      var row = byS[sku];
+      var it = { sku:sku, alt:alt, ok:true, why:'', desc:'', cur:'', pst:'', curOw:'', write:'', clear:false, oldCt:0, newCt:0 };
+      if (!row){ it.ok = false; it.why = 'not in the tracker'; out.push(it); return; }
+      var slice = (row.seasons && row.seasons[code]) || {};
+      it.desc = (row.style_desc || '') + (row.color_desc ? ' — ' + row.color_desc : '');
+      it.pst  = String(slice.tier || '').trim();
+      it.curOw = String(getOWFor(sku, code, 'tier_ow') || '').trim();
+      it.cur  = (it.curOw && it.curOw.toUpperCase() !== 'NONE') ? it.curOw : it.pst;
+      var v = null;
+      try { v = validateTierInput(alt, code === CONFIG_SEASON ? undefined : code); } catch(e){}
+      if (!v || v === 'None' || v === 'CF'){ it.ok = false; it.why = '"' + alt + '" is not a ' + code + ' store group'; out.push(it); return; }
+      var d = effDelivFor(row, code);
+      var m = {};
+      try { m = tierMap(d, code) || tmap; } catch(e){ m = tmap; }
+      it.oldCt = m[it.cur.toUpperCase()] || 0;
+      it.newCt = m[v.toUpperCase()] || 0;
+      if (v.toUpperCase() === it.cur.toUpperCase()){ it.ok = false; it.why = 'already ' + it.cur + ' — test will just be cleared'; it.noop = true; }
+      else if (v.toUpperCase() === it.pst.toUpperCase()){ it.clear = true; it.write = ''; }
+      else it.write = v;
+      out.push(it);
+    });
+    out.sort(function(a,b){ return nfAlpha(a.desc, b.desc) || nfAlpha(a.sku, b.sku); });
+    return out;
+  }
+  function nfUpdateCommitBtn(){
+    var b = document.getElementById('nfCommitBtn'); if (!b) return;
+    var bag = NF_DATA[NF_SEASON] || {}, n = 0;
+    for (var k in bag){ if (bag[k] && bag[k].tier) n++; }
+    if (!n){ b.style.display = 'none'; return; }
+    b.style.display = '';
+    b.textContent = '⇪ Commit Retiers (' + n + ')';
+    var why = nfCommitBlocker(NF_SEASON);
+    b.disabled = !!why;
+    b.title = why || ('Review the ' + n + ' Alt Tier test' + (n===1?'':'s') + ' for ' + NF_SEASON + ' and write them as real tier overrides in SKU Tracking.');
+  }
+  function nfCommitOpen(){
+    var why = nfCommitBlocker(NF_SEASON);
+    if (why){ if (typeof showToast==='function') showToast(why, 4000); return; }
+    _nfCommitItems = nfCommitCandidates(NF_SEASON);
+    if (!_nfCommitItems.length){ if (typeof showToast==='function') showToast('No Alt Tier tests for ' + NF_SEASON); return; }
+    var fld = nfCommitField(NF_SEASON);
+    var intro = document.getElementById('nfCommitIntro');
+    if (intro) intro.innerHTML = 'Every <b>' + nfEsc(NF_SEASON) + '</b> Alt Tier test is listed — including SKUs hidden by the current filters. '
+      + 'Checked rows are written as the ' + (fld === 'tier_ow' ? 'working-season' : 'next-season') + ' <b>tier override</b> (same as setting it in SKU Tracking), '
+      + 'synced to the team, and the test is cleared. A test that matches the PST tier clears the existing override instead.';
+    var h = '<tr><th style="width:22px"><input type="checkbox" checked onchange="nfCommitAll(this.checked)" title="Select all"></th>'
+          + '<th>SKU</th><th>Description</th><th>Current</th><th>→ New</th><th class="n">Stores</th></tr>';
+    _nfCommitItems.forEach(function(it, i){
+      if (!it.ok){
+        h += '<tr class="nf-cm-skip"><td></td><td>' + nfEsc(it.sku) + '</td><td>' + nfEsc(it.desc) + '</td><td>' + nfEsc(it.cur || '—') + '</td>'
+          + '<td colspan="2">' + nfEsc(it.alt) + ' · <i>' + nfEsc(it.why) + '</i></td></tr>';
+        return;
+      }
+      var cur = nfEsc(it.cur || '—') + (it.curOw ? ' <span style="color:var(--orange);font-size:9px">(ow)</span>' : '');
+      var nw  = it.clear ? nfEsc(it.pst) + ' <span style="color:var(--muted);font-size:9px">(clears ow → PST)</span>' : '<b>' + nfEsc(it.write) + '</b>';
+      h += '<tr><td><input type="checkbox" class="nf-cm-chk" data-i="' + i + '" checked></td><td>' + nfEsc(it.sku) + '</td><td>' + nfEsc(it.desc) + '</td>'
+        + '<td>' + cur + '</td><td>' + nw + '</td><td class="n">' + it.oldCt + ' → ' + it.newCt + '</td></tr>';
+    });
+    var t = document.getElementById('nfCommitTable'); if (t) t.innerHTML = h;
+    var m = document.getElementById('nfCommitModal'); if (m) m.style.display = 'flex';
+  }
+  function nfCommitAll(on){
+    document.querySelectorAll('#nfCommitTable .nf-cm-chk').forEach(function(c){ c.checked = !!on; });
+  }
+  function nfCommitClose(){ var m = document.getElementById('nfCommitModal'); if (m) m.style.display = 'none'; }
+  function nfCommitApply(){
+    var code = NF_SEASON, fld = nfCommitField(code);
+    if (!fld || nfCommitBlocker(code)){ nfCommitClose(); return; }
+    var pick = {};
+    document.querySelectorAll('#nfCommitTable .nf-cm-chk').forEach(function(c){ if (c.checked) pick[+c.getAttribute('data-i')] = 1; });
+    var log = [], cleared = 0;
+    _nfCommitItems.forEach(function(it, i){
+      // No-op tests (alt already equals the effective tier) are tidied away too.
+      if (it.noop){ var rn = nfRec(code, it.sku); delete rn.tier; nfCloudPush(code, it.sku); cleared++; return; }
+      if (!it.ok || !pick[i]) return;
+      setOW(it.sku, fld, it.write);
+      var row = ALL_ROWS.find(function(r){ return r.sku === it.sku; });
+      if (row){
+        if (fld === 'tier_ow'){
+          row.tier_ow = it.write;
+          // Same tier-derived chain saveTierOW / SKU Tracking Bulk Update run.
+          var eff = (row.tier_ow || row.cs_tier || '').trim().toUpperCase();
+          row.cs_store_ct  = window.getTierToStoreCount(row.deliv_ow || row.cs_deliv1)[eff] || 0;
+          row.sku_depth    = row.cs_store_ct > 0 ? Math.round((row.store_oh / row.cs_store_ct) * 100) / 100 : '';
+          row.sku_sz_depth = (row.sku_depth !== '' && row.size_ct > 0) ? Math.round((row.sku_depth / row.size_ct) * 100) / 100 : '';
+          if (typeof computeInStock === 'function') row.in_stock = computeInStock(row);
+        } else {
+          row.ns_tier_ow = it.write;
+        }
+        recomputeRowDerived(row);
+      }
+      var rec = nfRec(code, it.sku); delete rec.tier;
+      nfCloudPush(code, it.sku);
+      log.push({ sku:it.sku, season:code, field:fld, from:it.cur, from_override:it.curOw || '', to:it.clear ? '(cleared → PST ' + it.pst + ')' : it.write, stores:it.oldCt + ' → ' + it.newCt });
+    });
+    if (log.length) persistManualOW();
+    nfSaveLocal();
+    nfCommitClose();
+    if (typeof applyFiltersAndRender === 'function') applyFiltersAndRender();
+    nfRefresh();
+    if (log.length){ console.log('[NF] Committed ' + log.length + ' retier test(s) → ' + code + ' ' + fld); console.table(log); }
+    var msg = log.length ? ('Committed ' + log.length + ' retier' + (log.length===1?'':'s') + ' to ' + code + ' tier overrides') : 'Nothing committed';
+    if (cleared) msg += ' · ' + cleared + ' no-op test' + (cleared===1?'':'s') + ' cleared';
+    if (typeof showToast==='function') showToast(msg, 4000);
+  }
+
   // ---- copy SKUs in the current filtered view ----
   function nfCopyFallback(text){
     try { var ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
@@ -18594,6 +18761,10 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.nfBulkClose  = nfBulkClose;
   window.nfBulkApply  = nfBulkApply;
   window.nfCopySkus   = nfCopySkus;
+  window.nfCommitOpen  = nfCommitOpen;    // [p7z34]
+  window.nfCommitClose = nfCommitClose;
+  window.nfCommitApply = nfCommitApply;
+  window.nfCommitAll   = nfCommitAll;
 
   nfLoadLocal();
   console.log('[NF] module ready [nf-review-v1 · nf-release-p6l · nf-ns-release-p7z23] · default season '+NF_SEASON+' · run nfWhy() or nfWhy("SKU") to debug auto-Release');
