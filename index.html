@@ -1164,7 +1164,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg (p7z32)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc (p7z33)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -17244,6 +17244,52 @@ tr.nf-strow-shifted {background:#DBEAFE}
   }
   function nfIsReleased(row, code){ return nfReleaseInfo(row, code).dropped; }
 
+  // ---- Pending In-DC  [p7z33] ---------------------------------------------
+  // The SKU's pending WIP in-DC date for the NF season, resolved the SAME way
+  // the Late List resolves it so the two tabs never disagree:
+  //   1. earliest pending in-DC across this season's WIP lines (wipAgg)
+  //   2. else the season slice's pending date
+  //   3. config season only: else the cross-season fallback already applied to
+  //      cs_dc_pend (fall-extension buys coded to the prior season) — flagged
+  //   4. an ACTIVE Late List In-DC override (llPendOW) replaces the WIP date;
+  //      a superseded one is ignored, exactly as on the Late List.
+  // Flag vs the SKU's own Flow Cal drop: past due (shared wipPastDueDays rule,
+  // funding-gated) → late for drop (arrives ON or after the drop — same-day is
+  // late, Late List rule) → on time. Read-only: overrides are set on the Late List.
+  function nfDay(d){ if (!(d instanceof Date) || isNaN(d)) return null; var x = new Date(d); x.setHours(0,0,0,0); return x; }
+  function nfPendInDC(row, code, deliv, plgOH, iaRec){
+    var o = { str:'', date:null, qty:0, wipStr:'', xs:false, ow:false, owStale:'', flag:'', pastDays:null, dropStr:'' };
+    var agg = (window._wipAgg || {})[code + row.sku] || {};
+    var slice = (row.seasons && row.seasons[code]) || {};
+    var wip = nfDay(agg.earliestPendDate) || nfDay(parseXLDate(slice.dc_pend || ''));
+    var qty = num(agg.pendQty) || num(slice.po_pend);
+    var llWipStr = wip ? fmtDate4(wip) : '';           // the key the Late List override was set against
+    if (!wip && code === CONFIG_SEASON && row.cs_dc_pend){
+      wip = nfDay(parseXLDate(row.cs_dc_pend));
+      if (wip){ qty = num(row.cs_po_pend); o.xs = true; }
+    }
+    o.wipStr = wip ? fmtDate4(wip) : '';
+    var eff = wip;
+    try {
+      var ow = llPendOW(row.sku, code, llWipStr);
+      if (ow.state === 'active'){ eff = ow.date; o.ow = true; }
+      else if (ow.state === 'superseded') o.owStale = ow.str;
+    } catch(e){}
+    if (!eff){
+      if (num(agg.recvQty) > 0) o.flag = 'In DC';
+      return o;
+    }
+    o.date = eff; o.str = fmtDate4(eff); o.qty = qty;
+    var today = nfDay(new Date());
+    o.pastDays = wipPastDueDays(eff, plgOH, iaRec, today);
+    var drop = nfDay(llResolveAllocDate(deliv));
+    o.dropStr = drop ? fmtDate4(drop) : '';
+    if (o.pastDays !== null) o.flag = 'Past Due';
+    else if (drop && eff >= drop) o.flag = 'Late for drop';
+    else o.flag = drop ? 'On time' : 'Pending';
+    return o;
+  }
+
   // ---- compute one display record ----
   function nfCompute(entry){
     var row = entry.row, slice = entry.slice, deliv = entry.deliv1, sku = row.sku;
@@ -17358,6 +17404,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var actPerSize  = (actDepth > 0 && sizeCt > 0) ? actDepth/sizeCt : 0;
     // Realized footprint vs the intended tier footprint.
     var actCoverage = stores > 0 ? actStores/stores : 0;
+    var pendDC = nfPendInDC(row, NF_SEASON, deliv, num(row.plg_oh), iaRec);   // [p7z33]
 
     return {
       sku: sku,
@@ -17375,6 +17422,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
       pstTier: pstTier, tierOw: tierOwShown,
       iaRec: iaRec, tierOH: tierOH,
       plgOH: num(row.plg_oh),
+      pendDC: pendDC,   // [p7z33]
       baseStoreCt: baseStoreCt, stores: stores,
       iaStores: num(row.syrup_ia_stores),
       lifecycle: slice.lifecycle || '',
@@ -17439,6 +17487,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     // (September + September_2), which a single-value dropdown couldn't express.
     deliv:     { type:'multi',  get:function(r){ return r.deliv; } },
     size:      { type:'select', get:function(r){ return r.sizeScale; } },
+    pendindc:  { type:'select', get:function(r){ return r.pendDC ? (r.pendDC.str || r.pendDC.flag) : ''; } },   // [p7z33] dates sort chronologically
     plg:       { type:'min',    get:function(r){ return r.plgOH; } },
     ia:        { type:'num',    get:function(r){ return r.iaRec; } },
     storect:   { type:'min',    get:function(r){ return r.iaStores; } },
@@ -17624,7 +17673,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   var NF_COLS_PENDING = [
     ['sku','SKU','l'],['styledesc','Style Description','l'],['colordesc','Color','l'],
     ['div','Div','l'],['cat','Category','l'],
-    ['deliv','Deliv','l'],['lifecycle','Lifecycle','l'],['size','Size','l'],['plg','PLG OH',''],['ia','Syrup IA',''],
+    ['deliv','Deliv','l'],['pendindc','Pending In-DC','l'],['lifecycle','Lifecycle','l'],['size','Size','l'],['plg','PLG OH',''],['ia','Syrup IA',''],
     ['storect','Receiving Locations',''],['curdepth','Cur Depth',''],['aps','APS',''],['target','Target',''],
     ['depth','Depth ★',''],['storetier','Store Tier','l'],['alttier','Alt Tier','l'],['stores','Stores',''],['newrec','New Rec',''],
     ['retailbuy','Retail Buy',''],['omnibuy','Omni Buy',''],
@@ -17659,6 +17708,29 @@ tr.nf-strow-shifted {background:#DBEAFE}
     cat: function(r){ return '<td class="l">'+nfEsc(r.category)+'</td>'; },
     deliv: function(r){ return '<td class="l">'+nfEsc(r.deliv)+'</td>'; },
     lifecycle: function(r){ return '<td class="l">'+nfEsc(r.lifecycle||'—')+'</td>'; },
+    // [p7z33] Pending in-DC date for this season (Late List resolution + override).
+    pendindc: function(r){
+      var p = r.pendDC || {};
+      var mono = 'font-family:var(--mono);font-size:10.5px;';
+      if (!p.str){
+        if (p.flag === 'In DC')
+          return '<td class="l" style="'+mono+'color:var(--muted)" title="No pending '+nfEsc(NF_SEASON)+' WIP — all lines received.">In DC</td>';
+        return '<td class="l" style="'+mono+'color:var(--dim)" title="No '+nfEsc(NF_SEASON)+' WIP lines for this SKU.">—</td>';
+      }
+      var col = p.flag === 'Past Due' ? 'color:var(--red);font-weight:600;'
+              : p.flag === 'Late for drop' ? 'color:var(--orange);font-weight:600;' : '';
+      var t = [];
+      t.push(p.flag + (p.pastDays !== null ? ' — ' + p.pastDays + 'd past the in-DC date and PLG OH can\'t fund the IA ask' : ''));
+      if (p.dropStr) t.push('Alloc drop (Flow Cal): ' + p.dropStr);
+      if (p.qty) t.push('Pending units: ' + p.qty.toLocaleString());
+      if (p.ow) t.push('In-DC override (Late List) · WIP date: ' + (p.wipStr || '—'));
+      if (p.owStale) t.push('Late List override ' + p.owStale + ' superseded — WIP date changed since it was set');
+      if (p.xs) t.push('From prior-season WIP (cross-season fallback)');
+      return '<td class="l" style="'+mono+col+'" title="'+nfEsc(t.join(' · '))+'">' + nfEsc(p.str)
+        + (p.ow ? '<span style="color:var(--orange);font-size:9px;margin-left:4px">(ow)</span>' : '')
+        + (p.xs ? '<span style="color:var(--muted);font-size:9px;margin-left:4px">xs</span>' : '')
+        + '</td>';
+    },
     size: function(r){ return '<td class="l nf-num">'+nfEsc(r.sizeScale)+' · '+r.sizeCt+'</td>'; },
     plg: function(r){ return '<td class="nf-num'+(r.plgOH>0?' nf-recv':'')+'">'+(r.plgOH>0?r.plgOH.toLocaleString():'—')+'</td>'; },
     ia: function(r){ return '<td class="nf-num">'+(r.iaRec?r.iaRec.toLocaleString():'—')+'</td>'; },
@@ -18386,13 +18458,15 @@ tr.nf-strow-shifted {background:#DBEAFE}
         ].map(q).join(','));
       });
     } else {
-      head = ['SKU','Style Description','Color','Division','Category','Delivery','Lifecycle','Size Set','Size Ct','PLG OH','Syrup IA',
+      head = ['SKU','Style Description','Color','Division','Category','Delivery','Pending In-DC','Pending Units','In-DC Flag','Lifecycle','Size Set','Size Ct','PLG OH','Syrup IA',
         'Receiving Locations','Current Depth','APS','Desired Depth (target)','Effective Depth','Store Tier','Alt Tier','Stores',
         'New Rec','Per Size','Retail Buy','Omni Buy','% Retail','% Omni','Status','Notes'];
       lines = [head.join(',')];
       recs.forEach(function(r){
         lines.push([
-          r.sku, r.styleDesc, r.colorDesc, r.division, r.category, r.deliv, r.lifecycle||'', r.sizeScale, r.sizeCt, r.plgOH, r.iaRec,
+          r.sku, r.styleDesc, r.colorDesc, r.division, r.category, r.deliv,
+          (r.pendDC && r.pendDC.str) || '', (r.pendDC && r.pendDC.qty) || '', (r.pendDC && r.pendDC.flag) || '',   // [p7z33]
+          r.lifecycle||'', r.sizeScale, r.sizeCt, r.plgOH, r.iaRec,
           r.iaStores, round1(r.curDepth), round1(r.aps), round1(r.desired), round1(r.effDepth),
           r.baseTier||'', r.altTier || '', r.stores, r.newRec, round1(r.perSize), r.retail, r.omni,
           (r.retail>0?Math.round(r.pctRetail*100)+'%':''), (r.omni>0?Math.round(r.pctOmni*100)+'%':''), NF_STATUS_LABEL[r.status], r.note || ''
