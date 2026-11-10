@@ -1164,7 +1164,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers (p7z34)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1635,6 +1635,7 @@ setTimeout(function(){
         <button class="sm-seg-btn" id="smSegStores" onclick="smSetView('stores')">Stores ▸ Groups</button>
       </div>
       <button class="sm-action-btn" onclick="smCopyMembers()">⎘ Copy members</button>
+      <button class="sm-action-btn" id="smOneHotBtn" onclick="smExportOneHot(this)" title="Download the selected season's Store Matrix as a one-hot grid (stores × groups, X = member) — .xlsx">⇩ One-hot grid</button>
       <button class="sm-action-btn" onclick="smRefreshLive(this)" title="Re-pull group membership for the working AND next season from the live Store Matrix app and recompute every row">↻ Live matrix</button>
     </div>
   </div>
@@ -3366,6 +3367,166 @@ function adaptMatrixPayload(payload, codeMap) {
   return { tierToStoreCount: tierToStoreCount, tierToStores: tierToStores,
            tierToCategory: _gc.tierToCategory, categoryOrder: _gc.categoryOrder };
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// [p7z35] ONE-HOT STORE GRID — the season's matrix as stores × groups, "X" = member
+// ──────────────────────────────────────────────────────────────────────────
+// Layout mirrors the "Store_Grid_<Qn>_<YYYY>.xlsx" reference:
+//   row 1   blank × 5, then each group's Group Category ("Uncategorized" if none)
+//   row 2   Store Name · Region · Area · Vibe · # Groups · <group labels…>
+//   rows    one per store, A–Z (case-insensitive); "X" where the store is in the group
+//   last    TOTAL · store count per group
+//
+// Built from the RAW payload, not adaptMatrixPayload's output, on purpose:
+//   · group labels keep Lauren's casing ("Beach + Inspo", not "BEACH + INSPO")
+//   · every defined group gets a column, including ones with 0 stores
+//   · the roster is the matrix's own — NOT gated by Store Codes — so the file is
+//     the matrix as defined, with store names as the tool spells them (KOP).
+// Membership matching still goes through normGroupKey, so a store whose group
+// list differs from the header only by case/whitespace/trailing "." still lands
+// in the right column. DOM-free so the harness can call it directly.
+function _ohStoreAttr(st, keys) {
+  if (!st || typeof st !== 'object') return '';
+  const lk = {};
+  Object.keys(st).forEach(function (k) { lk[String(k).toLowerCase()] = k; });
+  for (let i = 0; i < keys.length; i++) {
+    const real = lk[keys[i]];
+    if (real != null && st[real] != null && String(st[real]).trim() !== '') return String(st[real]).trim();
+  }
+  return '';
+}
+function buildMatrixOneHot(payload) {
+  if (!payload || !Array.isArray(payload.groups)) throw new Error('no matrix payload');
+  const cats = matrixGroupCategories(payload);
+  const order = cats.categoryOrder || [];
+  const catOf = function (k) { return cats.tierToCategory[k] || 'Uncategorized'; };
+
+  // Columns: defined groups first (first label wins on a normalization tie),
+  // then any label a store carries that the groups list doesn't define.
+  const colKey = [], colLabel = {}, collisions = [], undeclared = [];
+  const addCol = function (g, fromStore) {
+    const k = normGroupKey(g);
+    if (!k) return;
+    if (colLabel[k] != null) {
+      if (!fromStore && colLabel[k] !== String(g).trim()) collisions.push(colLabel[k] + ' ~ ' + String(g).trim());
+      return;
+    }
+    colLabel[k] = String(g).replace(/\s+/g, ' ').trim();
+    colKey.push(k);
+    if (fromStore) undeclared.push(colLabel[k]);
+  };
+  payload.groups.forEach(function (g) { addCol(g, false); });
+  (payload.stores || []).forEach(function (st) { ((st && st.groups) || []).forEach(function (g) { addCol(g, true); }); });
+
+  const rank = function (k) {
+    const c = cats.tierToCategory[k];
+    if (!c) return 1e7;                       // Uncategorized last
+    const i = order.indexOf(c.split(' / ')[0]);
+    return i === -1 ? 1e6 : i;
+  };
+  const lc = function (a, b) { a = a.toLowerCase(); b = b.toLowerCase(); return a < b ? -1 : a > b ? 1 : 0; };
+  colKey.sort(function (a, b) {
+    return (rank(a) - rank(b)) || lc(catOf(a), catOf(b)) || lc(colLabel[a], colLabel[b]);
+  });
+  const colIdx = {};
+  colKey.forEach(function (k, i) { colIdx[k] = i; });
+
+  // Rows. Duplicate store names are merged (union of groups) and reported.
+  const byName = {}, names = [], dupes = [];
+  let attrHits = { region: 0, area: 0, vibe: 0 };
+  (payload.stores || []).forEach(function (st) {
+    const name = String((st && st.name) == null ? '' : st.name).trim();
+    if (!name) return;
+    let r = byName[name];
+    if (r) dupes.push(name);
+    else {
+      r = byName[name] = { name: name, region: '', area: '', vibe: '', keys: {} };
+      names.push(name);
+    }
+    const reg = _ohStoreAttr(st, ['region']);
+    const area = _ohStoreAttr(st, ['area', 'district', 'market']);
+    const vibe = _ohStoreAttr(st, ['vibe', 'storevibe', 'store vibe', 'store_vibe']);
+    if (reg  && !r.region) { r.region = reg;  attrHits.region++; }
+    if (area && !r.area)   { r.area = area;   attrHits.area++; }
+    if (vibe && !r.vibe)   { r.vibe = vibe;   attrHits.vibe++; }
+    ((st && st.groups) || []).forEach(function (g) { const k = normGroupKey(g); if (k) r.keys[k] = 1; });
+  });
+  names.sort(lc);
+
+  const nG = colKey.length;
+  const totals = new Array(nG).fill(0);
+  const aoa = [];
+  aoa.push(['', '', '', '', ''].concat(colKey.map(catOf)));
+  aoa.push(['Store Name', 'Region', 'Area', 'Vibe', '# Groups'].concat(colKey.map(function (k) { return colLabel[k]; })));
+  names.forEach(function (n) {
+    const r = byName[n];
+    const cells = new Array(nG).fill('');
+    let cnt = 0;
+    Object.keys(r.keys).forEach(function (k) {
+      const i = colIdx[k];
+      if (i == null) return;
+      cells[i] = 'X'; totals[i]++; cnt++;
+    });
+    aoa.push([r.name, r.region, r.area, r.vibe, cnt].concat(cells));
+  });
+  aoa.push(['TOTAL', '', '', '', ''].concat(totals));
+
+  return {
+    aoa: aoa, storeCount: names.length, groupCount: nG,
+    emptyGroups: colKey.filter(function (k, i) { return !totals[i]; }).map(function (k) { return colLabel[k]; }),
+    undeclared: undeclared, collisions: collisions, duplicateStores: dupes, attrHits: attrHits,
+    storeKeys: (payload.stores && payload.stores[0] && typeof payload.stores[0] === 'object') ? Object.keys(payload.stores[0]) : []
+  };
+}
+// Raw payload for a season: the working season lives on window._matrixPayload,
+// every other season in SEASON_MX (loading it first if needed).
+async function matrixPayloadFor(season) {
+  const id = String(season || CONFIG_SEASON || '').trim().toUpperCase();
+  if (!id) return { id: id, payload: null, error: 'no season' };
+  if (id === CONFIG_SEASON) {
+    const p = window._matrixPayload;
+    return { id: id, payload: (p && Array.isArray(p.groups)) ? p : null,
+             error: (p && Array.isArray(p.groups)) ? null : 'the ' + id + ' matrix was not loaded from the live app (no raw payload)' };
+  }
+  try { await ensureSeasonMatrix(id); } catch (_) {}
+  const e = SEASON_MX[id];
+  if (e && e.state === 'ready' && e.payload && Array.isArray(e.payload.groups)) return { id: id, payload: e.payload, error: null };
+  return { id: id, payload: null, error: (e && e.error) || ('no ' + id + ' matrix available') };
+}
+// Build + download. Returns the build result (or null). Console: exportMatrixOneHot('HO26')
+async function exportMatrixOneHot(season) {
+  const got = await matrixPayloadFor(season);
+  if (!got.payload) {
+    const msg = 'One-hot export: ' + got.error;
+    console.warn('[OneHot] ' + msg);
+    if (typeof showToast === 'function') showToast(msg);
+    return null;
+  }
+  const res = buildMatrixOneHot(got.payload);
+  const qy = seasonToQuarter(got.id) || {};
+  const tag = qy.quarter ? qy.quarter + ' ' + qy.year : got.id;
+  const ws = XLSX.utils.aoa_to_sheet(res.aoa);
+  ws['!cols'] = res.aoa[1].map(function (h, i) {
+    if (i === 0) return { wch: Math.max(12, Math.min(40, res.aoa.reduce(function (m, r) { return Math.max(m, String(r[0] || '').length); }, 0) + 2)) };
+    return { wch: Math.max(6, Math.min(40, String(h).length + 2)) };
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, tag.slice(0, 31));
+  const file = 'Store_Grid_' + tag.replace(/\s+/g, '_') + '.xlsx';
+  XLSX.writeFile(wb, file);
+
+  const miss = ['region', 'area', 'vibe'].filter(function (k) { return !res.attrHits[k]; });
+  console.log('[OneHot] ' + got.id + ' (' + tag + ') → ' + file + ' · ' + res.storeCount + ' stores × ' + res.groupCount + ' groups'
+    + (res.emptyGroups.length ? ' · ' + res.emptyGroups.length + ' group(s) with 0 stores' : ''));
+  if (miss.length) console.warn('[OneHot] payload stores carry no ' + miss.join('/') + ' — those columns are blank. Store keys seen: ' + JSON.stringify(res.storeKeys));
+  if (res.undeclared.length) console.warn('[OneHot] ' + res.undeclared.length + ' group(s) used by stores but missing from payload.groups (added as columns): ' + res.undeclared.join(', '));
+  if (res.collisions.length) console.warn('[OneHot] group labels collide after normalization (first label kept): ' + res.collisions.join(', '));
+  if (res.duplicateStores.length) console.warn('[OneHot] duplicate store rows merged: ' + res.duplicateStores.join(', '));
+  if (typeof showToast === 'function') showToast('Exported ' + file + ' — ' + res.storeCount + ' stores × ' + res.groupCount + ' groups');
+  return res;
+}
+window.buildMatrixOneHot  = buildMatrixOneHot;
+window.exportMatrixOneHot = exportMatrixOneHot;
 
 // The ONLY place season identity is derived. Given a chosen current season,
 // recompute SEASONS.{ps,cs,ns}, rebuild the 3-entry SEASON_REGISTRY, pin
@@ -19624,6 +19785,18 @@ tr.nf-strow-shifted {background:#DBEAFE}
     smWriteClip(out.join('\n'), out.length + ' SKUs \u00B7 ' + SM_SEL);
   }
 
+  // [p7z35] Export whichever season the tab's season toggle is on.
+  async function smExportOneHot(btn){
+    var label = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = '⇩ Building…'; }
+    try { await exportMatrixOneHot(smSeason()); }
+    catch (e) {
+      console.error('[OneHot] export failed', e);
+      if (typeof showToast === 'function') showToast('One-hot export failed — ' + String((e && e.message) || e));
+    }
+    finally { if (btn) { btn.disabled = false; btn.textContent = label || '⇩ One-hot grid'; } }
+  }
+
   function smCopyMembers(){
     if (!SM_DATA || !SM_SEL) { if (typeof showToast === 'function') showToast('Nothing selected'); return; }
     var lines = [];
@@ -19689,10 +19862,11 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.smSelect       = smSelect;
   window.smJump         = smJump;
   window.smCopyMembers  = smCopyMembers;
+  window.smExportOneHot = smExportOneHot;   // [p7z35]
   window.smCopySkus     = smCopySkus;
   window._smBuild       = smBuild;   // exposed for the test harness
 
-  console.log('[SM] Store Matrix module ready [store-matrix-v1 + p7z11 season/cov-min]');
+  console.log('[SM] Store Matrix module ready [store-matrix-v1 + p7z11 season/cov-min + p7z35 one-hot]');
 })();
 </script>
 
