@@ -1164,7 +1164,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1630,6 +1630,7 @@ setTimeout(function(){
     </div>
     <div class="sm-header-actions">
       <div class="sm-seg" id="smSeasonSeg" title="Which season's Store Matrix to explore. The working season is marked •"></div>
+      <div class="sm-seg sm-src-seg" id="smSourceSeg" style="display:none" title="Which matrix feeds this season: the live Store Matrix app, or the static backup grid (<SEASON>_SAVED_MATRIX*.xlsx in ISR Data Pulls)"></div>
       <div class="sm-seg" id="smViewSeg">
         <button class="sm-seg-btn active" id="smSegGroups" onclick="smSetView('groups')">Groups ▸ Stores</button>
         <button class="sm-seg-btn" id="smSegStores" onclick="smSetView('stores')">Stores ▸ Groups</button>
@@ -2775,6 +2776,7 @@ function seasonMatrixFor(id) {
       tierToCategory: window._tierToCategory || {}, categoryOrder: window._categoryOrder || [],
       source: pv.source || 'none', asOf: pv.asOf || null };
   }
+  if (isBackupMatrixOn(id)) return backupSeasonMatrix(id);   // [p7z36] static backup grid
   const e = SEASON_MX[id];
   if (!e || e.state !== 'ready') return { state: e ? e.state : 'idle', error: e ? e.error : null };
   if (!e.adapted || e.codeMapRef !== STORE_CODE_MAP) {
@@ -2791,6 +2793,7 @@ function _isReaderSession() { return ((window._matrixProvenance || {}).source) =
 
 function ensureSeasonMatrix(id) {
   if (!id || id === CONFIG_SEASON || id === ALL_SEASONS) return Promise.resolve(seasonMatrixFor(id));
+  if (isBackupMatrixOn(id)) return Promise.resolve(seasonMatrixFor(id));   // [p7z36]
   const e = _smEntry(id);
   if (e.state === 'ready') return Promise.resolve(seasonMatrixFor(id));
   if (e.promise) return e.promise;
@@ -3488,6 +3491,7 @@ async function matrixPayloadFor(season) {
     return { id: id, payload: (p && Array.isArray(p.groups)) ? p : null,
              error: (p && Array.isArray(p.groups)) ? null : 'the ' + id + ' matrix was not loaded from the live app (no raw payload)' };
   }
+  if (isBackupMatrixOn(id)) return { id: id, payload: backupMatrixEntry(id).payload, error: null };   // [p7z36]
   try { await ensureSeasonMatrix(id); } catch (_) {}
   const e = SEASON_MX[id];
   if (e && e.state === 'ready' && e.payload && Array.isArray(e.payload.groups)) return { id: id, payload: e.payload, error: null };
@@ -3527,6 +3531,326 @@ async function exportMatrixOneHot(season) {
 }
 window.buildMatrixOneHot  = buildMatrixOneHot;
 window.exportMatrixOneHot = exportMatrixOneHot;
+
+// ══════════════════════════════════════════════════════════════════════════
+// [p7z36] STATIC BACKUP GRID — emergency stand-in for the live Store Matrix
+// ──────────────────────────────────────────────────────────────────────────
+// WHY: when the Store Matrix app loses groups, the live payload still parses
+// cleanly — it just says those groups have 0 stores. The adapter has no way to
+// tell "group intentionally empty" from "group wiped", so every SKU tiered to a
+// wiped group silently reads 0 stores, Config Status goes red, and the
+// Configs Generator emits nothing (or the wrong store set) for it.
+//
+// WHAT: drop a saved one-hot grid into ISR Data Pulls, named
+//   <SEASON>_SAVED_MATRIX<anything>.xlsx     e.g. HO26_SAVED_MATRIX_11_10_26.xlsx
+// (the same layout ⇩ One-hot grid exports: row 1 Group Category, row 2
+// Store Name · Region · Area · Vibe · # Groups · <groups…>, X = member,
+// TOTAL row last). It is converted back into the live app's payload shape
+// ({groups, stores[{name, groups}], groupCategories, categoryOrder}), so it
+// runs through the SAME adaptMatrixPayload → Store Codes gating → buildLookups
+// path as a live pull. Nothing downstream needs to know which source it was.
+//
+// LEVER: Store Matrix tab → "Live | Backup grid" switch, per season. Flipping
+// the WORKING season reruns the whole build (cs_store_ct is baked into rows at
+// compute time — same reason ↻ Live matrix does a full rebuild).
+//
+// THE LIVE PAYLOAD IS NEVER OVERWRITTEN. P.matrixPayload / SEASON_MX keep the
+// live copy; the backup is substituted only at read time (buildFromParsed and
+// seasonMatrixFor). So flipping back to Live is instant, ↻ Live matrix keeps
+// working underneath, and the backup can't leak into the store_matrix cache.
+//
+// PERSISTENCE
+//   · P.backupMatrices / P.matrixMode ride in the published snapshot, so the
+//     team reads exactly what the publisher chose.
+//   · Folder load: mode comes from this browser's saved choice; with no saved
+//     choice it inherits the snapshot that was open. If the file is missing
+//     from the folder but the open snapshot had one, it is carried forward —
+//     so a Refresh Data from a folder without the file can't quietly revert
+//     everyone to the broken live matrix.
+// ══════════════════════════════════════════════════════════════════════════
+const BACKUP_MATRIX_RE = /^([A-Z]{2}\d{2})_SAVED_MATRIX.*\.xlsx$/i;
+const BACKUP_MODE_LS_KEY = 'isr_matrix_backup_mode';   // JSON { seasonId: 'backup' | 'live' }
+
+function _bkPrefs() {
+  try { const v = JSON.parse(localStorage.getItem(BACKUP_MODE_LS_KEY) || '{}'); return (v && typeof v === 'object') ? v : {}; }
+  catch (_) { return {}; }
+}
+function _bkSavePref(id, mode) {
+  try { const p = _bkPrefs(); p[id] = mode; localStorage.setItem(BACKUP_MODE_LS_KEY, JSON.stringify(p)); } catch (_) {}
+}
+
+// "11_10_26" / "11-10-2026" in the file name → ISO date (display only).
+function _bkDateFromName(name) {
+  const m = String(name || '').match(/(\d{1,2})[_\-.](\d{1,2})[_\-.](\d{2}|\d{4})(?!\d)/);
+  if (!m) return null;
+  const y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+  const d = new Date(y, +m[1] - 1, +m[2]);
+  return isNaN(d) ? null : d.toISOString().slice(0, 10);
+}
+
+// One-hot AOA → live payload. Header row found by name, not position; group
+// columns are everything after "# Groups". DOM-free for the harness.
+function parseBackupMatrixGrid(aoa, fileName) {
+  const rows = Array.isArray(aoa) ? aoa : [];
+  const cell = function (r, i) { return String((r && r[i]) == null ? '' : r[i]).replace(/\s+/g, ' ').trim(); };
+  let h = -1;
+  for (let i = 0; i < Math.min(10, rows.length); i++) {
+    if (cell(rows[i], 0).toLowerCase() === 'store name') { h = i; break; }
+  }
+  if (h === -1) throw new Error('no "Store Name" header row in the first 10 rows');
+  const hdr = rows[h] || [], catRow = h > 0 ? rows[h - 1] : [];
+  const lc = hdr.map(function (_, i) { return cell(hdr, i).toLowerCase(); });
+  const ix = function (n) { return lc.indexOf(n); };
+  const iReg = ix('region'), iArea = ix('area'), iVibe = ix('vibe');
+  const iCnt = lc.indexOf('# groups');
+  const first = iCnt >= 0 ? iCnt + 1 : 5;
+
+  const cols = [], seenKey = {}, dupCols = [];
+  for (let i = first; i < hdr.length; i++) {
+    const label = cell(hdr, i);
+    if (!label) continue;
+    const k = normGroupKey(label);
+    if (seenKey[k]) { dupCols.push(label); continue; }   // first column wins, same as the export
+    seenKey[k] = 1;
+    cols.push({ i: i, label: label, cat: cell(catRow, i) });
+  }
+
+  const groupCategories = {}, categoryOrder = [];
+  cols.forEach(function (c) {
+    if (!c.cat || /^uncategori[sz]ed$/i.test(c.cat)) return;   // the export writes "Uncategorized" for none
+    groupCategories[c.label] = c.cat;
+    if (categoryOrder.indexOf(c.cat) === -1) categoryOrder.push(c.cat);
+  });
+
+  const stores = [], dupStores = [], seenStore = {}, odd = {};
+  let totalRow = null;
+  for (let r = h + 1; r < rows.length; r++) {
+    const row = rows[r] || [];
+    const name = cell(row, 0);
+    if (!name) continue;
+    if (name.toUpperCase() === 'TOTAL') { totalRow = row; break; }
+    if (seenStore[name]) { dupStores.push(name); continue; }
+    seenStore[name] = 1;
+    const groups = [];
+    cols.forEach(function (c) {
+      const v = cell(row, c.i);
+      if (!v) return;
+      if (/^(x|1|y|yes|true)$/i.test(v)) groups.push(c.label);
+      else odd[v] = (odd[v] || 0) + 1;
+    });
+    stores.push({ name: name, region: iReg >= 0 ? cell(row, iReg) : '', area: iArea >= 0 ? cell(row, iArea) : '',
+                  vibe: iVibe >= 0 ? cell(row, iVibe) : '', groups: groups });
+  }
+
+  // Self-check against the file's own TOTAL row — catches a hand-edited grid
+  // whose X's and totals disagree.
+  const totalMismatch = [];
+  if (totalRow) {
+    cols.forEach(function (c) {
+      const want = toNum(totalRow[c.i]);
+      const got = stores.filter(function (s) { return s.groups.indexOf(c.label) !== -1; }).length;
+      if (String(totalRow[c.i] == null ? '' : totalRow[c.i]).trim() !== '' && want !== got) totalMismatch.push(c.label + ' (' + got + ' vs TOTAL ' + want + ')');
+    });
+  }
+  const empty = cols.filter(function (c) { return !stores.some(function (s) { return s.groups.indexOf(c.label) !== -1; }); })
+                    .map(function (c) { return c.label; });
+
+  const payload = { groups: cols.map(function (c) { return c.label; }), stores: stores,
+                    groupCategories: groupCategories, categoryOrder: categoryOrder,
+                    _backup: { fileName: fileName || '' } };
+  return { payload: payload, stats: {
+    groups: cols.length, stores: stores.length, emptyGroups: empty, duplicateColumns: dupCols,
+    duplicateStores: dupStores, unreadCells: odd, totalMismatch: totalMismatch, hasTotalRow: !!totalRow } };
+}
+
+// Read + parse every <SEASON>_SAVED_MATRIX*.xlsx in the folder. Newest file per
+// season wins (by the date in its name, then lastModified).
+async function loadBackupMatrices(files) {
+  const bySeason = {};
+  (files || []).forEach(function (f) {
+    const m = String(f && f.name || '').match(BACKUP_MATRIX_RE);
+    if (!m) return;
+    const id = m[1].toUpperCase();
+    const rank = (_bkDateFromName(f.name) || '') + '|' + String(f.lastModified || 0).padStart(15, '0');
+    if (!bySeason[id] || rank > bySeason[id].rank) bySeason[id] = { f: f, rank: rank };
+  });
+  const out = {};
+  for (const id of Object.keys(bySeason)) {
+    const f = bySeason[id].f;
+    try {
+      const buf = await f.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array', dense: true });
+      const sheet = wb.SheetNames[0];
+      const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheet], { header: 1, raw: false, defval: '' });
+      const res = parseBackupMatrixGrid(aoa, f.name);
+      // Sheet tab says "Q4 2026"; make sure that agrees with the file-name season.
+      const qy = seasonToQuarter(id);
+      const tabMismatch = qy && sheet && /^Q\d\s+\d{4}$/i.test(sheet.trim())
+        && sheet.trim().toUpperCase() !== (qy.quarter + ' ' + qy.year);
+      out[id] = { payload: res.payload, stats: res.stats, fileName: f.name, sheet: sheet,
+                  savedOn: _bkDateFromName(f.name),
+                  asOf: f.lastModified ? new Date(f.lastModified).toISOString() : new Date().toISOString(),
+                  loadedAt: new Date().toISOString() };
+      console.log('[BackupMatrix] ' + id + ' ← "' + f.name + '" · ' + res.stats.groups + ' groups × '
+        + res.stats.stores + ' stores' + (res.stats.emptyGroups.length ? ' · ' + res.stats.emptyGroups.length + ' group(s) empty in the grid itself' : ''));
+      if (tabMismatch) console.warn('[BackupMatrix] ⚠ "' + f.name + '" is named ' + id + ' but its sheet is "' + sheet + '" — using the file name');
+      if (res.stats.totalMismatch.length) console.warn('[BackupMatrix] ⚠ X counts disagree with the TOTAL row: ' + res.stats.totalMismatch.join(', '));
+      if (Object.keys(res.stats.unreadCells).length) console.warn('[BackupMatrix] ⚠ cells that are not X (ignored): ' + JSON.stringify(res.stats.unreadCells));
+      if (res.stats.duplicateStores.length) console.warn('[BackupMatrix] ⚠ duplicate store rows (first kept): ' + res.stats.duplicateStores.join(', '));
+      if (res.stats.duplicateColumns.length) console.warn('[BackupMatrix] ⚠ duplicate group columns (first kept): ' + res.stats.duplicateColumns.join(', '));
+    } catch (err) {
+      console.error('[BackupMatrix] ✖ could not read "' + f.name + '" — ' + ((err && err.message) || err));
+    }
+  }
+  return out;
+}
+
+// Decide backups + modes for a fresh folder load. prevP = the bundle that was
+// open before this load (usually the snapshot), for carry-forward.
+function resolveBackupState(folderBackups, prevP) {
+  const backups = Object.assign({}, folderBackups || {});
+  const prevB = (prevP && prevP.backupMatrices) || {};
+  const prevM = (prevP && prevP.matrixMode) || {};
+  Object.keys(prevB).forEach(function (id) {
+    if (!backups[id] && prevB[id] && prevB[id].payload) {
+      backups[id] = prevB[id];
+      console.warn('[BackupMatrix] no ' + id + '_SAVED_MATRIX file in this folder — carrying forward "'
+        + prevB[id].fileName + '" from the snapshot that was open');
+    }
+  });
+  const prefs = _bkPrefs(), mode = {};
+  Object.keys(backups).forEach(function (id) {
+    const want = prefs[id] || prevM[id] || 'live';
+    if (want === 'backup') mode[id] = 'backup';
+  });
+  Object.keys(prefs).forEach(function (id) {
+    if (prefs[id] === 'backup' && !backups[id]) console.warn('[BackupMatrix] ' + id + ' is set to the backup grid, but no '
+      + id + '_SAVED_MATRIX*.xlsx was found — ' + id + ' is reading the LIVE matrix');
+  });
+  return { backupMatrices: backups, matrixMode: mode };
+}
+
+function backupMatrixEntry(id, P) {
+  P = P || window._lastParsed;
+  const b = P && P.backupMatrices && P.backupMatrices[id];
+  return (b && b.payload && Array.isArray(b.payload.groups)) ? b : null;
+}
+function isBackupMatrixOn(id, P) {
+  P = P || window._lastParsed;
+  return !!(id && P && P.matrixMode && P.matrixMode[id] === 'backup' && backupMatrixEntry(id, P));
+}
+
+// What buildFromParsed should feed buildLookups for the config season.
+function effectiveConfigMatrix(P) {
+  const cs = String((P && P.matrixSeason) || SEASONS.cs || '').trim();
+  if (isBackupMatrixOn(cs, P)) {
+    const b = backupMatrixEntry(cs, P);
+    return { payload: b.payload, source: 'backup', asOf: b.asOf, error: null, fresh: true,
+             backup: { season: cs, fileName: b.fileName, savedOn: b.savedOn || null, asOf: b.asOf } };
+  }
+  return { payload: P.matrixPayload || null, source: P.matrixSource || 'none', asOf: P.matrixAsOf || null,
+           error: P.matrixError || null, fresh: !!P.matrixFresh, backup: null };
+}
+
+// Adapted backup for a NON-config season (config season goes through buildLookups).
+const _BK_ADAPT = {};
+function backupSeasonMatrix(id) {
+  const b = backupMatrixEntry(id);
+  if (!b) return null;
+  let a = _BK_ADAPT[id];
+  if (!a || a.payloadRef !== b.payload || a.codeMapRef !== STORE_CODE_MAP) {
+    a = _BK_ADAPT[id] = { payloadRef: b.payload, codeMapRef: STORE_CODE_MAP, adapted: adaptMatrixPayload(b.payload, STORE_CODE_MAP) };
+  }
+  return { state: 'ready', config: false, backup: true,
+    tierToStoreCount: a.adapted.tierToStoreCount, tierToStores: a.adapted.tierToStores,
+    tierToCategory: a.adapted.tierToCategory || {}, categoryOrder: a.adapted.categoryOrder || [],
+    source: 'backup', asOf: b.asOf, fileName: b.fileName, savedOn: b.savedOn || null };
+}
+
+// Live vs backup, after Store Codes gating — what the switch actually changes.
+// Live payload for the config season is P.matrixPayload (never overwritten).
+const _BK_DIFF_MEMO = {};
+function backupVsLive(id) {
+  const P = window._lastParsed, b = backupMatrixEntry(id, P);
+  if (!b) return null;
+  const live = (id === CONFIG_SEASON) ? (P && P.matrixPayload)
+             : ((SEASON_MX[id] && SEASON_MX[id].payload) || (P && P.extraMatrixPayloads && P.extraMatrixPayloads[id] && P.extraMatrixPayloads[id].payload));
+  const memo = _BK_DIFF_MEMO[id];
+  if (memo && memo.b === b.payload && memo.l === live && memo.m === STORE_CODE_MAP) return memo.r;
+  const _keep = function (r) { _BK_DIFF_MEMO[id] = { b: b.payload, l: live, m: STORE_CODE_MAP, r: r }; return r; };
+  const bk = adaptMatrixPayload(b.payload, STORE_CODE_MAP).tierToStoreCount;
+  if (!live || !Array.isArray(live.groups)) return _keep({ liveLoaded: false, restored: [], liveOnly: [], backupOnly: [], changed: 0, diff: [] });
+  const lv = adaptMatrixPayload(live, STORE_CODE_MAP).tierToStoreCount;
+  const restored = [], liveOnly = [], backupOnly = [], diff = [];
+  Object.keys(bk).forEach(function (k) {
+    if (!(k in lv)) { backupOnly.push(k); return; }
+    if (bk[k] > 0 && !lv[k]) restored.push(k + ' (' + bk[k] + ')');
+    if (bk[k] !== lv[k]) diff.push({ group: k, live: lv[k], backup: bk[k] });
+  });
+  Object.keys(lv).forEach(function (k) { if (!(k in bk)) liveOnly.push(k); });
+  return _keep({ liveLoaded: true, restored: restored, liveOnly: liveOnly, backupOnly: backupOnly, changed: diff.length, diff: diff });
+}
+
+// The lever. Returns { ok, reason }.
+async function setMatrixBackupMode(id, on) {
+  const P = window._lastParsed;
+  id = String(id || '').trim().toUpperCase();
+  if (!P) return { ok: false, reason: 'nothing loaded' };
+  if (on && !backupMatrixEntry(id, P)) return { ok: false, reason: 'no ' + id + '_SAVED_MATRIX*.xlsx was loaded' };
+  if (isBackupMatrixOn(id, P) === !!on) return { ok: true, unchanged: true };
+  P.matrixMode = P.matrixMode || {};
+  if (on) P.matrixMode[id] = 'backup'; else delete P.matrixMode[id];
+  _bkSavePref(id, on ? 'backup' : 'live');
+  const b = backupMatrixEntry(id, P);
+  console.log('[BackupMatrix] ' + id + ' → ' + (on ? 'BACKUP GRID ("' + b.fileName + '")' : 'live matrix'));
+  if (id === CONFIG_SEASON) {
+    await buildFromParsed(P);   // full pipeline — rows, Config Status, generator, every tab
+  } else {
+    seasonMatrixChanged(id);
+  }
+  try { updateMatrixBackupBadge(); } catch (_) {}
+  if (typeof showToast === 'function') showToast(id + ' now reading the ' + (on ? 'backup grid' : 'live matrix') + ' · publish to share');
+  return { ok: true };
+}
+
+// Tab badge so the backup state is visible from every tab, not just this one.
+function updateMatrixBackupBadge() {
+  const btn = document.getElementById('tabSmBtn');
+  if (!btn) return;
+  const P = window._lastParsed;
+  const on = Object.keys((P && P.matrixMode) || {}).filter(function (id) { return isBackupMatrixOn(id, P); });
+  let badge = document.getElementById('tabSmBackupBadge');
+  if (!on.length) { if (badge) badge.remove(); btn.removeAttribute('data-bk-title'); return; }
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.id = 'tabSmBackupBadge';
+    badge.className = 'sm-bk-badge';
+    btn.appendChild(badge);
+  }
+  badge.textContent = 'BACKUP';
+  badge.title = 'Reading the static backup grid for ' + on.join(', ') + ' instead of the live Store Matrix';
+}
+
+window.parseBackupMatrixGrid = parseBackupMatrixGrid;
+window.setMatrixBackupMode   = setMatrixBackupMode;
+window.isBackupMatrixOn      = isBackupMatrixOn;
+window.backupMatrixEntry     = backupMatrixEntry;
+window.backupVsLive          = backupVsLive;
+// Console: backupMatrixDiff('HO26') — every group whose count differs, live vs backup.
+window.backupMatrixDiff = function (season) {
+  const id = String(season || CONFIG_SEASON).toUpperCase();
+  const r = backupVsLive(id);
+  if (!r) { console.log('[BackupMatrix] no backup grid loaded for ' + id); return; }
+  if (!r.liveLoaded) { console.log('[BackupMatrix] ' + id + ' live matrix not loaded — nothing to compare'); return; }
+  const L = ['=== ' + id + ' · live vs backup grid (after Store Codes gating) ===',
+    r.changed + ' group(s) differ · ' + r.restored.length + ' empty in live but populated in backup'];
+  r.diff.sort(function (a, b) { return Math.abs(b.backup - b.live) - Math.abs(a.backup - a.live); })
+   .forEach(function (d) { L.push('  ' + d.group + '  live ' + d.live + ' → backup ' + d.backup); });
+  if (r.liveOnly.length) L.push('Only in live (' + r.liveOnly.length + '): ' + r.liveOnly.join(', '));
+  if (r.backupOnly.length) L.push('Only in backup (' + r.backupOnly.length + '): ' + r.backupOnly.join(', '));
+  console.log(L.join('\n'));
+  return r;
+};
 
 // The ONLY place season identity is derived. Given a chosen current season,
 // recompute SEASONS.{ps,cs,ns}, rebuild the 3-entry SEASON_REGISTRY, pin
@@ -4432,6 +4756,13 @@ async function loadAllFiles(files) {
     }
   }
 
+  // [p7z36] Static backup grid(s): <SEASON>_SAVED_MATRIX*.xlsx. Read always when
+  // present; only USED when switched on (Store Matrix tab → Backup grid).
+  setProgress(68, 'Reading backup matrix grid…');
+  let _bkState = { backupMatrices: {}, matrixMode: {} };
+  try { _bkState = resolveBackupState(await loadBackupMatrices(files), window._lastParsed); }
+  catch (e) { console.error('[BackupMatrix] load failed', e); }
+
   setProgress(70, 'Reading Safety Stock…');
   const ssRows = fSS ? await readCSV(fSS) : [];
 
@@ -4446,6 +4777,8 @@ async function loadAllFiles(files) {
     matrixPayload, matrixSource, matrixAsOf, matrixError, matrixFresh,
     matrixSeason: _seasonId,   // [p7z9b] which season matrixPayload belongs to
     extraMatrixPayloads,   // [p7y] { seasonId: {payload, source, asOf} } — display-season matrices
+    backupMatrices: _bkState.backupMatrices,   // [p7z36] { seasonId: {payload, fileName, savedOn, asOf, stats} }
+    matrixMode: _bkState.matrixMode,           // [p7z36] { seasonId: 'backup' } — absent = live
     _globals: {
       MASTER_SIZES: window.MASTER_SIZES || {},
       SEASONS: { cs: SEASONS.cs, ns: SEASONS.ns, ps: SEASONS.ps },
@@ -4539,14 +4872,27 @@ async function buildFromParsed(P) {
     } catch(e){ console.warn('[Build] could not restore globals', e); }
   }
   try { reconcileConfigMatrix(P); } catch (e) { console.warn('[LiveMatrix] reconcile failed', e); }   // [p7z9b]
+  // [p7z36] Bound carried backups to seasons the app can still show, then pick
+  // the config matrix: the backup grid when switched on, else the live payload.
+  if (P.backupMatrices) {
+    const _bkKeep = new Set(SEASON_REGISTRY.map(function (x) { return x.id; }).concat(EXTRA_DISPLAY_SEASONS || []));
+    Object.keys(P.backupMatrices).forEach(function (k) {
+      if (!_bkKeep.has(k)) { delete P.backupMatrices[k]; if (P.matrixMode) delete P.matrixMode[k]; }
+    });
+  }
+  const _effMx = effectiveConfigMatrix(P);
+  if (_effMx.backup) console.warn('[BackupMatrix] ' + _effMx.backup.season + ' config matrix = BACKUP GRID "' + _effMx.backup.fileName
+    + '" — the live Store Matrix is loaded but NOT used for tier counts / configs');
   setProgress(83, 'Building lookup tables…');
   const lookups = buildLookups({
     pstRows: P.pstRows, invRows: P.invRows, lcwRows: P.lcwRows, newnessRows: P.newnessRows, flowCalRows: P.flowCalRows,
     wipRows: P.wipRows, storeRows: (P.storeRows || P.storeRowsMay || P.storeRowsJun || []), ssRows: P.ssRows, syrupIARows: P.syrupIARows, syrupRPRows: P.syrupRPRows, syrupCfgRows: P.syrupCfgRows,
-    matrixPayload: P.matrixPayload || null, matrixSource: P.matrixSource || 'none',
-    matrixAsOf: P.matrixAsOf || null, matrixError: P.matrixError || null,
-    matrixFresh: !!P.matrixFresh
+    matrixPayload: _effMx.payload, matrixSource: _effMx.source,   // [p7z36]
+    matrixAsOf: _effMx.asOf, matrixError: _effMx.error,
+    matrixFresh: _effMx.fresh
   });
+  if (window._matrixProvenance) window._matrixProvenance.backup = _effMx.backup;   // [p7z36]
+  try { updateMatrixBackupBadge(); } catch (_) {}
   // [p7y] adopt bundled per-season matrices + warm NS (after buildLookups set provenance)
   try { seasonMatricesOnBuild(P); } catch (e) { console.warn('[SeasonMatrix] build hook failed', e); }
   // Expose flowCalMap globally so computeLateList can resolve alloc dates for any season
@@ -16744,6 +17090,10 @@ ${'</' + 'script>'}
 .sm-cov-sec{max-height:190px;overflow:auto}
 .sm-seg-btn .sm-szn-dot{margin-left:3px}
 .sm-seg-btn.loading{opacity:.6}
+/* [p7z36] backup grid lever + tab badge */
+.sm-src-seg .sm-seg-btn.active.bk{background:var(--orange,#ea580c)}
+.sm-bk-badge{margin-left:6px;padding:1px 5px;border-radius:4px;background:var(--orange,#ea580c);color:#fff;font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:.04em;vertical-align:1px}
+.sm-warn .sm-bk-msg{border-left:3px solid var(--orange,#ea580c);padding-left:8px;margin-bottom:4px}
 .sm-cov-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;margin:0 0 7px}
 .sm-cov-h-t{font-family:var(--mono);font-size:9px;letter-spacing:.1em;
   text-transform:uppercase;color:var(--muted)}
@@ -19218,6 +19568,27 @@ tr.nf-strow-shifted {background:#DBEAFE}
     // [live-matrix-v1] provenance first — everything below is read through it.
     // [p7z11] …for whichever season the tab is showing.
     var _prov = d.isConfig ? (window._matrixProvenance || null) : d.mx;
+    // [p7z36] Backup grid in use — say so first, and what it changes vs live.
+    if (typeof isBackupMatrixOn === 'function' && isBackupMatrixOn(d.season)) {
+      var _b = backupMatrixEntry(d.season), _cmp = backupVsLive(d.season) || {};
+      var _st = _b.stats || {};
+      var _m = '<div class="sm-bk-msg"><b>' + smEsc(d.season) + ' is reading the static backup grid</b> '
+        + '<code>' + smEsc(_b.fileName) + '</code>' + (_b.savedOn ? ' (saved ' + smEsc(_b.savedOn) + ')' : '')
+        + ', not the live Store Matrix. Tier counts, Config Status and the Configs Generator'
+        + (d.isConfig ? '' : ' (for ' + smEsc(d.season) + ' views)') + ' all read this grid. '
+        + 'Flip back to <b>Live</b> once the matrix app is repaired.';
+      if (_cmp.liveLoaded) {
+        _m += '<br>vs live: <b>' + _cmp.changed + '</b> group count(s) differ';
+        if (_cmp.restored.length) _m += ' · <b>' + _cmp.restored.length + '</b> group(s) empty in live are populated here: '
+          + smEsc(_cmp.restored.slice(0, 10).join(', ')) + (_cmp.restored.length > 10 ? ' \u2026' : '');
+        if (_cmp.liveOnly.length) _m += ' · ' + _cmp.liveOnly.length + ' live group(s) not in the grid (read \u201cNot in matrix\u201d): '
+          + smEsc(_cmp.liveOnly.slice(0, 8).join(', ')) + (_cmp.liveOnly.length > 8 ? ' \u2026' : '');
+        _m += '. <code>backupMatrixDiff(' + (d.isConfig ? '' : '"' + smEsc(d.season) + '"') + ')</code> in the console for the full table.';
+      }
+      if (_st.totalMismatch && _st.totalMismatch.length) _m += '<br>\u26a0 X counts disagree with the grid\u2019s TOTAL row for ' + _st.totalMismatch.length + ' group(s) — see console.';
+      msgs.push(_m + '</div>');
+      _prov = null;   // the live-source notes below don't describe what's being read
+    }
     if (!d.isConfig && d.mx.state === 'loading') {
       msgs.push('<b>Loading the ' + smEsc(d.season) + ' store matrix\u2026</b> It will appear here when it lands.');
     } else if (!d.isConfig && (d.mx.state === 'unavailable' || d.mx.state === 'idle')) {
@@ -19541,8 +19912,9 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var unused = d.groups.filter(function(g){ return !(g.skuCount || 0); }).length;
     var hidden = (SM_HIDE_UNUSED && !SM_Q.trim() && unused)
       ? ' \u00B7 ' + unused + ' unused hidden' : '';
+    var _bkOn = (typeof isBackupMatrixOn === 'function') && isBackupMatrixOn(d.season);   // [p7z36]
     el.textContent = d.groups.length
-      ? szn + ' store matrix \u00B7 ' + d.groups.length + ' groups \u00B7 '
+      ? szn + (_bkOn ? ' BACKUP GRID' : ' store matrix') + ' \u00B7 ' + d.groups.length + ' groups \u00B7 '
         + (d.namesResolved ? d.totalStores + ' stores' : 'counts only') + hidden + ' \u00B7 read-only'
       : 'No matrix loaded \u00B7 read-only';
   }
@@ -19662,8 +20034,34 @@ tr.nf-strow-shifted {background:#DBEAFE}
     }).join('');
   }
 
+  // [p7z36] Live | Backup grid — only shown when a backup grid exists for the
+  // season the tab is on.
+  function smRenderSourceSeg(){
+    var el = document.getElementById('smSourceSeg');
+    if (!el) return;
+    var id = smSeason();
+    var b = (typeof backupMatrixEntry === 'function') ? backupMatrixEntry(id) : null;
+    if (!b) { el.innerHTML = ''; el.style.display = 'none'; return; }
+    var on = isBackupMatrixOn(id);
+    el.style.display = '';
+    el.innerHTML =
+        '<button class="sm-seg-btn' + (on ? '' : ' active') + '" data-sm-act="mxsrc" data-sm-src="live" title="Read ' + smEsc(id) + ' from the live Store Matrix app">Live</button>'
+      + '<button class="sm-seg-btn' + (on ? ' active bk' : '') + '" data-sm-act="mxsrc" data-sm-src="backup" title="Read ' + smEsc(id) + ' from the static grid ' + smEsc(b.fileName) + '">Backup grid</button>';
+  }
+  async function smSetSource(src){
+    var id = smSeason(), on = src === 'backup';
+    if (on === isBackupMatrixOn(id)) return;
+    var el = document.getElementById('smSourceSeg');
+    if (el) el.querySelectorAll('button').forEach(function(b){ b.disabled = true; });
+    var res;
+    try { res = await setMatrixBackupMode(id, on); }
+    catch (e) { res = { ok:false, reason: String((e && e.message) || e) }; console.error('[BackupMatrix] switch failed', e); }
+    if (!res.ok && typeof showToast === 'function') showToast('Could not switch ' + id + ' — ' + res.reason);
+    smRefresh();
+  }
+
   function smRenderAll(){
-    smRenderSeasonSeg(); smRenderSubtitle(); smRenderStats(); smRenderWarn(); smRenderCoverage(); smRenderRail(); smRenderDetail();
+    smRenderSeasonSeg(); smRenderSourceSeg(); smRenderSubtitle(); smRenderStats(); smRenderWarn(); smRenderCoverage(); smRenderRail(); smRenderDetail();
   }
 
   // ── Public handlers ───────────────────────────────────────────────────────
@@ -19696,6 +20094,11 @@ tr.nf-strow-shifted {background:#DBEAFE}
       return;
     }
     el.innerHTML = line(res.cs, '') + line(res.ns, '"ns"');
+    // [p7z36] The live pull still lands underneath, but a season on the backup
+    // grid keeps reading the grid — its "no changes" line is about the grid.
+    var _bk = [res.cs, res.ns].filter(function(r){ return r && r.id && isBackupMatrixOn(r.id); }).map(function(r){ return r.id; });
+    if (_bk.length) el.innerHTML += '<div><b>' + smEsc(_bk.join(', ')) + ' still on the backup grid.</b> The live pull was stored, '
+      + 'but tier counts keep reading the grid until you flip to <b>Live</b>. <code>backupMatrixDiff()</code> shows how live compares.</div>';
   }
 
   function smRefresh(){
@@ -19838,6 +20241,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
       if (a === 'copyskus') smCopySkus();
       else if (a === 'covtoggle') smToggleCov();
       else if (a === 'season') smSetSeason(act.getAttribute('data-sm-season'));
+      else if (a === 'mxsrc') smSetSource(act.getAttribute('data-sm-src'));   // [p7z36]
       return;
     }
     var hit = t.closest('[data-sm-key]');
@@ -19863,10 +20267,11 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.smJump         = smJump;
   window.smCopyMembers  = smCopyMembers;
   window.smExportOneHot = smExportOneHot;   // [p7z35]
+  window.smSetSource    = smSetSource;      // [p7z36]
   window.smCopySkus     = smCopySkus;
   window._smBuild       = smBuild;   // exposed for the test harness
 
-  console.log('[SM] Store Matrix module ready [store-matrix-v1 + p7z11 season/cov-min + p7z35 one-hot]');
+  console.log('[SM] Store Matrix module ready [store-matrix-v1 + p7z11 season/cov-min + p7z35 one-hot + p7z36 backup grid]');
 })();
 </script>
 
