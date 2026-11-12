@@ -289,7 +289,8 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 .ia-pr-legend{display:flex;flex-wrap:wrap;gap:14px;font-size:10.5px;color:var(--muted);margin-top:6px}
 .ia-pr-sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
 .ia-pr-calwrap{overflow-x:auto}
-.ia-pr-cal{display:grid;gap:3px;font-size:11px;min-width:640px}
+.ia-pr-cal{display:grid;gap:3px;font-size:11px;min-width:860px}
+.ia-pr-cal .wk{margin-left:6px}
 .ia-pr-ch{text-align:center;color:var(--muted);font-family:var(--mono);font-size:10px;padding-bottom:2px}
 .ia-pr-crow{color:var(--text);font-size:11.5px;align-self:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ia-pr-cell{text-align:center;font-family:var(--mono);font-size:11px;padding:7px 2px;border-radius:4px;cursor:pointer;background:var(--surface2)}
@@ -1164,7 +1165,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1561,7 +1562,7 @@ setTimeout(function(){
 
       <div class="ia-pr-block">Receipt calendar · pending IA units by the drop they'll go out on</div>
       <div class="ia-pr-calwrap"><div id="iaPrCal"></div></div>
-      <div class="ia-pr-note">Each pending receipt sits under the drop it'll go out on: its Flow Cal drop, or the first drop after it lands if that's later (it must be in the DC the day before). Already-received SKUs aren't shown here. <span class="ia-pr-latekey"></span> = landing after that delivery's Flow Cal drop (late stock). Past due = WIP date already behind us, not yet received.</div>
+      <div class="ia-pr-note">Each pending receipt sits under the drop it'll go out on (drops run every Tuesday and Thursday): its Flow Cal drop, or the first drop after it lands if that's later (it must be in the DC the day before). Already-received SKUs aren't shown here. <span class="ia-pr-latekey"></span> = landing after that delivery's Flow Cal drop (late stock). Past due = WIP date already behind us, not yet received.</div>
 
       <div class="ia-pr-listhead">
         <div class="ia-pr-block" style="margin:0">SKUs <span class="ia-pr-count" id="iaPrCount"></span></div>
@@ -15028,12 +15029,15 @@ function iaRenderDrops() {
 //   p1/p2/p3 Pending · drops this week / next week / 2+ weeks
 //   nowip  No WIP date            — pending with nothing to date it
 //
-// Calendar columns are Thu–Wed drop weeks keyed by their drop Thursday, the
-// same windows the forecast uses: a receipt before a Thursday feeds that drop.
+// Calendar columns are individual drop DAYS — every Tuesday and Thursday
+// [p7z39], the same drop model as the Drop 1–3 cards (iaNextDropDays). A
+// receipt feeds the first drop on/after the day after it lands. Before p7z39
+// the columns were weekly Thursdays, so a Monday receipt (makes Tuesday) and a
+// Tuesday Flow Cal drop both rounded to that week's Thursday.
 // Likelihood for this/next week is read from IA_DATA.contribs (exact parity
 // with the toplines); 2+ weeks is scored the same way against the drop its
 // receipt feeds (iaPendingDetail).
-const IA_PR_WEEKS = 5;                 // drop-week columns after "Past due"
+const IA_PR_WEEKS = 5;                 // weeks of drop columns after "Past due" (2 drops/week → 10 columns)
 const IA_PR_ALLOC_WINDOW_DAYS = 42;    // Newness Log entries this far before the drop count as its allocation
 const IA_PR_STATES = [
   { k: 'alloc', l: 'Allocated',                 c: '#c4bfb7' },
@@ -15049,6 +15053,16 @@ let IA_PR = { group: 'div', filter: null, collapsed: {}, data: null };
 function iaPrThuOnOrAfter(d) {
   const x = new Date(d); x.setHours(0, 0, 0, 0);
   x.setDate(x.getDate() + ((4 - x.getDay() + 7) % 7));
+  return x;
+}
+// [p7z39] First Tue/Thu drop on or after `d` (inclusive).
+function iaPrDropOnOrAfter(d) {
+  const x = new Date(d); x.setHours(0, 0, 0, 0);
+  for (let g = 0; g < 7; g++) {
+    const w = x.getDay();
+    if (w === 2 || w === 4) return x;
+    x.setDate(x.getDate() + 1);
+  }
   return x;
 }
 
@@ -15068,7 +15082,13 @@ function iaComputePending(todayIn) {
   const today = todayIn ? new Date(todayIn) : new Date(); today.setHours(0, 0, 0, 0);
   const A = iaWeekAnchors(today);
   const cols = [];
-  for (let k = 0; k < IA_PR_WEEKS; k++) cols.push(new Date(A.thisDropThu.getTime() + 7 * k * 86400000));
+  // [p7z39] Every Tue + Thu from the first drop on/after today (inclusive,
+  // like iaNextDropDays), IA_PR_WEEKS weeks out.
+  { const d0 = iaPrDropOnOrAfter(today);
+    for (let k = 0, d = new Date(d0); k < IA_PR_WEEKS * 2; k++) {
+      cols.push(new Date(d));
+      d.setDate(d.getDate() + 1); d = iaPrDropOnOrAfter(d);
+    } }
   const cmap = {};
   ((IA_DATA && IA_DATA.contribs) || []).forEach(c => { cmap[c.sku] = c; });
 
@@ -15129,8 +15149,9 @@ function iaComputePending(todayIn) {
         // sat under the first drop it could physically make (11/12), which read
         // as volume going out that week. Past-due receipts keep their own column.
         const eff = pd < today ? today : pd;
-        const firstDrop = iaPrThuOnOrAfter(new Date(eff.getTime() + 86400000));   // must be in DC the day before
-        const calThu = r.allocDate ? iaPrThuOnOrAfter(r.allocDate) : null;
+        // [p7z39] Tue/Thu drops, not weekly Thursdays.
+        const firstDrop = iaPrDropOnOrAfter(new Date(eff.getTime() + 86400000));   // must be in DC the day before
+        const calThu = r.allocDate ? iaPrDropOnOrAfter(r.allocDate) : null;
         r.feeds = (calThu && calThu.getTime() > firstDrop.getTime()) ? calThu : firstDrop;
         r.late = !!(calThu && firstDrop.getTime() > calThu.getTime());
         if (pd < today) { r.pastDue = true; r.col = -1; }
@@ -15143,7 +15164,9 @@ function iaComputePending(todayIn) {
       if (state === 'p1' && c) r.prob = c.probThis;
       else if (state === 'p2' && c) r.prob = c.probNext;
       else {
-        const d = iaPendingDetail(row, view, r.feeds);
+        // [p7z39] Score against the drop WEEK's Thursday (same deadline the
+        // forecast uses), not the Tue column — likelihood stays at parity.
+        const d = iaPendingDetail(row, view, r.feeds ? iaPrThuOnOrAfter(r.feeds) : r.feeds);
         r.prob = d ? d.prob : null;
       }
     }
@@ -15161,7 +15184,7 @@ window.iaComputePending = iaComputePending;
 function iaPrColLabel(cols, k) {
   if (k === -1) return 'Past due';
   if (k >= cols.length) return 'Later';
-  return 'Drop ' + (cols[k].getMonth() + 1) + '/' + cols[k].getDate();
+  return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][cols[k].getDay()] + ' ' + (cols[k].getMonth() + 1) + '/' + cols[k].getDate();   // [p7z39]
 }
 
 function iaPrPasses(r, f) {
@@ -15247,6 +15270,8 @@ function iaRenderPrCal() {
   const months = iaPrMonthsOrdered().filter(m => pend.some(r => r.monthLbl === m));
   if (!months.length) { el.innerHTML = '<div class="ia-pr-empty">No dated pending receipts.</div>'; return; }
   const cell = {}, colTot = {};
+  // [p7z39] Small gap before each Tuesday (and before Later) so weeks read as pairs.
+  const wk = k => (k > 0 && (k >= D.cols.length || D.cols[k].getDay() === 2)) ? ' wk' : '';
   let max = 1;
   pend.forEach(r => {
     const key = r.monthLbl + '|' + r.col;
@@ -15256,23 +15281,23 @@ function iaRenderPrCal() {
     if (c.u > max) max = c.u;
   });
   let h = `<div class="ia-pr-cal" style="grid-template-columns:150px repeat(${colKeys.length},minmax(0,1fr))"><span></span>`
-        + colKeys.map(k => `<span class="ia-pr-ch">${iaEsc(iaPrColLabel(D.cols, k))}</span>`).join('');
+        + colKeys.map(k => `<span class="ia-pr-ch${wk(k)}">${iaEsc(iaPrColLabel(D.cols, k))}</span>`).join('');
   months.forEach(m => {
     h += `<span class="ia-pr-crow" title="${iaEsc(m)}">${iaEsc(m)}</span>`;
     colKeys.forEach(k => {
       const c = cell[m + '|' + k];
-      if (!c) { h += `<div class="ia-pr-cell empty"></div>`; return; }
+      if (!c) { h += `<div class="ia-pr-cell empty${wk(k)}"></div>`; return; }
       const a = Math.min(1, 0.15 + c.u / max * 0.85);
       const sel = f && f.month === m && f.col === k;
       const fa = iaPrFilterAttr({ month: m, col: k });
-      h += `<div class="ia-pr-cell${c.lateU > 0 ? ' late' : ''}${sel ? ' sel' : ''}"
+      h += `<div class="ia-pr-cell${wk(k)}${c.lateU > 0 ? ' late' : ''}${sel ? ' sel' : ''}"
         style="background:rgba(67,56,202,${a.toFixed(2)});color:${a > 0.55 ? '#fff' : 'var(--text)'}"
         title="${iaEsc(m)} · ${iaEsc(iaPrColLabel(D.cols, k))}: ${iaFmtN(c.u)} IA units · ${c.n} SKU${c.n === 1 ? '' : 's'}${c.lateU > 0 ? ' · ' + iaFmtN(c.lateU) + ' late' : ''}"
         onclick='iaPrSetFilter(JSON.parse(this.dataset.f))' data-f="${fa}">${iaFmtN(c.u)}</div>`;
     });
   });
   h += `<span class="ia-pr-crow" style="color:var(--muted);font-family:var(--mono);font-size:10px">TOTAL</span>`
-     + colKeys.map(k => `<span class="ia-pr-ctot">${colTot[k] ? iaFmtN(colTot[k]) : ''}</span>`).join('');
+     + colKeys.map(k => `<span class="ia-pr-ctot${wk(k)}">${colTot[k] ? iaFmtN(colTot[k]) : ''}</span>`).join('');
   el.innerHTML = h + '</div>';
 }
 
