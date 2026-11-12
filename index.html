@@ -1164,7 +1164,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -17388,6 +17388,10 @@ tr.nf-strow-shifted  td.nf-pin{background:#DBEAFE}
 .eol-manual{font-family:var(--mono);font-size:9px;letter-spacing:.04em;color:var(--muted);margin-left:5px;border:1px solid var(--border);border-radius:4px;padding:0 3px}
 .nf-tier-sel{max-width:150px;font-family:var(--mono);font-size:10.5px;padding:3px 4px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text)}
 .nf-tier-sel.alt{border-color:var(--purple);background:var(--purple-bg);color:var(--purple);font-weight:600}
+.nf-tier-in{width:150px;max-width:150px;box-sizing:border-box;font-family:var(--mono);font-size:10.5px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);transition:border-color .15s}
+.nf-tier-in::placeholder{color:var(--muted)}
+.nf-tier-in:focus{outline:none;border-color:var(--purple)}
+.nf-tier-in.alt{border-color:var(--purple);background:var(--purple-bg);color:var(--purple);font-weight:600}
 .nf-newrec{font-family:var(--mono);font-weight:700}
 .nf-recv{color:var(--green);font-weight:700;background:var(--green-bg)}
 .nf-flags{display:flex;gap:4px;justify-content:flex-end}
@@ -18314,7 +18318,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
       }
       return '<td class="l">'+sgValueSpan(nfEsc(r.baseTier), r.baseTier, r.delivRaw, '', '', NF_SEASON)+'</td>';   // [p7z17] season-aware popover
     },
-    alttier: function(r){ return '<td class="l">'+nfTierSelect(r)+'</td>'; },
+    alttier: function(r){ return '<td class="l">'+nfTierInput(r)+'</td>'; },   // [p7z38] type-to-search
     stores: function(r){
       // [p7z17] No number from a missing season matrix is shown as '?', not 0.
       if (!r.stores && r.mxState && r.mxState !== 'ready')
@@ -18394,17 +18398,97 @@ tr.nf-strow-shifted {background:#DBEAFE}
     el.innerHTML = labelRow + filterRow;
   }
 
-  function nfTierSelect(rec){
-    var tiers = Object.keys(rec._tmap).sort();
-    var cur = rec.altTier ? rec.altTier.toUpperCase() : '';
-    var html = '<select class="nf-tier-sel'+(rec.altTier?' alt':'')+'" onchange="nfEditTier(\''+nfEsc(rec.sku)+'\',this.value)">';
-    html += '<option value="">— '+nfEsc(rec.baseTier||'(none)')+'</option>';
-    tiers.forEach(function(t){
-      if (t.toUpperCase() === String(rec.baseTier).toUpperCase()) return;
-      html += '<option value="'+nfEsc(t)+'"'+(t.toUpperCase()===cur?' selected':'')+'>'+nfEsc(t)+' ('+rec._tmap[t]+')</option>';
+  // ── [p7z38] Alt Tier: type-to-search combobox ───────────────────────────
+  // Same affordance as the SKU Tracking Tier Override (<input list=datalist>):
+  // type part of a store group, the browser filters the suggestions, commit
+  // with Enter / Tab / click. Validated on change against the SKU's OWN tier
+  // map (NF season matrix, delivery-routed), case-insensitive, saved in the
+  // map's canonical casing. Invalid text reverts with a red flash + toast.
+  // Blank, or the SKU's current Store Tier, clears the test (the old select
+  // never offered the base tier either). Sentinels (None / CF / DROP) are not
+  // store groups and are rejected — Alt Tier is a footprint what-if.
+  // Datalists are shared per distinct tier set (MAY vs JUN_JUL matrices etc.)
+  // and rebuilt every render, so a matrix landing late can't leave stale lists.
+  var _nfDL = {}, _nfDLn = 0;
+  function nfResetTierDatalists(){
+    Object.keys(_nfDL).forEach(function(k){ var el = document.getElementById(_nfDL[k]); if (el) el.remove(); });
+    _nfDL = {}; _nfDLn = 0;
+  }
+  function nfTierDatalistId(tmap){
+    var keys = Object.keys(tmap || {}).sort();
+    var sig = keys.map(function(k){ return k + '=' + tmap[k]; }).join('|');
+    if (_nfDL[sig] && document.getElementById(_nfDL[sig])) return _nfDL[sig];
+    var id = 'nfTierDL_' + (++_nfDLn);
+    var dl = document.createElement('datalist'); dl.id = id;
+    keys.forEach(function(t){
+      var o = document.createElement('option');
+      o.value = t; o.label = tmap[t] + ' stores';
+      dl.appendChild(o);
     });
-    html += '</select>';
-    return html;
+    document.body.appendChild(dl);
+    _nfDL[sig] = id;
+    return id;
+  }
+  function nfTierInput(rec){
+    var dl = nfTierDatalistId(rec._tmap);
+    var v = rec.altTier || '';
+    var ph = rec.baseTier ? rec.baseTier : '(none)';
+    var tip = v ? ('Alt Tier test: ' + v + ' (' + rec.stores + ' stores) · Store Tier: ' + (rec.baseTier || '—') + ' — clear to remove the test')
+                : ('Type a ' + NF_SEASON + ' store group to test its footprint · Store Tier: ' + (rec.baseTier || '—'));
+    return '<input type="text" class="nf-tier-in' + (v ? ' alt' : '') + '" list="' + dl + '"'
+      + ' data-sku="' + nfEsc(rec.sku) + '" data-prev="' + nfEsc(v) + '" value="' + nfEsc(v) + '"'
+      + ' placeholder="— ' + nfEsc(ph) + '" title="' + nfEsc(tip) + '" autocomplete="off" spellcheck="false"'
+      + ' onfocus="this.dataset.prev=this.value" onchange="nfEditTierTyped(this)" onkeydown="nfTierKey(event,this)">';
+  }
+  // Resolve typed text → canonical tier key ('' = clear, null = invalid).
+  function nfResolveTyped(rec, typed){
+    var t = String(typed || '').trim();
+    if (!t) return '';
+    var up = t.toUpperCase();
+    if (rec && rec.baseTier && up === String(rec.baseTier).trim().toUpperCase()) return '';
+    var keys = Object.keys((rec && rec._tmap) || {});
+    for (var i = 0; i < keys.length; i++) if (keys[i].toUpperCase() === up) return keys[i];
+    // Datalist pick on browsers that put the label in the value ("X (12)").
+    var m = t.match(/^(.*?)\s*\(\d+(?:\s*stores)?\)\s*$/i);
+    if (m) return nfResolveTyped(rec, m[1]);
+    return null;
+  }
+  function nfEditTierTyped(el){
+    var sku = el.getAttribute('data-sku');
+    var rec = null;
+    for (var i = 0; i < _lastRecs.length; i++) if (_lastRecs[i].sku === sku){ rec = _lastRecs[i]; break; }
+    var typed = String(el.value || '').trim();
+    var v = rec ? nfResolveTyped(rec, typed) : null;
+    if (v === null){
+      el.value = el.dataset.prev || '';
+      el.style.borderColor = 'var(--red)';
+      setTimeout(function(){ el.style.borderColor = ''; }, 600);
+      if (typeof showToast === 'function')
+        showToast('"' + typed + '" isn\'t a ' + NF_SEASON + ' store group' + (rec && !Object.keys(rec._tmap||{}).length ? ' (' + NF_SEASON + ' matrix not loaded)' : ''), 2600);
+      _nfFocusSku = '';
+      return;
+    }
+    el.value = v; el.dataset.prev = v;
+    if (v === (rec.altTier || '')){ nfRefocusTier(); return; }   // no-op (e.g. retyped the same group)
+    nfEditTier(sku, v);
+  }
+  // Enter commits and moves down a row (Shift+Enter up); Esc reverts.
+  var _nfFocusSku = '';
+  function nfTierKey(e, el){
+    if (e.key === 'Escape'){ el.value = el.dataset.prev || ''; el.blur(); return; }
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    var all = Array.prototype.slice.call(document.querySelectorAll('#nfBody .nf-tier-in'));
+    var at = all.indexOf(el), nx = all[at + (e.shiftKey ? -1 : 1)];
+    _nfFocusSku = nx ? nx.getAttribute('data-sku') : '';
+    if (String(el.value || '') === String(el.dataset.prev || '')){ nfRefocusTier(); return; }
+    el.blur();   // fires change → nfEditTierTyped → refresh → nfRefocusTier
+  }
+  function nfRefocusTier(){
+    var sku = _nfFocusSku; _nfFocusSku = '';
+    if (!sku) return;
+    var all = document.querySelectorAll('#nfBody .nf-tier-in');
+    for (var i = 0; i < all.length; i++) if (all[i].getAttribute('data-sku') === sku){ all[i].focus(); all[i].select(); return; }
   }
 
   function nfStatusSelect(rec){
@@ -18493,7 +18577,9 @@ tr.nf-strow-shifted {background:#DBEAFE}
       _lastRecs = recs;
       nfUpdateCommitBtn();   // [p7z34]
       nfRenderStats(statsRecs);
+      nfResetTierDatalists();   // [p7z38]
       nfRenderBody(recs);
+      nfRefocusTier();          // [p7z38] Enter-to-next-row
       var sub = document.getElementById('nfSubtitle');
       var nf = nfActiveFilterCount();
       var scope = (NF_MODE === 'released')
@@ -19287,6 +19373,8 @@ tr.nf-strow-shifted {background:#DBEAFE}
   window.nfEditNote   = nfEditNote;
   window.nfEditDepth  = nfEditDepth;
   window.nfEditTier   = nfEditTier;
+  window.nfEditTierTyped = nfEditTierTyped;   // [p7z38]
+  window.nfTierKey       = nfTierKey;
   window.nfEditStatus = nfEditStatus;
   window.nfOpenSku    = nfOpenSku;
   window.nfExportCSV  = nfExportCSV;
