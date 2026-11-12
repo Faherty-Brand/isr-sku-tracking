@@ -1164,7 +1164,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -8609,7 +8609,17 @@ function psLateResolve(row, explain) {
   if (fromNA && String(row.deliv_ow || '').trim().toUpperCase() === 'NONE') return no('CS delivery override is "None" (explicit opt-out)');
   const deliv = effDelivFor(row, psKey);
   if (!deliv) return no('no ' + psKey + ' delivery');
-  const tier = effTierFor(row, psKey);
+  // [p7z37] Read the PS tier with wantCF so the CF sentinel collapses to
+  // '__CF__'. After a flip, the working season's ps_tier_ow lives in the PS
+  // season's tier_ow slot, so a "CF" set to make a SKU carry-forward in the
+  // working season reads back here as the PS tier. Taken literally, "CF" passed
+  // the allocating-tier check, seasonNewCF found no tier the season before and
+  // called it Newness, and the SKU was routed to READY TO ALLOCATE on a PS
+  // delivery it was never owed — while configs (correctly) generated CF/replen,
+  // so the Newness Log date that would clear it could never arrive.
+  // Found on MBF2420-YVY and 9 others (FA26 tier "CF", PST FA26 tier blank).
+  const tier = effTierFor(row, psKey, true);
+  if (tier === '__CF__') return no(psKey + ' tier is the CF sentinel (carry-forward) — not owed an initial drop');
   if (!tier || NON_ALLOC_TIERS.has(tier) || tier.indexOf('DO NOT ALLOCATE') !== -1) return no(psKey + ' tier "' + (tier || '—') + '" does not allocate');
   // Minimal projection (only v_deliv1 / v_tier are read) — avoids building a
   // full seasonProjection (matrix lookups) for every candidate row at load.
