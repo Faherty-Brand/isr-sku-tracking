@@ -737,6 +737,24 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 
   function cloudConfigured(){ return !!window.SB; }
 
+  // [p7z40] Paged select. Supabase/PostgREST caps a plain select at 1,000 rows
+  // and truncates silently, so a fresh device (empty localStorage) only ever saw
+  // the first 1,000 notes/overrides. Pages in 1,000-row chunks ordered by a
+  // unique column until a short page comes back. Returns {data, error} like .select().
+  window.sbSelectAll = async function(table, cols, orderCol){
+    var PAGE = 1000, out = [], from = 0;
+    for (var guard = 0; guard < 200; guard++){
+      var r = await window.SB.from(table).select(cols).order(orderCol, { ascending: true }).range(from, from + PAGE - 1);
+      if (r.error) return { data: out, error: r.error };
+      var d = r.data || [];
+      out = out.concat(d);
+      if (d.length < PAGE) return { data: out, error: null };
+      from += PAGE;
+    }
+    console.warn('[Cloud] ' + table + ': stopped paging at ' + out.length + ' rows (guard)');
+    return { data: out, error: null };
+  };
+
   function getUserName(){
     try { return localStorage.getItem('isr_user_name') || 'Anonymous'; } catch(e){ return 'Anonymous'; }
   }
@@ -758,10 +776,10 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     try { localOW = JSON.parse(localStorage.getItem('isr_manual_ow') || '{}'); } catch(e){}
     try { localNotes = JSON.parse(localStorage.getItem('isr_drilldown_notes') || '{}'); } catch(e){}
     try {
-      var ov = await window.SB.from(OVERRIDES_TABLE).select('sku,data');
+      var ov = await window.sbSelectAll(OVERRIDES_TABLE, 'sku,data', 'sku');
       if (ov.error) throw ov.error;
       (ov.data || []).forEach(function(r){ if (r && r.sku) localOW[r.sku] = r.data || {}; });
-      var nt = await window.SB.from(NOTES_TABLE).select('sku,data');
+      var nt = await window.sbSelectAll(NOTES_TABLE, 'sku,data', 'sku');
       if (nt.error) throw nt.error;
       (nt.data || []).forEach(function(r){ if (r && r.sku) localNotes[r.sku] = r.data || {}; });
       var _fiaMoved = upgradeOWStore(localOW);  // season-pivot p4
@@ -1165,7 +1183,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39) + cloud-paged-load (p7z40)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -19303,7 +19321,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
 
   function nfCloudInit(){
     if (!window.SB){ console.log('[NF] cloud not configured — local only'); return; }
-    window.SB.from(NF_TABLE).select('id,season,sku,data').then(function(res){
+    window.sbSelectAll(NF_TABLE, 'id,season,sku,data', 'id').then(function(res){
       if (res.error){ console.warn('[NF] cloud load skipped (table missing or RLS): ', res.error.message||res.error); return; }
       var merged = 0;
       (res.data||[]).forEach(function(r){
