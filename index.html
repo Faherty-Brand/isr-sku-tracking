@@ -1183,7 +1183,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39) + cloud-paged-load (p7z40) + flowcal-season-scoped (p7z41) + mins-gen (p7z42) + mins-caps-shared (p7z43b) + mins-filters (p7z44)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39) + cloud-paged-load (p7z40) + flowcal-season-scoped (p7z41) + mins-gen (p7z42) + mins-caps-shared (p7z43b) + mins-filters (p7z44) + mins-header-filters (p7z45)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1843,10 +1843,7 @@ setTimeout(function(){
           <button class="nf-seg-btn" id="mnView_caps" onclick="mnSetView('caps')" title="Div×Size, Program and Ineligible caps — shared and editable">Caps</button>
         </div>
       </div>
-      <div class="nf-ctrl">
-        <span class="nf-ctrl-lbl">Search</span>
-        <input class="nf-ftext" id="mnSearch" type="text" placeholder="SKU / style / color…" style="max-width:170px" oninput="mnSetQuery(this.value)">
-      </div>
+      <button class="nf-action-btn" id="mnClear" onclick="mnClearFilters()" style="display:none">✕ Clear filters</button>
       <button class="nf-action-btn" onclick="mnCopy()" title="Copy the upload rows (tab-separated, no header) for pasting into the destination sheet">⧉ Copy rows</button>
       <button class="nf-action-btn" onclick="mnDownload()" title="Download the upload rows as CSV, with header">⤓ CSV</button>
       <button class="nf-action-btn" onclick="mnRefresh()">↻ Refresh</button>
@@ -1854,14 +1851,6 @@ setTimeout(function(){
   </div>
 
   <div class="nf-stats" id="mnStats"></div>
-  <div class="mn-filters" id="mnFilters">
-    <span class="nf-ctrl-lbl">Filter</span>
-    <select class="eol-fsel" id="mnDiv" onchange="mnSetDiv(this.value)" title="Division"><option value="">All divisions</option></select>
-    <select class="eol-fsel" id="mnCat" onchange="mnSetFilter('cat',this.value)" title="Category"><option value="">All categories</option></select>
-    <select class="eol-fsel" id="mnStyle" onchange="mnSetFilter('style',this.value)" title="Style"><option value="">All styles</option></select>
-    <select class="eol-fsel" id="mnSset" onchange="mnSetFilter('sset',this.value)" title="Size set — the PST code where ISR has one, otherwise the size run from the Mins Pull"><option value="">All size sets</option></select>
-    <button class="nf-action-btn" id="mnClear" onclick="mnClearFilters()" style="display:none">✕ Clear filters</button>
-  </div>
   <div class="mn-count" id="mnCount"></div>
 
   <div class="nf-tablewrap" id="mnTableWrap">
@@ -1871,10 +1860,21 @@ setTimeout(function(){
         <th class="l" title="PST size set where ISR has one; italic = size run from the Mins Pull">Size set</th>
         <th title="Active eligible stores today (syrup configs)">Stores</th><th title="DC available units across the sizes shown">DC units</th>
         <th class="l" title="Green = in upload with its min · grey = left out (hover for why)">Sizes</th><th title="Rows this SKU adds to the upload">Rows</th>
+      </tr>
+      <tr class="nf-filterrow mn-filterrow">
+        <th class="l"></th>
+        <th class="l"><input class="nf-ftext mn-fin" id="mnFSku" list="mnSkuOpts" placeholder="SKU(s)…" title="Type or paste one or more SKUs (partial is fine; separate several with spaces or commas)" oninput="mnSetFilter('sku',this.value)"></th>
+        <th class="l"><select class="eol-fsel mn-fsel" id="mnDiv" onchange="mnSetDiv(this.value)"><option value="">All</option></select></th>
+        <th class="l"><select class="eol-fsel mn-fsel" id="mnCat" onchange="mnSetFilter('cat',this.value)"><option value="">All</option></select></th>
+        <th class="l"><input class="nf-ftext mn-fin" id="mnFStyle" list="mnStyleOpts" placeholder="Style…" title="Type any part of the style description" oninput="mnSetFilter('style',this.value)"></th>
+        <th class="l"><input class="nf-ftext mn-fin" id="mnFColor" list="mnColorOpts" placeholder="Color…" oninput="mnSetFilter('color',this.value)"></th>
+        <th class="l"><select class="eol-fsel mn-fsel" id="mnSset" onchange="mnSetFilter('sset',this.value)" title="PST size set where ISR has one, otherwise the size run from the Mins Pull"><option value="">All</option></select></th>
+        <th></th><th></th><th></th><th></th>
       </tr></thead>
       <tbody id="mnBody"></tbody>
     </table>
     <div class="nf-empty" id="mnEmpty" style="display:none"></div>
+    <datalist id="mnSkuOpts"></datalist><datalist id="mnStyleOpts"></datalist><datalist id="mnColorOpts"></datalist>
   </div>
   <div class="nf-tablewrap" id="mnCaps" style="display:none"></div>
 </div>
@@ -22205,12 +22205,13 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
 .mn-boxnote{font-size:11px;color:var(--muted);margin:-2px 0 6px;max-width:420px}
 .mn-caps{display:flex;gap:18px;align-items:flex-start;padding:12px 24px 24px;flex-wrap:wrap}
 /* ── Filters, new columns, wrapping size chips [p7z44] ── */
-.mn-filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:0 24px 10px}
-.mn-filters .eol-fsel{max-width:230px}
 .nf-table td.mn-chips{white-space:normal;min-width:280px}
 .mn-chipwrap{display:flex;flex-wrap:wrap;row-gap:3px;max-width:640px}
 .mn-chip{white-space:nowrap}
 .mn-run{font-family:var(--mono);font-size:10.5px;color:var(--muted);font-style:italic}
+/* ── Header-row filters [p7z45] ── */
+.mn-filterrow .mn-fin{width:100%;min-width:90px;box-sizing:border-box}
+.mn-filterrow .mn-fsel{width:100%;min-width:80px;max-width:180px}
 </style>
 <script>
 // ═══════════════════════════════════════════════════════════════
@@ -22881,7 +22882,10 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
 // ── Mins tab UI  [p7z42; shared caps p7z43] ─────────────────────
 (function(){
   'use strict';
-  var MN = { view: 'out', div: '', cat: '', style: '', sset: '', q: '', reason: '', open: {}, res: null, resKey: null };
+  // [p7z45] Filters live in the table's header row: SKU / Style / Color are typed
+  // (contains, case-insensitive; SKU also takes a pasted list), Division /
+  // Category / Size set are dropdowns.
+  var MN = { view: 'out', div: '', cat: '', sset: '', sku: '', style: '', color: '', reason: '', open: {}, res: null, resKey: null };
   var NOT_REPLEN = { 'No configs': 1, 'Configs not started (IA)': 1, 'Configs expired': 1, 'Configs off': 1 };
   var MAX_ROWS = 600;
 
@@ -22947,7 +22951,9 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
     var code = isr.code || '', run = '';
     if (!code) { var sz = meta && meta.skuSizes && meta.skuSizes[g.sku.toUpperCase()]; run = runLabel(sz ? sz.split('|') : g.list.map(function(i){ return i.size; })); }
     g.cat = cat; g.sset = code || run; g.ssetRun = !code;
-    g.ssetKey = code ? 'code:' + code : 'run:' + run;
+    // One filter list: a run that reads the same as a size-set code (24–33 vs the
+    // code 24-33, OS…) shares its entry; the dropdown shows the code's spelling.
+    g.ssetKey = 'ss:' + String(g.sset).toLowerCase().replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
   }
 
   function skuGroups(R){
@@ -22970,13 +22976,14 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
     if (MN.view === 'excl') return g.inReplen && g.list.some(function(i){ return !i.out && !NOT_REPLEN[i.reason]; });
     return g.inReplen;
   }
+  function skuTokens(){ return MN.sku.toLowerCase().split(/[\s,;]+/).filter(Boolean); }
   function passFilters(g, skip){
     if (skip !== 'div' && MN.div && g.div !== MN.div) return false;
     if (skip !== 'cat' && MN.cat && (g.cat || '(none)') !== MN.cat) return false;
-    if (skip !== 'style' && MN.style && g.style !== MN.style) return false;
     if (skip !== 'sset' && MN.sset && g.ssetKey !== MN.sset) return false;
-    var q = MN.q.trim().toLowerCase();
-    if (q && (g.sku + ' ' + g.style + ' ' + g.color).toLowerCase().indexOf(q) < 0) return false;
+    if (skip !== 'sku') { var t = skuTokens(); if (t.length && !t.some(function(x){ return g.sku.toLowerCase().indexOf(x) >= 0; })) return false; }
+    if (skip !== 'style') { var st = MN.style.trim().toLowerCase(); if (st && String(g.style).toLowerCase().indexOf(st) < 0) return false; }
+    if (skip !== 'color') { var co = MN.color.trim().toLowerCase(); if (co && String(g.color).toLowerCase().indexOf(co) < 0) return false; }
     return true;
   }
   // Each dropdown lists only values that exist given the OTHER filters, with SKU counts.
@@ -22984,27 +22991,31 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
     var base = groupsOf(R).filter(inView);
     function opts(field, skip, label){
       var c = {};
-      base.forEach(function(g){ if (!passFilters(g, skip)) return; var v = field(g); if (v[0] == null) return; var k = v[0]; if (!c[k]) c[k] = { n: 0, lbl: v[1], grp: v[2] }; c[k].n++; });
+      base.forEach(function(g){ if (!passFilters(g, skip)) return; var v = field(g); if (v[0] == null) return; var k = v[0]; if (!c[k]) c[k] = { n: 0, lbl: v[1] }; c[k].n++; if (v[2] === 'code') c[k].lbl = v[1]; });
       return c;
     }
-    function setSel(id, cur, map, allLbl, grouped){
+    function setSel(id, cur, map, allLbl){
       var el = document.getElementById(id); if (!el) return;
       var keys = Object.keys(map).sort(function(a, b){ return String(map[a].lbl).localeCompare(String(map[b].lbl), undefined, { numeric: true }); });
       var h = '<option value="">' + allLbl + '</option>';
-      if (cur && !map[cur]) h += '<option value="' + esc(cur) + '">' + esc(cur.replace(/^(code|run):/, '')) + ' (0)</option>';
-      if (grouped) {
-        ['code', 'run'].forEach(function(gk){
-          var ks = keys.filter(function(k){ return map[k].grp === gk; }); if (!ks.length) return;
-          h += '<optgroup label="' + (gk === 'code' ? 'Size sets (PST)' : 'Size runs — no PST size set') + '">' + ks.map(function(k){ return '<option value="' + esc(k) + '">' + esc(map[k].lbl) + ' (' + map[k].n + ')</option>'; }).join('') + '</optgroup>';
-        });
-      } else h += keys.map(function(k){ return '<option value="' + esc(k) + '">' + esc(map[k].lbl) + ' (' + map[k].n + ')</option>'; }).join('');
+      if (cur && !map[cur]) h += '<option value="' + esc(cur) + '">' + esc(cur.replace(/^ss:/, '')) + ' (0)</option>';
+      h += keys.map(function(k){ return '<option value="' + esc(k) + '">' + esc(map[k].lbl) + ' (' + map[k].n + ')</option>'; }).join('');
       el.innerHTML = h; el.value = cur;
     }
-    setSel('mnDiv', MN.div, opts(function(g){ return [g.div, g.div]; }, 'div'), 'All divisions');
-    setSel('mnCat', MN.cat, opts(function(g){ var c = g.cat || '(none)'; return [c, c]; }, 'cat'), 'All categories');
-    setSel('mnStyle', MN.style, opts(function(g){ return [g.style, g.style]; }, 'style'), 'All styles');
-    setSel('mnSset', MN.sset, opts(function(g){ return [g.ssetKey, g.sset, g.ssetRun ? 'run' : 'code']; }, 'sset'), 'All size sets', true);
-    var clr = document.getElementById('mnClear'); if (clr) clr.style.display = (MN.div || MN.cat || MN.style || MN.sset || MN.q) ? '' : 'none';
+    setSel('mnDiv', MN.div, opts(function(g){ return [g.div, g.div]; }, 'div'), 'All');
+    setSel('mnCat', MN.cat, opts(function(g){ var c = g.cat || '(none)'; return [c, c]; }, 'cat'), 'All');
+    setSel('mnSset', MN.sset, opts(function(g){ return [g.ssetKey, g.sset, g.ssetRun ? 'run' : 'code']; }, 'sset'), 'All');
+    // Type-ahead lists for the typed filters (values present given the other filters).
+    function fillList(id, field, skip){
+      var el = document.getElementById(id); if (!el) return;
+      var seen = {}; base.forEach(function(g){ if (passFilters(g, skip)) { var v = field(g); if (v) seen[v] = 1; } });
+      el.innerHTML = Object.keys(seen).sort().map(function(v){ return '<option value="' + esc(v) + '">'; }).join('');
+    }
+    fillList('mnStyleOpts', function(g){ return g.style; }, 'style');
+    fillList('mnSkuOpts', function(g){ return g.sku; }, 'sku');
+    fillList('mnColorOpts', function(g){ return g.color; }, 'color');
+    var on = MN.div || MN.cat || MN.sset || MN.sku || MN.style || MN.color;
+    var clr = document.getElementById('mnClear'); if (clr) clr.style.display = on ? '' : 'none';
   }
 
   function visible(R){
@@ -23120,9 +23131,13 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
   window.mnRefresh = function(){ compute(true); render(); };
   window.mnSetView = function(v){ MN.view = v; MN.reason = ''; render(); };
   window.mnSetDiv = function(v){ MN.div = v; render(); };
-  window.mnSetFilter = function(k, v){ MN[k] = v || ''; render(); };   // [p7z44] cat / style / sset
-  window.mnClearFilters = function(){ MN.div = MN.cat = MN.style = MN.sset = MN.q = ''; var q = document.getElementById('mnSearch'); if (q) q.value = ''; render(); };
-  window.mnSetQuery = function(v){ MN.q = v || ''; render(); };
+  window.mnSetFilter = function(k, v){ MN[k] = v || ''; render(); };   // div / cat / sset / sku / style / color
+  window.mnClearFilters = function(){
+    MN.div = MN.cat = MN.sset = MN.sku = MN.style = MN.color = '';
+    ['mnFSku', 'mnFStyle', 'mnFColor'].forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
+    render();
+  };
+
   window.mnTile = function(r){ MN.reason = MN.reason === r ? '' : r; if (MN.view === 'caps') MN.view = 'excl'; render(); };
   window.mnToggle = function(sku){ MN.open[sku] = !MN.open[sku]; render(); };
   function draftNote(){ var n = window.mnCaps ? window.mnCaps.dirty() : 0; return n ? ' — uses SAVED caps; ' + n + ' unsaved edit' + (n === 1 ? ' is' : 's are') + ' not included' : ''; }
