@@ -1186,8 +1186,8 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
   // [p7z47] Build stamp. Each release: bump ISR_BUILD + ISR_BUILD_NOTE, and push the
   // outgoing build onto ISR_BUILD_HISTORY. Console prints only the current build;
   // run isrBuildHistory() in the console to see the full lineage.
-  window.ISR_BUILD = 'p7z47';
-  window.ISR_BUILD_NOTE = 'short-build-stamp';
+  window.ISR_BUILD = 'p7z48';
+  window.ISR_BUILD_NOTE = 'mins-export-window';
   window.ISR_BUILD_HISTORY = [
     'dd-season-sync',
     'dd-slim',
@@ -1249,7 +1249,8 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
     'mins-caps-shared (p7z43b)',
     'mins-filters (p7z44)',
     'mins-header-filters (p7z45)',
-    'flowcal-cross-season (p7z46)'
+    'flowcal-cross-season (p7z46)',
+    'short-build-stamp (p7z47)'
   ];
   window.isrBuildHistory = function(){ console.log(window.ISR_BUILD_HISTORY.concat([window.ISR_BUILD_NOTE + ' (' + window.ISR_BUILD + ')']).join('\n')); };
   console.log('%c[ISR] build ' + window.ISR_BUILD + ' · ' + window.ISR_BUILD_NOTE, 'color:#16a34a;font-weight:bold');
@@ -1892,6 +1893,33 @@ setTimeout(function(){
   </div>
 </div>
 
+<!-- [p7z48] Mins export window — mirrors the Configs Generator. -->
+<div class="modal-bg" id="mnExportModal" onclick="if(event.target===this)mnCloseExport()">
+  <div class="modal-box" style="width:760px;max-width:94vw;max-height:88vh">
+    <div class="modal-title">Export Replenishment Mins</div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:14px">
+      All-store <span style="font-family:var(--mono)">minimum_units</span> rows by SKU-size. Workflow: replace every line in the mins Google Sheet with these rows.
+    </div>
+    <div id="mnExpStats" style="font-size:12px;font-weight:600;margin-bottom:14px;padding:10px 12px;background:var(--surface2);border-radius:6px;color:var(--text)">—</div>
+    <div style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted)">Upload Rows <span id="mnExpCount" style="color:var(--text);font-weight:700">(0)</span> <span style="font-weight:400;color:var(--muted)">— tab-separated, paste-ready</span></div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <label style="font-size:10px;color:var(--muted);display:flex;align-items:center;gap:4px;cursor:pointer">
+            <input type="checkbox" id="mnExpHeader" style="margin:0" onchange="mnRefillExport()"> include header row
+          </label>
+          <button class="ia-action-btn" type="button" onclick="mnCopy()" title="Copies the rows with sizes marked as text, so Google Sheets keeps 10/12 as 10/12">📋 Copy TSV</button>
+        </div>
+      </div>
+      <textarea class="modal-textarea" id="mnExpTSV" style="height:260px;font-size:10px" readonly></textarea>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <button class="ia-action-btn" type="button" onclick="mnDownload()" title="CSV download, with header. Note: importing a CSV into Google Sheets converts 10/12 to a date unless 'Convert text to numbers, dates and formulas' is unticked.">⤓ Download CSV instead</button>
+      <button class="ia-action-btn" type="button" onclick="mnCloseExport()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════════════════════════════════════════════
      MINS  [p7z42] — Replenishment minimums by SKU-size.
      Replaces the Excel Mins Generator Tool. Feed: ISR Mins Pull.csv.
@@ -1913,8 +1941,7 @@ setTimeout(function(){
         </div>
       </div>
       <button class="nf-action-btn" id="mnClear" onclick="mnClearFilters()" style="display:none">✕ Clear filters</button>
-      <button class="nf-action-btn" onclick="mnCopy()" title="Copy the upload rows (tab-separated, no header) for pasting into the destination sheet">⧉ Copy rows</button>
-      <button class="nf-action-btn" onclick="mnDownload()" title="Download the upload rows as CSV, with header">⤓ CSV</button>
+      <button class="nf-action-btn" onclick="mnOpenExport()" title="Open the upload rows as paste-ready TSV, like the Configs Generator">📤 Export upload</button>
       <button class="nf-action-btn" onclick="mnRefresh()">↻ Refresh</button>
     </div>
   </div>
@@ -22344,6 +22371,9 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
 /* ── Header-row filters [p7z45] ── */
 .mn-filterrow .mn-fin{width:100%;min-width:90px;box-sizing:border-box}
 .mn-filterrow .mn-fsel{width:100%;min-width:80px;max-width:180px}
+/* ── Export window [p7z48] ── */
+.mn-exp-note{font-weight:400;font-size:11px;color:var(--muted);margin-top:6px}
+.mn-exp-note.warn{color:var(--orange);font-weight:600}
 </style>
 <script>
 // ═══════════════════════════════════════════════════════════════
@@ -23273,9 +23303,64 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
   window.mnTile = function(r){ MN.reason = MN.reason === r ? '' : r; if (MN.view === 'caps') MN.view = 'excl'; render(); };
   window.mnToggle = function(sku){ MN.open[sku] = !MN.open[sku]; render(); };
   function draftNote(){ var n = window.mnCaps ? window.mnCaps.dirty() : 0; return n ? ' — uses SAVED caps; ' + n + ' unsaved edit' + (n === 1 ? ' is' : 's are') + ' not included' : ''; }
+
+  // ── [p7z48] Export window (mirrors the Configs Generator) ───────
+  // The rows are shown as paste-ready TSV with a Copy button. The copy puts TWO
+  // versions on the clipboard: plain TSV, and an HTML table in Google Sheets' own
+  // clipboard format in which every SIZE cell is typed as text. Sheets reads the
+  // HTML version, so "10/12" stays "10/12" (pasting plain text into Sheets — or
+  // importing the CSV — turns it into the date 12-Oct, which the forecasting
+  // platform rejects; "00" would likewise become 0). Other columns are left
+  // untyped so Sheets treats them exactly as it does the Configs paste today.
+  function sheetsHtml(rows, header){
+    var cols = ['location','size','product','sku','configKey','value','validFrom','validUntil'];
+    function td(v, asText){
+      v = String(v == null ? '' : v);
+      var dv = asText && v !== '' ? ' data-sheets-value="' + esc(JSON.stringify({ '1': 2, '2': v })) + '"' : '';
+      var fmt = asText ? ' style="mso-number-format:\'\\@\'"' : '';
+      return '<td' + dv + fmt + '>' + esc(v) + '</td>';
+    }
+    var h = '<meta charset="utf-8"><google-sheets-html-origin><table xmlns="http://www.w3.org/1999/xhtml" cellspacing="0" cellpadding="0" dir="ltr" border="1"><tbody>';
+    if (header) h += '<tr>' + cols.map(function(c){ return td(c, true); }).join('') + '</tr>';
+    rows.forEach(function(r){ h += '<tr>' + cols.map(function(c){ return td(r[c], c === 'size'); }).join('') + '</tr>'; });
+    return h + '</tbody></table></google-sheets-html-origin>';
+  }
+  function copyRich(text, html, msg){
+    var done = false;
+    function onCopy(e){ try { e.clipboardData.setData('text/plain', text); e.clipboardData.setData('text/html', html); e.preventDefault(); done = true; } catch(err){} }
+    document.addEventListener('copy', onCopy);
+    try { document.execCommand('copy'); } catch(e){}
+    document.removeEventListener('copy', onCopy);
+    if (done) { toast(msg); return; }
+    if (typeof navigator !== 'undefined' && navigator.clipboard && window.ClipboardItem) {
+      navigator.clipboard.write([new ClipboardItem({ 'text/plain': new Blob([text], { type: 'text/plain' }), 'text/html': new Blob([html], { type: 'text/html' }) })])
+        .then(function(){ toast(msg); }, function(){ _copyToClipboard(text, msg + ' (plain text — format the size column as Plain text in the sheet)'); });
+      return;
+    }
+    _copyToClipboard(text, msg + ' (plain text — format the size column as Plain text in the sheet)');
+  }
+  function fillExport(){
+    var R = compute(false); if (!R) return;
+    var hdr = document.getElementById('mnExpHeader'), withH = !!(hdr && hdr.checked);
+    var risky = R.upload.filter(function(r){ return /^\d+\/\d+$|^0\d+$|^\d+-\d+$/.test(r.size); }).length;
+    var nd = window.mnCaps ? window.mnCaps.dirty() : 0;
+    document.getElementById('mnExpStats').innerHTML = esc(R.upload.length + ' upload rows · ' + Object.keys(R.bySku).filter(function(k){ return R.bySku[k].some(function(i){ return i.out; }); }).length + ' SKUs · validFrom ' + R.validFrom)
+      + (risky ? '<div class="mn-exp-note">' + risky + ' row' + (risky === 1 ? ' has a size' : 's have sizes') + ' Google Sheets may convert to a date or number (10/12, 00…). <b>Copy TSV</b> marks sizes as text so they paste as-is.</div>' : '')
+      + (nd ? '<div class="mn-exp-note warn">Uses the SAVED caps — ' + nd + ' unsaved cap edit' + (nd === 1 ? ' is' : 's are') + ' not included.</div>' : '');
+    document.getElementById('mnExpCount').textContent = '(' + R.upload.length + ')';
+    document.getElementById('mnExpTSV').value = uploadText('\t', withH);
+  }
+  window.mnOpenExport = function(){
+    var R = compute(false); if (!R || !R.upload.length) { toast('Nothing to export — load the mins feed first'); return; }
+    document.getElementById('mnExportModal').style.display = 'flex';
+    fillExport();
+  };
+  window.mnCloseExport = function(){ document.getElementById('mnExportModal').style.display = 'none'; };
+  window.mnRefillExport = fillExport;
   window.mnCopy = function(){
     var R = compute(false); if (!R || !R.upload.length) { toast('Nothing to copy'); return; }
-    _copyToClipboard(uploadText('\t', false), 'Copied ' + R.upload.length + ' mins rows (no header)' + draftNote());
+    var hdr = document.getElementById('mnExpHeader'), withH = !!(hdr && hdr.checked);
+    copyRich(uploadText('\t', withH), sheetsHtml(R.upload, withH), 'Copied ' + R.upload.length + ' mins rows' + (withH ? ' + header' : '') + ' — sizes kept as text' + draftNote());
   };
   window.mnDownload = function(){
     var R = compute(false); if (!R || !R.upload.length) { toast('Nothing to export'); return; }
@@ -23291,6 +23376,8 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
   window.mnOnCapsChanged = function(){
     var p = document.getElementById('mnPanel');
     if (p && p.style.display !== 'none') render();
+    var m = document.getElementById('mnExportModal');
+    if (m && m.style.display === 'flex') fillExport();
   };
   window.mnUploadRows = function(){ var R = compute(false); return R ? R.upload : []; };   // console / test hook
 })();
