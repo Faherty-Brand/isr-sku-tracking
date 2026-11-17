@@ -1183,7 +1183,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39) + cloud-paged-load (p7z40) + flowcal-season-scoped (p7z41) + mins-gen (p7z42) + mins-caps-shared (p7z43b) + mins-filters (p7z44) + mins-header-filters (p7z45)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39) + cloud-paged-load (p7z40) + flowcal-season-scoped (p7z41) + mins-gen (p7z42) + mins-caps-shared (p7z43b) + mins-filters (p7z44) + mins-header-filters (p7z45) + flowcal-cross-season (p7z46)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -5080,28 +5080,51 @@ async function buildFromParsed(P) {
   const diagWarns = [];
   if (csCount === 0) diagWarns.push(`⚠ Zero CS SKUs — SEASONS.cs="${SEASONS.cs}" not matched in PST.`);
   if (Object.keys(lookups.invRetail).length === 0) diagWarns.push('⚠ Zero retail inventory — check ISR INV Pull.csv column names.');
-  // [p7z41] Flow Cal coverage: every PST delivery for PS/CS/NS must resolve
-  // against that exact season's calendar rows. Unmatched names get no alloc
-  // date (Late List / NS configs / IA skip them), so surface them here.
+  // [p7z41/p7z46] Flow Cal coverage. Every PS/CS/NS delivery — the PST value
+  // AND any delivery override on top of it — must resolve to a Flow Cal drop:
+  // the season's own rows, or the season either side (cross-season deliveries,
+  // see flowCalEntry). Anything still unmatched gets no alloc date (Late List /
+  // NS configs / IA skip it), so surface it with its SKUs in the console.
   try {
     [['PS', SEASONS.ps], ['CS', SEASONS.cs], ['NS', SEASONS.ns]].forEach(([role, code]) => {
       if (!code) return;
       const by = (window._flowCalBySzn || {})[String(code).toUpperCase()];
-      const miss = {};
+      const miss = {}, missSkus = {}, cross = {};
+      const note = (d, sku, src) => {
+        const e = flowCalEntry(code, d);
+        if (!e) {
+          const key = d + (src === 'override' ? ' [override]' : '');
+          miss[key] = (miss[key] || 0) + 1;
+          (missSkus[key] = missSkus[key] || []).push(sku);
+        } else if (e.szn !== String(code).toUpperCase()) {
+          const key = d + ' → ' + e.szn;
+          cross[key] = (cross[key] || 0) + 1;
+        }
+      };
       ALL_ROWS.forEach(r => {
-        const d = String((r.seasons && r.seasons[code] && r.seasons[code].deliv1) || '').trim();
-        if (d && !flowCalAllocDate(code, d)) miss[d] = (miss[d] || 0) + 1;
+        const pst = String((r.seasons && r.seasons[code] && r.seasons[code].deliv1) || '').trim();
+        const eff = (typeof effDelivFor === 'function') ? String(effDelivFor(r, code) || '').trim() : pst;
+        if (pst) note(pst, r.sku, 'pst');
+        if (eff && eff !== pst) note(eff, r.sku, 'override');
       });
       const names = Object.keys(miss);
+      if (Object.keys(cross).length) {
+        console.log(`[FlowCal] ${role} ${code}: cross-season deliveries resolved to a neighbouring season's drop: `
+          + Object.keys(cross).map(k => `${k} (${cross[k]})`).join(', '));
+      }
+      if (!by && !Object.keys(cross).length && !names.length) return;
       if (!by) {
-        console.warn(`[FlowCal] ${role} ${code}: no Flow Cal rows for this season — its deliveries get no alloc dates.`);
+        console.warn(`[FlowCal] ${role} ${code}: no Flow Cal rows for this season.`);
         if (role !== 'PS') diagWarns.push(`⚠ Flow Cal has no ${code} rows — ${role} deliveries won't get alloc dates.`);
-      } else if (names.length) {
+      }
+      if (names.length) {
         const txt = names.map(n => `${n} (${miss[n]})`).join(', ');
-        console.warn(`[FlowCal] ${role} ${code}: PST deliveries with no matching ${code} Flow Cal month: ${txt}`);
+        console.warn(`[FlowCal] ${role} ${code}: deliveries with no Flow Cal drop in ${code} or the season either side: ${txt}`);
+        names.forEach(n => console.warn(`[FlowCal]   ${code} ${n}: ` + missSkus[n].slice(0, 40).join(', ')
+          + (missSkus[n].length > 40 ? ` … +${missSkus[n].length - 40} more` : '')));
         diagWarns.push(`⚠ ${code} deliveries not in Flow Cal: ${txt}`);
-      } else {
-        console.log(`[FlowCal] ${role} ${code}: all PST deliveries matched.`);
+      } else if (by) {
+        console.log(`[FlowCal] ${role} ${code}: all deliveries matched.`);
       }
     });
   } catch (e) { console.warn('[FlowCal] coverage check failed', e); }
@@ -8376,10 +8399,38 @@ function fcSeasonKey(year, season) {
 }
 // THE Flow Cal lookup. Exact season + year only — no fallback to another
 // season, a month-only map, or the working season. null when absent.
+// [p7z46] Cross-season deliveries. A SKU's delivery can sit in a NEIGHBOURING
+// season's flow (an FA26 SKU on "July" → the SU26 July drop; an HO26 SKU moved
+// to "February" → the SP27 Feb drop). Resolution order:
+//   1. the season's own calendar rows (exact season + year)
+//   2. the season immediately before or after it in SEASON_SEQUENCE
+// Never further. Three consecutive seasons cover nine distinct months, so a
+// month name can match at most one of them — no ambiguity, and a delivery can
+// never pick up the same month from a year earlier/later (the SP26 → SP27 bug).
+// The returned entry carries .szn (the calendar season it came from).
+function fcNeighbourSeasons(seasonKey) {
+  const k = String(seasonKey || '').trim().toUpperCase();
+  const seq = (typeof SEASON_SEQUENCE !== 'undefined' && SEASON_SEQUENCE) || [];
+  const i = seq.indexOf(k);
+  if (i >= 0) return [seq[i - 1], seq[i + 1]].filter(Boolean);
+  // Not in the sequence (e.g. before SU25): derive from the code itself.
+  const m = k.match(/^(SP|SU|FA|HO)(\d{2})$/);
+  if (!m) return [];
+  const Q = ['SP', 'SU', 'FA', 'HO'], q = Q.indexOf(m[1]), y = parseInt(m[2], 10);
+  const prev = q === 0 ? 'HO' + String(y - 1).padStart(2, '0') : Q[q - 1] + m[2];
+  const next = q === 3 ? 'SP' + String(y + 1).padStart(2, '0') : Q[q + 1] + m[2];
+  return [prev, next];
+}
 function flowCalEntry(seasonKey, deliv) {
-  const by = (window._flowCalBySzn || {})[String(seasonKey || '').trim().toUpperCase()];
-  if (!by || !deliv) return null;
-  return by[fcCanonKey(deliv)] || null;
+  if (!deliv) return null;
+  const all = window._flowCalBySzn || {};
+  const own = String(seasonKey || '').trim().toUpperCase();
+  const ck = fcCanonKey(deliv);
+  for (const k of [own].concat(fcNeighbourSeasons(own))) {
+    const e = all[k] && all[k][ck];
+    if (e) return Object.assign({ szn: k }, e);
+  }
+  return null;
 }
 function flowCalAllocDate(seasonKey, deliv) {
   const e = flowCalEntry(seasonKey, deliv);
@@ -10507,7 +10558,7 @@ function renderPage() {
         const noneOpt = `<option value="None" style="color:#6b21a8"${v==='None'?' selected':''}>🚫 None — force blank delivery</option>`;
         const optHtml = `<option value="" class="ow-placeholder">${pst ? pst + ' (PST)' : '— none —'}</option>`
           + noneOpt
-          + opts.map(o => `<option value="${o}"${v===o?' selected':''}>${o}</option>`).join('');
+          + opts.map(o => `<option value="${o}"${v===o?' selected':''}>${fcOptText(CONFIG_SEASON, o)}</option>`).join('');   // [p7z46]
         return `<td style="padding:4px 6px"><select
           class="ow-select${isOv?' overridden':''}"
           data-sku="${row.sku}"
@@ -11356,7 +11407,7 @@ function openDrilldown(sku) {
             const pst = (field === 'ns_deliv_ow') ? (row.ns_deliv1 || '') : (row.cs_deliv1 || '');   // [p7z10]
             const isOv = val && val !== '';
             const optHtml = `<option value="">${pst ? pst + ' (PST)' : '— none —'}</option>`
-              + opts.map(o => `<option value="${o}"${val===o?' selected':''}>${o}</option>`).join('');
+              + opts.map(o => `<option value="${o}"${val===o?' selected':''}>${fcOptText(field === 'ns_deliv_ow' ? owNextKey() : CONFIG_SEASON, o)}</option>`).join('');   // [p7z46]
             inputHtml = `<select class="dd-edit-select${isOv?' overridden':''}" id="edit_${field}">${optHtml}</select>`;
           } else {
             const isOv = val && val !== '';   // [p7z20] free-text rows highlight when set, like tier/delivery
@@ -11911,14 +11962,26 @@ function ensureTierDatalistFor(seasonId) {
   return id;
 }
 
+// [p7z46] Option text for a delivery select: tags months that come from a
+// neighbouring season's flow so the cross-season pick is visible.
+function fcOptText(seasonKey, label, withDate) {
+  const e = flowCalEntry(seasonKey, label);
+  const own = String(seasonKey || CONFIG_SEASON || '').toUpperCase();
+  const tag = (e && e.szn !== own) ? ' · ' + e.szn : '';
+  const dt = (withDate && e && e.allocDate instanceof Date) ? ` (${e.allocDate.getMonth()+1}/${e.allocDate.getDate()})` : '';
+  return label + tag + dt;
+}
 // [p7z41] Season-scoped delivery options (PST-style names, alloc-date order).
 // CS selects pass nothing (working season); NS selects pass owNextKey().
 function getFlowCalOptions(seasonKey) {
   const key = String(seasonKey || CONFIG_SEASON || '').toUpperCase();
   _flowCalOptionCache = _flowCalOptionCache || {};
   if (_flowCalOptionCache[key]) return _flowCalOptionCache[key];
-  const bucket = (window._flowCalBySzn || {})[key] || {};
-  const entries = Object.values(bucket);
+  // [p7z46] own season + the season either side, so cross-season delivery
+  // overrides (e.g. HO26 → February) stay selectable with real dates.
+  const _all = window._flowCalBySzn || {};
+  const entries = [key].concat(fcNeighbourSeasons(key))
+    .reduce((acc, k) => acc.concat(Object.values(_all[k] || {})), []);
 
   if (entries.length === 0) {
     // No calendar rows for this season — keep overrides usable with a
@@ -12393,7 +12456,7 @@ function openBulkNotesModal() {
         const o = document.createElement('option');
         const ad = flowCalAllocDate(nsK, code);
         o.value = code;
-        o.textContent = (ad instanceof Date) ? `${code} (${ad.getMonth()+1}/${ad.getDate()})` : code;
+        o.textContent = fcOptText(nsK, code, true);   // [p7z46] season tag for cross-season months
         sel.appendChild(o);
       });
       sel.value = '__noop__';
@@ -12453,7 +12516,7 @@ function openBulkNotesModal() {
     const ad = flowCalAllocDate(CONFIG_SEASON, code);   // [p7z41]
     const dateStr = ad instanceof Date ? `${ad.getMonth()+1}/${ad.getDate()}` : '';
     o.value = code;
-    o.textContent = dateStr ? `${code} (${dateStr})` : code;
+    o.textContent = fcOptText(CONFIG_SEASON, code, true);   // [p7z46]
     delivSel.appendChild(o);
   });
   delivSel.value = '__noop__';
