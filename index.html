@@ -1183,7 +1183,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39) + cloud-paged-load (p7z40) + flowcal-season-scoped (p7z41)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39) + cloud-paged-load (p7z40) + flowcal-season-scoped (p7z41) + mins-gen (p7z42)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1299,7 +1299,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
   <div class="load-status" id="loadStatus">Loading shared data…</div>
   <button class="load-btn" id="loadFolderBtn" style="display:none" onclick="document.getElementById('fileInput').click()">📂 Open ISR Data Pulls Folder</button>
   <input type="file" id="fileInput" webkitdirectory multiple accept="">
-  <div id="loadFolderHint" style="display:none;font-family:var(--mono);font-size:10px;color:rgba(255,255,255,.2);text-align:center;max-width:380px">Reads: PST.xlsx · ISR INV Pull.csv · ISR LCW Sales.csv · Size Sets.xlsx<br>Newness Log.xlsx · Flow Cal.xlsx · WIP.xlsx<br>Store Codes.xlsx · Safety Stock.csv · syrup IA.csv · syrup RP.csv · syrup configs.csv</div>
+  <div id="loadFolderHint" style="display:none;font-family:var(--mono);font-size:10px;color:rgba(255,255,255,.2);text-align:center;max-width:380px">Reads: PST.xlsx · ISR INV Pull.csv · ISR LCW Sales.csv · Size Sets.xlsx<br>Newness Log.xlsx · Flow Cal.xlsx · WIP.xlsx<br>Store Codes.xlsx · Safety Stock.csv · syrup IA.csv · syrup RP.csv · syrup configs.csv · ISR Mins Pull.csv (optional)</div>
 </div>
 
 <!-- MAIN APP -->
@@ -1338,6 +1338,7 @@ setTimeout(function(){
         <button class="tab-btn" id="tabNfBtn" onclick="switchTab('nf')">🎯 NF Review</button>
         <button class="tab-btn" id="tabEolBtn" onclick="switchTab('eol')">⏳ EOL Review</button>
         <button class="tab-btn" id="tabRollBtn" onclick="switchTab('roll')" title="Pre-flip review of working-season overrides and strategy notes">🔁 Season Roll</button>
+        <button class="tab-btn" id="tabMinsBtn" onclick="switchTab('mins')" title="Replenishment minimums by SKU-size (replaces the Mins Generator Tool)">📏 Mins</button>
       </div>
       <button class="ctrl-btn" onclick="document.getElementById('fileInput').click()">↻ Refresh Data</button>
       <button class="ctrl-btn" id="lookupBtn" onclick="openLookupModal()">🔍 Multi-SKU Lookup</button>
@@ -1820,6 +1821,57 @@ setTimeout(function(){
     </table>
     <div class="nf-empty" id="raEmpty" style="display:none"></div>
   </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     MINS  [p7z42] — Replenishment minimums by SKU-size.
+     Replaces the Excel Mins Generator Tool. Feed: ISR Mins Pull.csv.
+     ═══════════════════════════════════════════════════ -->
+<div id="mnPanel">
+  <div class="nf-header">
+    <div>
+      <div class="nf-title">📏 Replenishment Mins</div>
+      <div class="nf-subtitle" id="mnSubtitle"></div>
+    </div>
+    <div class="nf-header-actions">
+      <div class="nf-ctrl">
+        <span class="nf-ctrl-lbl">Show</span>
+        <div class="nf-seg">
+          <button class="nf-seg-btn active" id="mnView_out" onclick="mnSetView('out')" title="SKUs with at least one size in the upload">In upload</button>
+          <button class="nf-seg-btn" id="mnView_excl" onclick="mnSetView('excl')" title="Replen SKUs with sizes left out, and why">Left out</button>
+          <button class="nf-seg-btn" id="mnView_all" onclick="mnSetView('all')" title="Every SKU in replenishment">All replen</button>
+          <button class="nf-seg-btn" id="mnView_caps" onclick="mnSetView('caps')" title="Div×Size, Program and Ineligible caps">Caps</button>
+        </div>
+      </div>
+      <div class="nf-ctrl">
+        <span class="nf-ctrl-lbl">Division</span>
+        <select class="eol-fsel" id="mnDiv" onchange="mnSetDiv(this.value)"><option value="">All divisions</option></select>
+      </div>
+      <div class="nf-ctrl">
+        <span class="nf-ctrl-lbl">Search</span>
+        <input class="nf-ftext" id="mnSearch" type="text" placeholder="SKU / style / color…" style="max-width:170px" oninput="mnSetQuery(this.value)">
+      </div>
+      <button class="nf-action-btn" onclick="mnCopy()" title="Copy the upload rows (tab-separated, no header) for pasting into the destination sheet">⧉ Copy rows</button>
+      <button class="nf-action-btn" onclick="mnDownload()" title="Download the upload rows as CSV, with header">⤓ CSV</button>
+      <button class="nf-action-btn" onclick="mnRefresh()">↻ Refresh</button>
+    </div>
+  </div>
+
+  <div class="nf-stats" id="mnStats"></div>
+  <div class="mn-count" id="mnCount"></div>
+
+  <div class="nf-tablewrap" id="mnTableWrap">
+    <table class="nf-table" id="mnTable">
+      <thead><tr>
+        <th class="l" style="width:18px"></th><th class="l">SKU</th><th class="l">Division</th><th class="l">Style</th><th class="l">Color</th>
+        <th title="Active eligible stores today (syrup configs)">Stores</th><th title="DC available units across the sizes shown">DC units</th>
+        <th class="l" title="Green = in upload with its min · grey = left out (hover for why)">Sizes</th><th title="Rows this SKU adds to the upload">Rows</th>
+      </tr></thead>
+      <tbody id="mnBody"></tbody>
+    </table>
+    <div class="nf-empty" id="mnEmpty" style="display:none"></div>
+  </div>
+  <div class="nf-tablewrap" id="mnCaps" style="display:none"></div>
 </div>
 
 <!-- EOL MULTI-SKU LOOKUP MODAL -->
@@ -4624,6 +4676,7 @@ async function loadAllFiles(files) {
   const fSyrupIA   = findFile(files, 'syrup IA.csv');
   const fSyrupRP   = findFile(files, 'syrup RP.csv');
   const fSyrupCfg  = findFile(files, 'syrup configs.csv');
+  const fMins      = findFile(files, 'ISR Mins Pull.csv');   // [p7z42] optional — Mins tab feed
 
   const missing = [];
   if(!fPST) missing.push('PST.xlsx');
@@ -4793,9 +4846,26 @@ async function loadAllFiles(files) {
   const syrupRPRows = fSyrupRP ? await readCSV(fSyrupRP) : [];
   const syrupCfgRows = fSyrupCfg ? await readCSV(fSyrupCfg) : [];
 
+  // [p7z42] Mins feed (42 "Mins Pull 2.0 (COPY)", Online DC stock by SKU-size).
+  // Optional: a missing or bad file only blanks the Mins tab. Parsed to compact
+  // rows (zero-stock rows dropped) so it rides in the published snapshot cheaply.
+  let minsRows = [], minsMeta = null;
+  if (fMins) {
+    try {
+      const _mf = window.mnParseFeedText(await fMins.text(), fMins.name);
+      minsRows = _mf.rows; minsMeta = _mf.meta;
+      console.log(`[Mins] ${fMins.name}: ${_mf.meta.rowsRead} rows read · ${_mf.meta.rowsKept} with DC stock kept` + (_mf.meta.title ? ` · "${_mf.meta.title}"` : ''));
+    } catch (err) {
+      console.error('[Mins] Could not read ' + fMins.name + ' — Mins tab will be empty:', err);
+    }
+  } else {
+    console.log('[Mins] No "ISR Mins Pull.csv" in the folder — Mins tab will be empty (optional file).');
+  }
+
   window._lastParsed = {
     pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     wipRows, storeRows, ssRows, syrupIARows, syrupRPRows, syrupCfgRows,
+    minsRows, minsMeta,   // [p7z42]
     matrixPayload, matrixSource, matrixAsOf, matrixError, matrixFresh,
     matrixSeason: _seasonId,   // [p7z9b] which season matrixPayload belongs to
     extraMatrixPayloads,   // [p7y] { seasonId: {payload, source, asOf} } — display-season matrices
@@ -14271,12 +14341,14 @@ function switchTab(tab) {
   { const b = document.getElementById('tabSmBtn'); if (b) b.classList.remove('active'); }
   { const b = document.getElementById('tabEolBtn'); if (b) b.classList.remove('active'); }
   { const b = document.getElementById('tabRollBtn'); if (b) b.classList.remove('active'); }   // [p7z24]
+  { const b = document.getElementById('tabMinsBtn'); if (b) b.classList.remove('active'); }   // [p7z42]
   document.getElementById('lateListPanel').style.display = 'none';
   document.getElementById('iaPanel').style.display = 'none';
   { const p = document.getElementById('nfPanel'); if (p) p.style.display = 'none'; }
   { const p = document.getElementById('smPanel'); if (p) p.style.display = 'none'; }
   { const p = document.getElementById('eolPanel'); if (p) p.style.display = 'none'; }
   { const p = document.getElementById('raPanel'); if (p) p.style.display = 'none'; }   // [p7z24]
+  { const p = document.getElementById('mnPanel'); if (p) p.style.display = 'none'; }   // [p7z42]
 
   if (tab === 'sku') {
     document.getElementById('tabSkuBtn').classList.add('active');
@@ -14349,6 +14421,13 @@ function switchTab(tab) {
     ['lookupBtn','clearLookupBtn','copySkuBtn','bulkNotesBtn','exportBtn','colPanelBtn']
       .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
     if (typeof window.raRefresh === 'function') window.raRefresh();
+  } else if (tab === 'mins') {   // [p7z42] Replenishment Mins
+    const b = document.getElementById('tabMinsBtn'); if (b) b.classList.add('active');
+    skuEls.forEach(id => { const el=document.getElementById(id); if(el) el.style.display='none'; });
+    const p = document.getElementById('mnPanel'); if (p) p.style.display = 'flex';
+    ['lookupBtn','clearLookupBtn','copySkuBtn','bulkNotesBtn','exportBtn','colPanelBtn']
+      .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    if (typeof window.mnRefresh === 'function') window.mnRefresh();
   }
 }
 
@@ -22061,6 +22140,532 @@ tr.nf-strow-shifted {background:#DBEAFE}
     var tb0 = document.getElementById('raBody'); if (tb0) tb0.addEventListener('click', onClick);
     var ts0 = document.getElementById('raStats'); if (ts0) ts0.addEventListener('click', onTileClick);
   }
+})();
+</script>
+
+<style>
+/* ── Replenishment Mins [p7z42] ── reuses the nf-* shell */
+#mnPanel{display:none;flex-direction:column;flex:1;overflow:hidden;background:var(--bg)}
+.nf-stat.mn-tile{cursor:pointer}
+.nf-stat.mn-tile.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.mn-count{font-family:var(--mono);font-size:10.5px;color:var(--muted);padding:0 24px 8px}
+tr.mn-row{cursor:pointer}
+tr.mn-row:hover td{background:var(--surface2)}
+tr.mn-row.open td{background:var(--surface2)}
+.mn-caret{color:var(--muted);width:18px}
+.mn-chips{white-space:normal;max-width:520px}
+.mn-chip{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:1px 6px;margin:1px 3px 1px 0;border-radius:4px;border:1px solid var(--border);color:var(--muted);background:var(--surface)}
+.mn-chip.on{background:var(--green-bg);border-color:var(--green);color:var(--text)}
+.mn-chip.on b{color:var(--green)}
+.mn-chip.off{opacity:.65;text-decoration:line-through}
+.mn-muted{color:var(--muted);font-family:var(--mono);font-size:10.5px}
+tr.mn-detail > td{background:var(--surface);padding:4px 8px 10px}
+.mn-sub{border-collapse:collapse;font-size:11.5px;margin-left:6px}
+.mn-sub th{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:600;padding:4px 10px;text-align:right;border-bottom:1px solid var(--border)}
+.mn-sub td{padding:3px 10px;text-align:right;border-bottom:1px solid var(--border)}
+.mn-sub th.l,.mn-sub td.l{text-align:left}
+.mn-sub tr.on td{background:var(--green-bg)}
+.mn-ok{color:var(--green);font-weight:600}
+.mn-capnote{font-size:12px;color:var(--muted);padding:12px 24px 4px;max-width:900px}
+.mn-caps{display:flex;gap:18px;align-items:flex-start;padding:8px 24px 24px;flex-wrap:wrap}
+.mn-capbox{min-width:220px}
+.mn-captitle{font-family:var(--mono);font-size:11px;font-weight:700;margin-bottom:6px}
+.mn-captitle span{color:var(--muted);font-weight:400}
+</style>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// REPLENISHMENT MINIMUMS  [p7z42]
+// ═══════════════════════════════════════════════════════════════
+// Replaces the Excel "Mins Generator Tool". Produces all-store
+// minimum_units rows by SKU-size for the forecasting platform.
+//
+// Inputs
+//   ISR Mins Pull.csv  — 42 "Mins Pull 2.0 (COPY)": SKU-size available units,
+//                         Location Type = Online (DC stock only). Optional file.
+//   syrup configs.csv  — already loaded; gives each SKU's eligible stores.
+//
+// Logic (mirrors the workbook, Sku-sz list tab)
+//   stores   = distinct locations on eligible_replenish rows ACTIVE today
+//              (TRUE, validFrom <= today <= validUntil).  The workbook counted
+//              every row incl. expired ones; that was the one deliberate change.
+//   gate     = SKU not ineligible · stores >= MIN_STORES · units/stores > 1/MAX_ALLOC
+//   BestMin  = FLOOR(units × MAX_ALLOC / stores)   — deepest min the DC can fund
+//              while holding back (1 − MAX_ALLOC) for e-com
+//   cap      = Program cap (div+style+size) if one exists, else Div×Size cap
+//              (missing Div×Size combo = 0 = no min, by design)
+//   MIN      = min(BestMin, cap)
+//   output   = MIN > 0 AND (size OS, or Non Apparel L/XL, or ≥ 3 sizes of the
+//              SKU with MIN > 0) — protects against propping up a broken run
+//   row      = location '', size, product, sku '', minimum_units, MIN,
+//              validFrom = yesterday, validUntil ''
+//
+// All lookups are case-insensitive, as Excel's XLOOKUP was.
+// Build 1: caps are the seed below (read-only). Build 2 moves them to Supabase.
+(function(){
+  'use strict';
+
+  var MN_PARAMS = { minStores: 4, maxAlloc: 0.75 };
+
+  var MN_SEED_CAPS = {
+    // Div x Size caps: [division, size, max min]. A combo NOT listed = no min (deliberate).
+    divSize: [
+      ["Mens", "29WX32L", 2],
+      ["Mens", "30WX30L", 3],
+      ["Mens", "30WX32L", 2],
+      ["Mens", "31WX30L", 3],
+      ["Mens", "31WX32L", 2],
+      ["Mens", "32WX30L", 3],
+      ["Mens", "32WX32L", 3],
+      ["Mens", "32WX34L", 2],
+      ["Mens", "33WX30L", 3],
+      ["Mens", "33WX32L", 3],
+      ["Mens", "34WX30L", 3],
+      ["Mens", "34WX32L", 3],
+      ["Mens", "34WX34L", 2],
+      ["Mens", "35WX30L", 2],
+      ["Mens", "35WX32L", 2],
+      ["Mens", "36WX30L", 2],
+      ["Mens", "36WX32L", 2],
+      ["Mens", "36WX34L", 1],
+      ["Mens", "38WX32L", 1],
+      ["Womens", "0", 1],
+      ["Womens", "2", 2],
+      ["Womens", "4", 2],
+      ["Womens", "6", 2],
+      ["Womens", "8", 2],
+      ["Womens", "10", 2],
+      ["Womens", "12", 1],
+      ["Womens", "24", 1],
+      ["Womens", "25", 2],
+      ["Womens", "26", 2],
+      ["Womens", "27", 3],
+      ["Womens", "28", 2],
+      ["Womens", "29", 2],
+      ["Womens", "30", 1],
+      ["Womens", "31", 1],
+      ["Womens", "L", 1],
+      ["Womens", "L/XL", 1],
+      ["Womens", "M", 3],
+      ["Womens", "S", 3],
+      ["Womens", "XL", 1],
+      ["Womens", "XS", 2],
+      ["Womens", "XS/S", 2],
+      ["Womens", "XXS", 1],
+      ["Non Apparel", "7", 2],
+      ["Non Apparel", "8", 2],
+      ["Non Apparel", "9", 2],
+      ["Non Apparel", "10", 2],
+      ["Non Apparel", "11", 2],
+      ["Non Apparel", "12", 2],
+      ["Non Apparel", "13", 1],
+      ["Non Apparel", "34", 1],
+      ["Non Apparel", "36", 2],
+      ["Non Apparel", "37", 2],
+      ["Non Apparel", "38", 2],
+      ["Non Apparel", "39", 2],
+      ["Non Apparel", "40", 2],
+      ["Non Apparel", "41", 1],
+      ["Non Apparel", "42", 1],
+      ["Non Apparel", "L", 3],
+      ["Non Apparel", "L/XL", 4],
+      ["Non Apparel", "M", 3],
+      ["Non Apparel", "OS", 4],
+      ["Non Apparel", "S", 3],
+      ["Mens", "29", 1],
+      ["Mens", "30", 1],
+      ["Mens", "31", 1],
+      ["Mens", "32", 2],
+      ["Mens", "33", 2],
+      ["Mens", "34", 2],
+      ["Mens", "35", 2],
+      ["Mens", "36", 1],
+      ["Mens", "38", 1],
+      ["Mens", "L", 3],
+      ["Mens", "M", 3],
+      ["Mens", "S", 2],
+      ["Mens", "XL", 2],
+      ["Mens", "XS", 1],
+      ["Mens", "XXL", 1],
+      ["Kids", "8", 3],
+      ["Kids", "10", 3],
+      ["Kids", "12", 2],
+      ["Kids", "14", 1],
+      ["Kids", "16", 1],
+      ["Kids", "10/12", 3],
+      ["Kids", "14/16", 1],
+      ["Kids", "4", 1],
+      ["Kids", "5", 2],
+      ["Kids", "6", 2],
+      ["Kids", "7", 2],
+      ["Womens", "00", 1],
+    ],
+    // Program caps: [division, style description, size, max min]. Replaces the Div x Size cap (can raise it).
+    program: [
+      ["Mens", "Sunwashed Tee", "M", 4],
+      ["Mens", "Sunwashed Tee", "L", 4],
+      ["Womens", "Sunwashed Essential Tee", "S", 4],
+      ["Mens", "SS Palma Linen Shirt", "L", 4],
+      ["Mens", "Laguna Linen Shirt", "L", 4],
+      ["Mens", "The Movement Shirt", "L", 4],
+      ["Mens", "SS Palma Linen Shirt", "M", 4],
+      ["Mens", "Laguna Linen Shirt", "M", 4],
+      ["Mens", "The Movement Shirt", "M", 4],
+      ["Mens", "Sunwashed Slub Hoodie", "M", 4],
+      ["Mens", "Sunwashed Slub Hoodie", "L", 4],
+    ],
+    // Ineligible SKUs: never get a min.
+    inelig: ["MWU2618-ZCT", "MKU2612-BIU", "MKU2611-TTR", "MKU2612-WHT", "MQU2607-YVY", "MOU2605-HUY", "MSU2605-ZCT", "MSU2604-TZB", "WBU2638-ZCT", "WKU2614-WHT", "WSU2625-ZCT", "WSU2626-ZCT", "WSU2605-ZCT", "MAU2602-YVY", "MAU2601-TZB", "MAU2606-ZCT"]
+  };
+
+  function low(v){ return String(v == null ? '' : v).trim().toLowerCase(); }
+  function up(v){ return String(v == null ? '' : v).trim().toUpperCase(); }
+
+  // ── Caps → lookup maps ────────────────────────────────────────
+  function mnBuildCaps(src){
+    src = src || MN_SEED_CAPS;
+    var c = { divSize: {}, program: {}, inelig: {}, src: src };
+    (src.divSize || []).forEach(function(r){ c.divSize[low(r[0]) + '|' + low(r[1])] = Number(r[2]) || 0; });
+    (src.program || []).forEach(function(r){ c.program[low(r[0]) + '|' + low(r[1]) + '|' + low(r[2])] = Number(r[3]) || 0; });
+    (src.inelig  || []).forEach(function(s){ c.inelig[up(s)] = true; });
+    return c;
+  }
+
+  // ── Feed parser (called by the folder loader) ─────────────────
+  // Returns { rows: [[skuSize, div, style, color, sku, size, units], …], meta }
+  // Zero / negative units are dropped here: they can never earn a min, and it
+  // keeps the published snapshot small (Nov 15 pull: 33,341 → 11,837 rows).
+  function mnParseFeedText(text, fileName){
+    var raw = window.PapaParse.parse(text, { header: false, skipEmptyLines: true }).data;
+    var hIdx = -1;
+    for (var i = 0; i < Math.min(10, raw.length); i++) {
+      var cells = raw[i].map(low);
+      if (cells.indexOf('sku with size') >= 0 && cells.some(function(x){ return x.indexOf('avail') >= 0; })) { hIdx = i; break; }
+    }
+    if (hIdx < 0) throw new Error('header row not found — expected "SKU with Size" and "Avail. Stock Units" columns');
+    var title = raw.slice(0, hIdx).map(function(r){ return r.filter(Boolean).join(' ').trim(); }).filter(Boolean).join(' · ');
+    var H = raw[hIdx].map(low);
+    function col(){ for (var a = 0; a < arguments.length; a++){ var j = H.indexOf(arguments[a]); if (j >= 0) return j; } return -1; }
+    function colPart(s){ for (var j = 0; j < H.length; j++) if (H[j].indexOf(s) >= 0) return j; return -1; }
+    var cK = col('sku with size'), cD = col('merchandise division', 'division'), cSt = col('style description', 'style'),
+        cC = col('color description', 'color'), cS = col('sku', 'style color'), cZ = col('size'), cU = colPart('avail');
+    var missing = [];
+    if (cK < 0) missing.push('SKU with Size'); if (cD < 0) missing.push('Merchandise Division');
+    if (cSt < 0) missing.push('Style Description'); if (cS < 0) missing.push('SKU'); if (cU < 0) missing.push('Avail. Stock Units');
+    if (missing.length) throw new Error('missing column(s): ' + missing.join(', '));
+    var rows = [], read = 0;
+    for (var r = hIdx + 1; r < raw.length; r++) {
+      var x = raw[r]; if (!x || !x[cK]) continue;
+      read++;
+      var u = Number(String(x[cU] == null ? '' : x[cU]).replace(/[,\s]/g, ''));
+      if (!(u > 0)) continue;
+      var k = String(x[cK]).trim(), sku = String(x[cS] || '').trim();
+      // Size from the SKU-with-size suffix (keeps "00", "10/12" exactly as coded);
+      // falls back to the Size column. Same rule the workbook's MID() fix applied.
+      var z = (sku && k.toUpperCase().indexOf(sku.toUpperCase() + '-') === 0) ? k.slice(sku.length + 1) : String(cZ >= 0 ? x[cZ] : '').trim();
+      rows.push([k, String(x[cD] || '').trim(), String(x[cSt] || '').trim(), cC >= 0 ? String(x[cC] || '').trim() : '', sku, z, u]);
+    }
+    return { rows: rows, meta: { fileName: fileName || '', title: title, rowsRead: read, rowsKept: rows.length, loadedAt: new Date().toISOString() } };
+  }
+
+  // ── Active eligible stores per SKU (from syrup configs.csv) ───
+  function mnConfigIndex(cfgRows, today){
+    var out = {}, sample = cfgRows && cfgRows[0];
+    if (!sample) return { bySku: out, note: 'no syrup configs loaded' };
+    var keys = Object.keys(sample);
+    function key(){ for (var a = 0; a < arguments.length; a++){ var t = arguments[a]; var k = keys.find(function(x){ return low(x) === t; }); if (k) return k; } return null; }
+    var kP = key('product', 'sku'), kV = key('value'), kF = key('validfrom', 'valid_from', 'valid from'),
+        kU = key('validuntil', 'valid_until', 'valid until'), kL = key('location', 'store code'), kK = key('configkey', 'config key');
+    var t0 = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    cfgRows.forEach(function(r){
+      var sku = up(kP ? r[kP] : ''); if (!sku) return;
+      if (kK && r[kK] && low(r[kK]) !== 'eligible_replenish') return;   // ignore minimum_units etc.
+      var e = out[sku] || (out[sku] = { active: {}, nActive: 0, expired: 0, upcoming: 0, off: 0, firstStart: null });
+      var val = up(kV ? r[kV] : 'TRUE');
+      if (val === 'FALSE') { e.off++; return; }
+      var f = kF && r[kF] ? parseXLDate(r[kF]) : null, u = kU && r[kU] ? parseXLDate(r[kU]) : null;
+      if (u && u.getTime() < t0) { e.expired++; return; }
+      if (f && f.getTime() > t0) { e.upcoming++; if (!e.firstStart || f < e.firstStart) e.firstStart = f; return; }
+      var loc = up(kL ? r[kL] : '') || ('#row' + (e.nActive + 1));
+      if (!e.active[loc]) { e.active[loc] = true; e.nActive++; }
+    });
+    return { bySku: out, note: '' };
+  }
+
+  // ── Size ordering for display ─────────────────────────────────
+  var LETTER = ['XXS','XS','XS/S','S','S/M','M','M/L','L','L/XL','XL','XXL','XXXL'];
+  function mnSizeKey(z){
+    var s = up(z), i = LETTER.indexOf(s);
+    if (s === 'OS') return [0, 0, 0];
+    if (i >= 0) return [2, i, 0];
+    var wl = s.match(/^(\d+)WX(\d+)L$/); if (wl) return [3, +wl[1], +wl[2]];
+    var sl = s.match(/^(\d+)\/(\d+)$/);  if (sl) return [1, +sl[1], +sl[2]];
+    if (/^\d+$/.test(s)) return [1, parseFloat(s), s.length];   // "0" before "00"
+    return [4, 0, s];
+  }
+  function mnSizeCmp(a, b){
+    var x = mnSizeKey(a), y = mnSizeKey(b);
+    for (var i = 0; i < 3; i++) { if (x[i] < y[i]) return -1; if (x[i] > y[i]) return 1; }
+    return 0;
+  }
+
+  // ── Core calculation ──────────────────────────────────────────
+  // P = parsed bundle (window._lastParsed). Returns every SKU-size with the
+  // full working (units, stores, index, BestMin, caps, MIN, reason) so the tab
+  // can show WHY a row is in or out, plus the upload rows.
+  function mnCompute(P, opts){
+    opts = opts || {};
+    var today = opts.today || new Date();
+    var prm = { minStores: MN_PARAMS.minStores, maxAlloc: MN_PARAMS.maxAlloc };
+    if (opts.params) { if (opts.params.minStores != null) prm.minStores = opts.params.minStores; if (opts.params.maxAlloc != null) prm.maxAlloc = opts.params.maxAlloc; }
+    var caps = opts.caps || mnBuildCaps();
+    var feed = (P && P.minsRows) || [];
+    var cfg = mnConfigIndex((P && P.syrupCfgRows) || [], today);
+    var idxFloor = 1 / prm.maxAlloc;
+    var items = [], bySku = {};
+
+    feed.forEach(function(r){
+      var it = { key: r[0], div: r[1], style: r[2], color: r[3], sku: r[4], size: r[5], units: r[6],
+                 stores: 0, index: null, best: null, progCap: null, divCap: null, capSrc: '', min: 0, pct: null,
+                 sizeCt: 0, out: false, reason: '' };
+      var skuU = up(it.sku), c = cfg.bySku[skuU];
+      it.stores = c ? c.nActive : 0;
+      if (caps.inelig[skuU]) it.reason = 'Ineligible SKU';
+      else if (!c) it.reason = 'No configs';
+      else if (!it.stores) it.reason = c.upcoming ? 'Configs not started (IA)' : c.expired ? 'Configs expired' : 'Configs off';
+      else if (it.stores < prm.minStores) it.reason = 'Under ' + prm.minStores + ' stores';
+      else {
+        it.index = it.units / it.stores;
+        if (!(it.index > idxFloor + 1e-12)) it.reason = 'Low DC depth';
+        else {
+          it.best = Math.max(0, Math.floor(it.units * prm.maxAlloc / it.stores + 1e-9));
+          var pk = low(it.div) + '|' + low(it.style) + '|' + low(it.size), dk = low(it.div) + '|' + low(it.size);
+          if (Object.prototype.hasOwnProperty.call(caps.program, pk)) it.progCap = caps.program[pk];
+          it.divCap = Object.prototype.hasOwnProperty.call(caps.divSize, dk) ? caps.divSize[dk] : 0;
+          if (it.progCap != null) { it.min = Math.min(it.progCap, it.best); it.capSrc = 'program'; }
+          else { it.min = Math.min(it.best, it.divCap); it.capSrc = Object.prototype.hasOwnProperty.call(caps.divSize, dk) ? 'div' : 'none'; }
+          it.pct = it.units ? it.min * it.stores / it.units : null;
+          if (!it.min) it.reason = it.capSrc === 'none' ? 'Size not capped' : 'Cap is 0';
+        }
+      }
+      items.push(it);
+      (bySku[skuU] || (bySku[skuU] = [])).push(it);
+    });
+
+    // Size-run rule: count sizes of the SKU that earned a min.
+    Object.keys(bySku).forEach(function(s){
+      var list = bySku[s], ct = list.filter(function(i){ return i.min > 0; }).length;
+      list.forEach(function(i){
+        i.sizeCt = ct;
+        if (i.min > 0) {
+          var z = up(i.size);
+          if (z === 'OS' || (z === 'L/XL' && low(i.div) === 'non apparel') || ct >= 3) i.out = true;
+          else i.reason = 'Broken run (' + ct + ' size' + (ct === 1 ? '' : 's') + ')';
+        }
+      });
+    });
+
+    var y = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+    var vFrom = (y.getMonth() + 1) + '/' + y.getDate() + '/' + y.getFullYear();
+    var upload = items.filter(function(i){ return i.out; }).map(function(i){
+      return { location: '', size: i.size, product: i.sku, sku: '', configKey: 'minimum_units', value: i.min, validFrom: vFrom, validUntil: '' };
+    });
+    return { items: items, bySku: bySku, upload: upload, params: prm, validFrom: vFrom,
+             cfgNote: cfg.note, cfgSkus: Object.keys(cfg.bySku).length, caps: caps,
+             feedMeta: (P && P.minsMeta) || null, hasFeed: feed.length > 0 };
+  }
+
+  window.MN_PARAMS = MN_PARAMS;
+  window.MN_SEED_CAPS = MN_SEED_CAPS;
+  window.mnBuildCaps = mnBuildCaps;
+  window.mnParseFeedText = mnParseFeedText;
+  window.mnConfigIndex = mnConfigIndex;
+  window.mnSizeCmp = mnSizeCmp;
+  window.mnCompute = mnCompute;
+})();
+
+// ── Mins tab UI  [p7z42] ────────────────────────────────────────
+(function(){
+  'use strict';
+  var MN = { view: 'out', div: '', q: '', reason: '', open: {}, res: null, resKey: null };
+  var NOT_REPLEN = { 'No configs': 1, 'Configs not started (IA)': 1, 'Configs expired': 1, 'Configs off': 1 };
+  var MAX_ROWS = 600;
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]; }); }
+  function fmt(n){ return n == null ? '' : Number(n).toLocaleString(); }
+  function toast(m){ try { showToast(m, 2800); } catch(e){ console.log('[Mins] ' + m); } }
+  function reasonGroup(r){ return /^Broken run/.test(r) ? 'Broken run' : /^Under \d+ stores/.test(r) ? 'Under min stores' : r; }
+
+  function compute(force){
+    var P = window._lastParsed || null;
+    if (!force && MN.res && MN.resKey === P) return MN.res;
+    MN.res = (P && typeof window.mnCompute === 'function') ? window.mnCompute(P) : null;
+    MN.resKey = P;
+    if (MN.res) console.log('[Mins] ' + MN.res.upload.length + ' upload rows from ' + MN.res.items.length + ' SKU-sizes · validFrom ' + MN.res.validFrom);
+    return MN.res;
+  }
+
+  function skuGroups(R){
+    var out = [];
+    Object.keys(R.bySku).forEach(function(k){
+      var list = R.bySku[k].slice().sort(function(a, b){ return window.mnSizeCmp(a.size, b.size); });
+      var f = list[0], nOut = 0, units = 0, inReplen = false, ineligible = false;
+      list.forEach(function(i){ if (i.out) nOut++; units += i.units; if (!NOT_REPLEN[i.reason]) inReplen = true; if (i.reason === 'Ineligible SKU') ineligible = true; });
+      out.push({ sku: f.sku, div: f.div, style: f.style, color: f.color, stores: f.stores, units: units, nOut: nOut, list: list, inReplen: inReplen, ineligible: ineligible });
+    });
+    return out;
+  }
+
+  function visible(R){
+    var q = MN.q.trim().toLowerCase();
+    return skuGroups(R).filter(function(g){
+      if (MN.div && g.div !== MN.div) return false;
+      if (q && (g.sku + ' ' + g.style + ' ' + g.color).toLowerCase().indexOf(q) < 0) return false;
+      if (MN.reason) return g.list.some(function(i){ return !i.out && reasonGroup(i.reason) === MN.reason; });
+      if (MN.view === 'out') return g.nOut > 0;
+      if (MN.view === 'excl') return g.inReplen && g.list.some(function(i){ return !i.out && !NOT_REPLEN[i.reason]; });
+      return g.inReplen;
+    }).sort(function(a, b){ return b.nOut - a.nOut || b.units - a.units; });
+  }
+
+  function chip(i){
+    if (i.out) return '<span class="mn-chip on" title="' + esc(i.size + ': min ' + i.min + ' · ' + i.stores + ' stores · ' + Math.round(i.pct * 100) + '% of DC committed') + '">' + esc(i.size) + ' <b>' + i.min + '</b></span>';
+    if (NOT_REPLEN[i.reason]) return '';
+    return '<span class="mn-chip off" title="' + esc(i.size + ': ' + i.reason) + '">' + esc(i.size) + '</span>';
+  }
+
+  function detail(g){
+    var h = '<tr class="mn-detail"><td></td><td colspan="8"><table class="mn-sub"><thead><tr>'
+      + '<th class="l">Size</th><th>DC units</th><th>Stores</th><th>Index</th><th>BestMin</th><th class="l">Cap</th><th>Min</th><th>% DC committed</th><th class="l">Result</th></tr></thead><tbody>';
+    g.list.forEach(function(i){
+      var cap = i.capSrc === 'program' ? 'Program ' + i.progCap : i.capSrc === 'div' ? 'Div×Size ' + i.divCap : i.capSrc === 'none' ? 'none' : '';
+      h += '<tr class="' + (i.out ? 'on' : '') + '"><td class="l">' + esc(i.size) + '</td><td>' + fmt(i.units) + '</td><td>' + (i.stores || '') + '</td>'
+        + '<td>' + (i.index != null ? i.index.toFixed(1) : '') + '</td><td>' + (i.best != null ? i.best : '') + '</td><td class="l">' + esc(cap) + '</td>'
+        + '<td>' + (i.min || '') + '</td><td>' + (i.pct != null && i.min ? Math.round(i.pct * 100) + '%' : '') + '</td>'
+        + '<td class="l">' + (i.out ? '<span class="mn-ok">✓ in upload</span>' : esc(i.reason)) + '</td></tr>';
+    });
+    return h + '</tbody></table></td></tr>';
+  }
+
+  function renderStats(R){
+    var cnt = {};
+    R.items.forEach(function(i){ var k = i.out ? 'OUT' : reasonGroup(i.reason); cnt[k] = (cnt[k] || 0) + 1; });
+    var skus = 0; Object.keys(R.bySku).forEach(function(k){ if (R.bySku[k].some(function(i){ return i.out; })) skus++; });
+    function tile(val, lbl, reason, tip, color){
+      var on = reason && MN.reason === reason;
+      return '<div class="nf-stat' + (reason ? ' mn-tile' : '') + (on ? ' on' : '') + '"' + (reason ? ' onclick="mnTile(\'' + esc(reason) + '\')"' : '') + ' title="' + esc(tip) + '">'
+        + '<div class="nf-stat-val"' + (color ? ' style="color:' + color + '"' : '') + '>' + fmt(val) + '</div><div class="nf-stat-lbl">' + esc(lbl) + '</div></div>';
+    }
+    document.getElementById('mnStats').innerHTML = [
+      tile(R.upload.length, 'Upload rows', null, 'SKU-size rows in the minimum_units upload', 'var(--green)'),
+      tile(skus, 'SKUs with mins', null, 'SKUs with at least one size in the upload'),
+      tile(cnt['Broken run'] || 0, 'Broken run', 'Broken run', 'Earned a min, but fewer than 3 sizes of the SKU did (OS and Non Apparel L/XL exempt). Click to list.'),
+      tile(cnt['Low DC depth'] || 0, 'Low DC depth', 'Low DC depth', 'DC units ÷ stores ≤ ' + (1 / R.params.maxAlloc).toFixed(2) + ' — not enough to fund even a min of 1. Click to list.'),
+      tile(cnt['Under min stores'] || 0, 'Under ' + R.params.minStores + ' stores', 'Under min stores', 'Fewer than ' + R.params.minStores + ' active eligible stores. Click to list.'),
+      tile(cnt['Size not capped'] || 0, 'Size not capped', 'Size not capped', 'No Div×Size cap for this size — excluded by design. Click to list.'),
+      tile(cnt['Ineligible SKU'] || 0, 'Ineligible', 'Ineligible SKU', 'SKU is on the Ineligible list. Click to list.')
+    ].join('');
+  }
+
+  function renderCaps(R){
+    var s = R.caps.src;
+    function tbl(title, head, rows){
+      return '<div class="mn-capbox"><div class="mn-captitle">' + esc(title) + ' <span>(' + rows.length + ')</span></div><table class="nf-table"><thead><tr>'
+        + head.map(function(x, j){ return '<th' + (j < head.length - 1 ? ' class="l"' : '') + '>' + esc(x) + '</th>'; }).join('') + '</tr></thead><tbody>'
+        + rows.map(function(r){ return '<tr>' + r.map(function(v, j){ return '<td' + (j < r.length - 1 ? ' class="l"' : '') + '>' + esc(v) + '</td>'; }).join('') + '</tr>'; }).join('')
+        + '</tbody></table></div>';
+    }
+    var divRows = s.divSize.slice().sort(function(a, b){ return String(a[0]).localeCompare(b[0]) || window.mnSizeCmp(a[1], b[1]); });
+    return '<div class="mn-capnote">Read-only in this build. Editing (shared across users, saved to the cloud) arrives in Build 2. '
+      + 'A size with no Div×Size row gets no min — that is deliberate. Program caps replace the Div×Size cap, so they can raise it. '
+      + 'Parameters: min ' + R.params.minStores + ' stores · max ' + Math.round(R.params.maxAlloc * 100) + '% of DC stock committed.</div>'
+      + '<div class="mn-caps">'
+      + tbl('Div × Size caps', ['Division', 'Size', 'Max min'], divRows)
+      + tbl('Program caps', ['Division', 'Style', 'Size', 'Max min'], s.program)
+      + tbl('Ineligible SKUs', ['SKU', ''], s.inelig.map(function(x){ return [x, '']; }))
+      + '</div>';
+  }
+
+  function render(){
+    var R = compute(false);
+    var sub = document.getElementById('mnSubtitle'), body = document.getElementById('mnBody'), empty = document.getElementById('mnEmpty'),
+        caps = document.getElementById('mnCaps'), wrap = document.getElementById('mnTableWrap');
+    if (!sub) return;
+    if (!R || !R.hasFeed) {
+      sub.textContent = '';
+      document.getElementById('mnStats').innerHTML = '';
+      wrap.style.display = ''; caps.style.display = 'none';
+      body.innerHTML = '';
+      empty.style.display = '';
+      empty.innerHTML = window._lastParsed
+        ? 'No mins feed loaded. Save the 42 report <b>Mins Pull 2.0 (COPY)</b> (Location Type = Online) as <b>ISR Mins Pull.csv</b> in the ISR Data Pulls folder and reload the folder.'
+        : 'Load data first.';
+      return;
+    }
+    var m = R.feedMeta || {};
+    sub.textContent = (m.fileName || 'ISR Mins Pull.csv') + (m.title ? ' · ' + m.title : '') + ' · ' + fmt(R.items.length) + ' SKU-sizes with DC stock · '
+      + fmt(R.cfgSkus) + ' SKUs in syrup configs · validFrom ' + R.validFrom;
+    renderStats(R);
+    ['out', 'excl', 'all', 'caps'].forEach(function(v){ var b = document.getElementById('mnView_' + v); if (b) b.classList.toggle('active', MN.view === v && !MN.reason); });
+    if (MN.view === 'caps' && !MN.reason) {
+      wrap.style.display = 'none'; caps.style.display = ''; caps.innerHTML = renderCaps(R); return;
+    }
+    wrap.style.display = ''; caps.style.display = 'none';
+    var sel = document.getElementById('mnDiv');
+    if (sel && !sel.dataset.filled) {
+      var divs = {}; R.items.forEach(function(i){ if (i.div) divs[i.div] = 1; });
+      sel.innerHTML = '<option value="">All divisions</option>' + Object.keys(divs).sort().map(function(d){ return '<option>' + esc(d) + '</option>'; }).join('');
+      sel.dataset.filled = '1'; sel.value = MN.div;
+    }
+    var rows = visible(R), shown = rows.slice(0, MAX_ROWS), h = '';
+    shown.forEach(function(g){
+      var open = !!MN.open[g.sku];
+      h += '<tr class="mn-row' + (open ? ' open' : '') + '" onclick="mnToggle(\'' + esc(g.sku) + '\')">'
+        + '<td class="l mn-caret">' + (open ? '▾' : '▸') + '</td><td class="l"><span class="nf-sku">' + esc(g.sku) + '</span></td>'
+        + '<td class="l">' + esc(g.div) + '</td><td class="l">' + esc(g.style) + '</td><td class="l">' + esc(g.color) + '</td>'
+        + '<td>' + (g.ineligible ? '<span class="mn-muted">inelig.</span>' : (g.stores || '')) + '</td><td>' + fmt(g.units) + '</td>'
+        + '<td class="l mn-chips">' + g.list.map(chip).join('') + '</td><td>' + (g.nOut || '') + '</td></tr>';
+      if (open) h += detail(g);
+    });
+    body.innerHTML = h;
+    empty.style.display = rows.length ? 'none' : '';
+    empty.textContent = rows.length ? '' : 'Nothing matches these filters.';
+    document.getElementById('mnCount').textContent = rows.length > MAX_ROWS
+      ? 'Showing ' + MAX_ROWS + ' of ' + fmt(rows.length) + ' SKUs — narrow with division or search'
+      : fmt(rows.length) + ' SKU' + (rows.length === 1 ? '' : 's') + (MN.reason ? ' · filtered to: ' + MN.reason + ' (click the tile again to clear)' : '');
+  }
+
+  function uploadText(sep, header){
+    var R = compute(false); if (!R) return '';
+    var cols = ['location','size','product','sku','configKey','value','validFrom','validUntil'];
+    var lines = R.upload.map(function(r){ return cols.map(function(c){
+      var v = String(r[c] == null ? '' : r[c]);
+      return sep === ',' && /[",]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+    }).join(sep); });
+    if (header) lines.unshift(cols.join(sep));
+    return lines.join('\n');
+  }
+
+  window.mnRefresh = function(){ compute(true); render(); };
+  window.mnSetView = function(v){ MN.view = v; MN.reason = ''; render(); };
+  window.mnSetDiv = function(v){ MN.div = v; render(); };
+  window.mnSetQuery = function(v){ MN.q = v || ''; render(); };
+  window.mnTile = function(r){ MN.reason = MN.reason === r ? '' : r; if (MN.view === 'caps') MN.view = 'excl'; render(); };
+  window.mnToggle = function(sku){ MN.open[sku] = !MN.open[sku]; render(); };
+  window.mnCopy = function(){
+    var R = compute(false); if (!R || !R.upload.length) { toast('Nothing to copy'); return; }
+    _copyToClipboard(uploadText('\t', false), 'Copied ' + R.upload.length + ' mins rows (no header)');
+  };
+  window.mnDownload = function(){
+    var R = compute(false); if (!R || !R.upload.length) { toast('Nothing to export'); return; }
+    var blob = new Blob([uploadText(',', true)], { type: 'text/csv' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'Mins_minimum_units_' + new Date().toISOString().slice(0, 10) + '.csv';
+    a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 60000);
+    toast('Exported ' + R.upload.length + ' rows');
+  };
+  window.mnUploadRows = function(){ var R = compute(false); return R ? R.upload : []; };   // console / test hook
 })();
 </script>
 
