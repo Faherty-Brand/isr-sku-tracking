@@ -1183,7 +1183,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39) + cloud-paged-load (p7z40) + flowcal-season-scoped (p7z41) + mins-gen (p7z42) + mins-caps-shared (p7z43b)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39) + cloud-paged-load (p7z40) + flowcal-season-scoped (p7z41) + mins-gen (p7z42) + mins-caps-shared (p7z43b) + mins-filters (p7z44)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1844,10 +1844,6 @@ setTimeout(function(){
         </div>
       </div>
       <div class="nf-ctrl">
-        <span class="nf-ctrl-lbl">Division</span>
-        <select class="eol-fsel" id="mnDiv" onchange="mnSetDiv(this.value)"><option value="">All divisions</option></select>
-      </div>
-      <div class="nf-ctrl">
         <span class="nf-ctrl-lbl">Search</span>
         <input class="nf-ftext" id="mnSearch" type="text" placeholder="SKU / style / color…" style="max-width:170px" oninput="mnSetQuery(this.value)">
       </div>
@@ -1858,12 +1854,21 @@ setTimeout(function(){
   </div>
 
   <div class="nf-stats" id="mnStats"></div>
+  <div class="mn-filters" id="mnFilters">
+    <span class="nf-ctrl-lbl">Filter</span>
+    <select class="eol-fsel" id="mnDiv" onchange="mnSetDiv(this.value)" title="Division"><option value="">All divisions</option></select>
+    <select class="eol-fsel" id="mnCat" onchange="mnSetFilter('cat',this.value)" title="Category"><option value="">All categories</option></select>
+    <select class="eol-fsel" id="mnStyle" onchange="mnSetFilter('style',this.value)" title="Style"><option value="">All styles</option></select>
+    <select class="eol-fsel" id="mnSset" onchange="mnSetFilter('sset',this.value)" title="Size set — the PST code where ISR has one, otherwise the size run from the Mins Pull"><option value="">All size sets</option></select>
+    <button class="nf-action-btn" id="mnClear" onclick="mnClearFilters()" style="display:none">✕ Clear filters</button>
+  </div>
   <div class="mn-count" id="mnCount"></div>
 
   <div class="nf-tablewrap" id="mnTableWrap">
     <table class="nf-table" id="mnTable">
       <thead><tr>
-        <th class="l" style="width:18px"></th><th class="l">SKU</th><th class="l">Division</th><th class="l">Style</th><th class="l">Color</th>
+        <th class="l" style="width:18px"></th><th class="l">SKU</th><th class="l">Division</th><th class="l">Category</th><th class="l">Style</th><th class="l">Color</th>
+        <th class="l" title="PST size set where ISR has one; italic = size run from the Mins Pull">Size set</th>
         <th title="Active eligible stores today (syrup configs)">Stores</th><th title="DC available units across the sizes shown">DC units</th>
         <th class="l" title="Green = in upload with its min · grey = left out (hover for why)">Sizes</th><th title="Rows this SKU adds to the upload">Rows</th>
       </tr></thead>
@@ -22199,6 +22204,13 @@ tr.mn-st-new td{background:var(--green-bg)}
 tr.mn-st-del td{text-decoration:line-through;opacity:.55}
 .mn-boxnote{font-size:11px;color:var(--muted);margin:-2px 0 6px;max-width:420px}
 .mn-caps{display:flex;gap:18px;align-items:flex-start;padding:12px 24px 24px;flex-wrap:wrap}
+/* ── Filters, new columns, wrapping size chips [p7z44] ── */
+.mn-filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:0 24px 10px}
+.mn-filters .eol-fsel{max-width:230px}
+.nf-table td.mn-chips{white-space:normal;min-width:280px}
+.mn-chipwrap{display:flex;flex-wrap:wrap;row-gap:3px;max-width:640px}
+.mn-chip{white-space:nowrap}
+.mn-run{font-family:var(--mono);font-size:10.5px;color:var(--muted);font-style:italic}
 </style>
 <script>
 // ═══════════════════════════════════════════════════════════════
@@ -22376,24 +22388,32 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
     function col(){ for (var a = 0; a < arguments.length; a++){ var j = H.indexOf(arguments[a]); if (j >= 0) return j; } return -1; }
     function colPart(s){ for (var j = 0; j < H.length; j++) if (H[j].indexOf(s) >= 0) return j; return -1; }
     var cK = col('sku with size'), cD = col('merchandise division', 'division'), cSt = col('style description', 'style'),
-        cC = col('color description', 'color'), cS = col('sku', 'style color'), cZ = col('size'), cU = colPart('avail');
+        cC = col('color description', 'color'), cS = col('sku', 'style color'), cZ = col('size'), cU = colPart('avail'),
+        cCat = col('category');   // [p7z44] optional — add "Category" to the 42 report for full coverage
     var missing = [];
     if (cK < 0) missing.push('SKU with Size'); if (cD < 0) missing.push('Merchandise Division');
     if (cSt < 0) missing.push('Style Description'); if (cS < 0) missing.push('SKU'); if (cU < 0) missing.push('Avail. Stock Units');
     if (missing.length) throw new Error('missing column(s): ' + missing.join(', '));
-    var rows = [], read = 0;
+    var rows = [], read = 0, skuSizes = {};
     for (var r = hIdx + 1; r < raw.length; r++) {
       var x = raw[r]; if (!x || !x[cK]) continue;
       read++;
-      var u = Number(String(x[cU] == null ? '' : x[cU]).replace(/[,\s]/g, ''));
-      if (!(u > 0)) continue;
       var k = String(x[cK]).trim(), sku = String(x[cS] || '').trim();
       // Size from the SKU-with-size suffix (keeps "00", "10/12" exactly as coded);
       // falls back to the Size column. Same rule the workbook's MID() fix applied.
       var z = (sku && k.toUpperCase().indexOf(sku.toUpperCase() + '-') === 0) ? k.slice(sku.length + 1) : String(cZ >= 0 ? x[cZ] : '').trim();
-      rows.push([k, String(x[cD] || '').trim(), String(x[cSt] || '').trim(), cC >= 0 ? String(x[cC] || '').trim() : '', sku, z, u]);
+      // [p7z44] Every size the SKU has in the pull, zero-stock ones included —
+      // the size run shown when ISR has no PST size set for the SKU.
+      var su = sku.toUpperCase(); if (su) { var ls = skuSizes[su] || (skuSizes[su] = []); if (ls.indexOf(z) < 0) ls.push(z); }
+      var u = Number(String(x[cU] == null ? '' : x[cU]).replace(/[,\s]/g, ''));
+      if (!(u > 0)) continue;
+      rows.push([k, String(x[cD] || '').trim(), String(x[cSt] || '').trim(), cC >= 0 ? String(x[cC] || '').trim() : '', sku, z, u, cCat >= 0 ? String(x[cCat] || '').trim() : '']);
     }
-    return { rows: rows, meta: { fileName: fileName || '', title: title, rowsRead: read, rowsKept: rows.length, loadedAt: new Date().toISOString() } };
+    // Sizes are only kept for SKUs that have stock somewhere (the only ones the tab shows).
+    var inFeed = {}; rows.forEach(function(r){ inFeed[r[4].toUpperCase()] = 1; });
+    var sizesOut = {}; Object.keys(skuSizes).forEach(function(s){ if (inFeed[s]) sizesOut[s] = skuSizes[s].join('|'); });
+    return { rows: rows, meta: { fileName: fileName || '', title: title, rowsRead: read, rowsKept: rows.length, loadedAt: new Date().toISOString(),
+             hasCategory: cCat >= 0, skuSizes: sizesOut } };
   }
 
   // ── Active eligible stores per SKU (from syrup configs.csv) ───
@@ -22453,7 +22473,7 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
     var items = [], bySku = {};
 
     feed.forEach(function(r){
-      var it = { key: r[0], div: r[1], style: r[2], color: r[3], sku: r[4], size: r[5], units: r[6],
+      var it = { key: r[0], div: r[1], style: r[2], color: r[3], sku: r[4], size: r[5], units: r[6], cat: r[7] || '',
                  stores: 0, index: null, best: null, progCap: null, divCap: null, capSrc: '', min: 0, pct: null,
                  sizeCt: 0, out: false, reason: '' };
       var skuU = up(it.sku), c = cfg.bySku[skuU];
@@ -22861,7 +22881,7 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
 // ── Mins tab UI  [p7z42; shared caps p7z43] ─────────────────────
 (function(){
   'use strict';
-  var MN = { view: 'out', div: '', q: '', reason: '', open: {}, res: null, resKey: null };
+  var MN = { view: 'out', div: '', cat: '', style: '', sset: '', q: '', reason: '', open: {}, res: null, resKey: null };
   var NOT_REPLEN = { 'No configs': 1, 'Configs not started (IA)': 1, 'Configs expired': 1, 'Configs off': 1 };
   var MAX_ROWS = 600;
 
@@ -22884,26 +22904,112 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
     return MN.res;
   }
 
+  // ── [p7z44] SKU attributes: category and size set ──────────────
+  // Category: the Mins Pull's own Category column when present, else the PST
+  //   category ISR already holds for the SKU, else blank ("(none)").
+  // Size set: the PST size-set code ISR holds (M3, FM6, BOYS-E…) when there is
+  //   one; otherwise the size run read from the Mins Pull (e.g. "XS–XXL"), flagged
+  //   as a run. Runs are not mapped to codes on purpose: the same run belongs to
+  //   different codes by line (XS–XXL is M3, FM3 or FA), so a guess would mislabel.
+  var MON = { jan:1, feb:2, mar:3, apr:4, may:5, jun:6, jul:7, aug:8, sep:9, oct:10, nov:11, dec:12 };
+  function fixCode(c){   // Excel turns the size set "9-13" into "13-Sep" in the PST; undo it
+    var m = String(c || '').trim().match(/^(\d{1,2})-([A-Za-z]{3})$/);
+    return m && MON[m[2].toLowerCase()] ? MON[m[2].toLowerCase()] + '-' + m[1] : String(c || '').trim();
+  }
+  function runLabel(list){
+    var s = list.slice().sort(window.mnSizeCmp);
+    if (!s.length) return '';
+    if (s.length === 1) return s[0];
+    var wl = s.map(function(z){ return String(z).toUpperCase().match(/^(\d+)WX(\d+)L$/); });
+    if (wl.every(Boolean)) {
+      var w = {}, l = {}; wl.forEach(function(m){ w[+m[1]] = 1; l[+m[2]] = 1; });
+      var W = Object.keys(w).map(Number).sort(function(a, b){ return a - b; }), L = Object.keys(l).map(Number).sort(function(a, b){ return a - b; });
+      return W[0] + '–' + W[W.length - 1] + ' W × ' + L.join('/') + ' L';
+    }
+    return s[0] + '–' + s[s.length - 1];
+  }
+  var _isrIdx = null, _isrIdxSrc = null;
+  function isrIndex(){
+    var rows = (typeof ALL_ROWS !== 'undefined' && ALL_ROWS) ? ALL_ROWS : [];
+    if (_isrIdx && _isrIdxSrc === rows) return _isrIdx;
+    var m = {};
+    rows.forEach(function(r){
+      if (!r || !r.sku) return;
+      var code = r.cs_size_scale || r.ns_size_scale || r.ps_size_scale || '';
+      if (!code && r.seasons) { for (var k in r.seasons) { if (r.seasons[k] && r.seasons[k].size_scale) { code = r.seasons[k].size_scale; break; } } }
+      m[String(r.sku).trim().toUpperCase()] = { cat: r.category || '', code: fixCode(code) };
+    });
+    _isrIdx = m; _isrIdxSrc = rows; return m;
+  }
+  function attrs(g, meta){
+    var isr = isrIndex()[g.sku.toUpperCase()] || {};
+    var cat = g.list[0].cat || isr.cat || '';
+    var code = isr.code || '', run = '';
+    if (!code) { var sz = meta && meta.skuSizes && meta.skuSizes[g.sku.toUpperCase()]; run = runLabel(sz ? sz.split('|') : g.list.map(function(i){ return i.size; })); }
+    g.cat = cat; g.sset = code || run; g.ssetRun = !code;
+    g.ssetKey = code ? 'code:' + code : 'run:' + run;
+  }
+
   function skuGroups(R){
     var out = [];
     Object.keys(R.bySku).forEach(function(k){
       var list = R.bySku[k].slice().sort(function(a, b){ return window.mnSizeCmp(a.size, b.size); });
       var f = list[0], nOut = 0, units = 0, inReplen = false, ineligible = false;
       list.forEach(function(i){ if (i.out) nOut++; units += i.units; if (!NOT_REPLEN[i.reason]) inReplen = true; if (i.reason === 'Ineligible SKU') ineligible = true; });
-      out.push({ sku: f.sku, div: f.div, style: f.style, color: f.color, stores: f.stores, units: units, nOut: nOut, list: list, inReplen: inReplen, ineligible: ineligible });
+      var g = { sku: f.sku, div: f.div, style: f.style, color: f.color, stores: f.stores, units: units, nOut: nOut, list: list, inReplen: inReplen, ineligible: ineligible };
+      attrs(g, R.feedMeta); out.push(g);
     });
     return out;
   }
 
-  function visible(R){
+  function groupsOf(R){ if (R._groups) return R._groups; R._groups = skuGroups(R); return R._groups; }
+  // Which SKUs the current view (In upload / Left out / All / a reason tile) shows, before the dropdown filters.
+  function inView(g){
+    if (MN.reason) return g.list.some(function(i){ return !i.out && reasonGroup(i.reason) === MN.reason; });
+    if (MN.view === 'out') return g.nOut > 0;
+    if (MN.view === 'excl') return g.inReplen && g.list.some(function(i){ return !i.out && !NOT_REPLEN[i.reason]; });
+    return g.inReplen;
+  }
+  function passFilters(g, skip){
+    if (skip !== 'div' && MN.div && g.div !== MN.div) return false;
+    if (skip !== 'cat' && MN.cat && (g.cat || '(none)') !== MN.cat) return false;
+    if (skip !== 'style' && MN.style && g.style !== MN.style) return false;
+    if (skip !== 'sset' && MN.sset && g.ssetKey !== MN.sset) return false;
     var q = MN.q.trim().toLowerCase();
-    return skuGroups(R).filter(function(g){
-      if (MN.div && g.div !== MN.div) return false;
-      if (q && (g.sku + ' ' + g.style + ' ' + g.color).toLowerCase().indexOf(q) < 0) return false;
-      if (MN.reason) return g.list.some(function(i){ return !i.out && reasonGroup(i.reason) === MN.reason; });
-      if (MN.view === 'out') return g.nOut > 0;
-      if (MN.view === 'excl') return g.inReplen && g.list.some(function(i){ return !i.out && !NOT_REPLEN[i.reason]; });
-      return g.inReplen;
+    if (q && (g.sku + ' ' + g.style + ' ' + g.color).toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  }
+  // Each dropdown lists only values that exist given the OTHER filters, with SKU counts.
+  function fillFilters(R){
+    var base = groupsOf(R).filter(inView);
+    function opts(field, skip, label){
+      var c = {};
+      base.forEach(function(g){ if (!passFilters(g, skip)) return; var v = field(g); if (v[0] == null) return; var k = v[0]; if (!c[k]) c[k] = { n: 0, lbl: v[1], grp: v[2] }; c[k].n++; });
+      return c;
+    }
+    function setSel(id, cur, map, allLbl, grouped){
+      var el = document.getElementById(id); if (!el) return;
+      var keys = Object.keys(map).sort(function(a, b){ return String(map[a].lbl).localeCompare(String(map[b].lbl), undefined, { numeric: true }); });
+      var h = '<option value="">' + allLbl + '</option>';
+      if (cur && !map[cur]) h += '<option value="' + esc(cur) + '">' + esc(cur.replace(/^(code|run):/, '')) + ' (0)</option>';
+      if (grouped) {
+        ['code', 'run'].forEach(function(gk){
+          var ks = keys.filter(function(k){ return map[k].grp === gk; }); if (!ks.length) return;
+          h += '<optgroup label="' + (gk === 'code' ? 'Size sets (PST)' : 'Size runs — no PST size set') + '">' + ks.map(function(k){ return '<option value="' + esc(k) + '">' + esc(map[k].lbl) + ' (' + map[k].n + ')</option>'; }).join('') + '</optgroup>';
+        });
+      } else h += keys.map(function(k){ return '<option value="' + esc(k) + '">' + esc(map[k].lbl) + ' (' + map[k].n + ')</option>'; }).join('');
+      el.innerHTML = h; el.value = cur;
+    }
+    setSel('mnDiv', MN.div, opts(function(g){ return [g.div, g.div]; }, 'div'), 'All divisions');
+    setSel('mnCat', MN.cat, opts(function(g){ var c = g.cat || '(none)'; return [c, c]; }, 'cat'), 'All categories');
+    setSel('mnStyle', MN.style, opts(function(g){ return [g.style, g.style]; }, 'style'), 'All styles');
+    setSel('mnSset', MN.sset, opts(function(g){ return [g.ssetKey, g.sset, g.ssetRun ? 'run' : 'code']; }, 'sset'), 'All size sets', true);
+    var clr = document.getElementById('mnClear'); if (clr) clr.style.display = (MN.div || MN.cat || MN.style || MN.sset || MN.q) ? '' : 'none';
+  }
+
+  function visible(R){
+    return groupsOf(R).filter(function(g){
+      return passFilters(g) && inView(g);
     }).sort(function(a, b){ return b.nOut - a.nOut || b.units - a.units; });
   }
 
@@ -22914,7 +23020,7 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
   }
 
   function detail(g){
-    var h = '<tr class="mn-detail"><td></td><td colspan="8"><table class="mn-sub"><thead><tr>'
+    var h = '<tr class="mn-detail"><td></td><td colspan="10"><table class="mn-sub"><thead><tr>'
       + '<th class="l">Size</th><th>DC units</th><th>Stores</th><th>Index</th><th>BestMin</th><th class="l">Cap</th><th>Min</th><th>% DC committed</th><th class="l">Result</th></tr></thead><tbody>';
     g.list.forEach(function(i){
       var cap = i.capSrc === 'program' ? 'Program ' + i.progCap : i.capSrc === 'div' ? 'Div×Size ' + i.divCap : i.capSrc === 'none' ? 'none' : '';
@@ -22979,20 +23085,17 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
       wrap.style.display = 'none'; caps.style.display = ''; caps.innerHTML = renderCaps(R); return;
     }
     wrap.style.display = ''; caps.style.display = 'none';
-    var sel = document.getElementById('mnDiv');
-    if (sel && !sel.dataset.filled) {
-      var divs = {}; R.items.forEach(function(i){ if (i.div) divs[i.div] = 1; });
-      sel.innerHTML = '<option value="">All divisions</option>' + Object.keys(divs).sort().map(function(d){ return '<option>' + esc(d) + '</option>'; }).join('');
-      sel.dataset.filled = '1'; sel.value = MN.div;
-    }
+    fillFilters(R);
     var rows = visible(R), shown = rows.slice(0, MAX_ROWS), h = '';
     shown.forEach(function(g){
       var open = !!MN.open[g.sku];
       h += '<tr class="mn-row' + (open ? ' open' : '') + '" onclick="mnToggle(\'' + esc(g.sku) + '\')">'
         + '<td class="l mn-caret">' + (open ? '▾' : '▸') + '</td><td class="l"><span class="nf-sku">' + esc(g.sku) + '</span></td>'
-        + '<td class="l">' + esc(g.div) + '</td><td class="l">' + esc(g.style) + '</td><td class="l">' + esc(g.color) + '</td>'
+        + '<td class="l">' + esc(g.div) + '</td><td class="l">' + (g.cat ? esc(g.cat) : '<span class="mn-muted">—</span>') + '</td>'
+        + '<td class="l">' + esc(g.style) + '</td><td class="l">' + esc(g.color) + '</td>'
+        + '<td class="l">' + (g.ssetRun ? '<span class="mn-run" title="Size run from the Mins Pull — ISR has no PST size set for this SKU">' + esc(g.sset) + '</span>' : '<span class="pill pill-muted">' + esc(g.sset) + '</span>') + '</td>'
         + '<td>' + (g.ineligible ? '<span class="mn-muted">inelig.</span>' : (g.stores || '')) + '</td><td>' + fmt(g.units) + '</td>'
-        + '<td class="l mn-chips">' + g.list.map(chip).join('') + '</td><td>' + (g.nOut || '') + '</td></tr>';
+        + '<td class="l mn-chips"><div class="mn-chipwrap">' + g.list.map(chip).join('') + '</div></td><td>' + (g.nOut || '') + '</td></tr>';
       if (open) h += detail(g);
     });
     body.innerHTML = h;
@@ -23017,6 +23120,8 @@ tr.mn-st-del td{text-decoration:line-through;opacity:.55}
   window.mnRefresh = function(){ compute(true); render(); };
   window.mnSetView = function(v){ MN.view = v; MN.reason = ''; render(); };
   window.mnSetDiv = function(v){ MN.div = v; render(); };
+  window.mnSetFilter = function(k, v){ MN[k] = v || ''; render(); };   // [p7z44] cat / style / sset
+  window.mnClearFilters = function(){ MN.div = MN.cat = MN.style = MN.sset = MN.q = ''; var q = document.getElementById('mnSearch'); if (q) q.value = ''; render(); };
   window.mnSetQuery = function(v){ MN.q = v || ''; render(); };
   window.mnTile = function(r){ MN.reason = MN.reason === r ? '' : r; if (MN.view === 'caps') MN.view = 'excl'; render(); };
   window.mnToggle = function(sku){ MN.open[sku] = !MN.open[sku]; render(); };
