@@ -1183,7 +1183,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39) + cloud-paged-load (p7z40) + flowcal-season-scoped (p7z41) + mins-gen (p7z42)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39) + cloud-paged-load (p7z40) + flowcal-season-scoped (p7z41) + mins-gen (p7z42) + mins-caps-shared (p7z43)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -1840,7 +1840,7 @@ setTimeout(function(){
           <button class="nf-seg-btn active" id="mnView_out" onclick="mnSetView('out')" title="SKUs with at least one size in the upload">In upload</button>
           <button class="nf-seg-btn" id="mnView_excl" onclick="mnSetView('excl')" title="Replen SKUs with sizes left out, and why">Left out</button>
           <button class="nf-seg-btn" id="mnView_all" onclick="mnSetView('all')" title="Every SKU in replenishment">All replen</button>
-          <button class="nf-seg-btn" id="mnView_caps" onclick="mnSetView('caps')" title="Div×Size, Program and Ineligible caps">Caps</button>
+          <button class="nf-seg-btn" id="mnView_caps" onclick="mnSetView('caps')" title="Div×Size, Program and Ineligible caps — shared and editable">Caps</button>
         </div>
       </div>
       <div class="nf-ctrl">
@@ -22171,6 +22171,34 @@ tr.mn-detail > td{background:var(--surface);padding:4px 8px 10px}
 .mn-capbox{min-width:220px}
 .mn-captitle{font-family:var(--mono);font-size:11px;font-weight:700;margin-bottom:6px}
 .mn-captitle span{color:var(--muted);font-weight:400}
+/* ── Shared, editable caps [p7z43] ── */
+.mn-capbanner{margin:10px 24px 0;padding:8px 12px;border-radius:6px;font-size:12px;background:var(--surface2);border:1px solid var(--border);color:var(--muted)}
+.mn-capbanner.warn{background:var(--orange-bg);border-color:var(--orange);color:var(--text)}
+.mn-pending{margin:10px 24px 0;padding:10px 12px;border:1px solid var(--orange);background:var(--orange-bg);border-radius:8px;font-size:12px}
+.mn-pend-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.mn-pend-btns{margin-left:auto;display:flex;gap:6px}
+.nf-action-btn.mn-save{background:var(--accent);color:#fff;border-color:var(--accent)}
+.nf-action-btn.mn-save:disabled{opacity:.6;cursor:default}
+.mn-conflict{margin-top:6px;color:var(--text);font-weight:600}
+.mn-add{color:var(--green);font-weight:700}
+.mn-rem{color:#dc2626;font-weight:700}
+.mn-chg{color:var(--orange);font-weight:700}
+.mn-pv{margin-top:8px}
+.mn-pv summary{cursor:pointer;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.mn-params{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:12px 24px 0;font-size:12px}
+.mn-params label{display:inline-flex;align-items:center;gap:6px;padding:2px 6px;border-radius:5px}
+.mn-capin{width:56px;font-family:var(--mono);font-size:11.5px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);text-align:right}
+.mn-captbl td,.mn-captbl th{padding:4px 8px}
+.mn-captbl input:not(.mn-capin){font-size:11.5px;padding:2px 5px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text)}
+.mn-captbl tr.mn-addrow td{background:var(--surface2)}
+.mn-by{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.mn-x{border:none;background:none;color:var(--muted);cursor:pointer;font-size:12px;padding:0 4px}
+.mn-x:hover{color:#dc2626}
+tr.mn-st-edit td, label.mn-st-edit{background:var(--orange-bg)}
+tr.mn-st-new td{background:var(--green-bg)}
+tr.mn-st-del td{text-decoration:line-through;opacity:.55}
+.mn-boxnote{font-size:11px;color:var(--muted);margin:-2px 0 6px;max-width:420px}
+.mn-caps{display:flex;gap:18px;align-items:flex-start;padding:12px 24px 24px;flex-wrap:wrap}
 </style>
 <script>
 // ═══════════════════════════════════════════════════════════════
@@ -22200,7 +22228,8 @@ tr.mn-detail > td{background:var(--surface);padding:4px 8px 10px}
 //              validFrom = yesterday, validUntil ''
 //
 // All lookups are case-insensitive, as Excel's XLOOKUP was.
-// Build 1: caps are the seed below (read-only). Build 2 moves them to Supabase.
+// The caps below are only the SEED: since p7z43 the live caps are shared in
+// Supabase (public.mins_caps) and edited in the Caps view — see mins caps module.
 (function(){
   'use strict';
 
@@ -22483,7 +22512,353 @@ tr.mn-detail > td{background:var(--surface);padding:4px 8px 10px}
   window.mnCompute = mnCompute;
 })();
 
-// ── Mins tab UI  [p7z42] ────────────────────────────────────────
+// ── Mins caps: shared, editable, saved to Supabase  [p7z43] ─────
+// Table public.mins_caps — one row per cap:
+//   id   'div|<division>|<size>'            data {div,size,cap}
+//        'prog|<division>|<style>|<size>'   data {div,style,size,cap}
+//        'inelig|<SKU>'                     data {sku}
+//        'param|minStores' / 'param|maxAlloc' data {value}
+//        'meta|seeded'                      data {at}   (written once by the first seed)
+//   updated_by (the signed-in email, via getUserName), updated_at
+// ids are lower-cased (SKUs upper-cased) so lookups stay case-insensitive like
+// Excel's XLOOKUP and a re-typed key edits the existing row instead of adding a
+// near-duplicate.
+//
+// Edits are STAGED as a draft. The Caps view shows the effect on the upload
+// (rows added / removed / mins changed) before anything is saved; Save writes
+// the draft in one go, Discard drops it. Teammates' saves arrive by realtime.
+//
+// Write access: any signed-in user, except the FAP bridge account, which can
+// read but not write (enforced by RLS; mirrored here so its UI is read-only).
+// If the table is missing / unreachable the tab falls back to the built-in seed
+// caps (Build 1 behaviour) in read-only mode and says so.
+(function(){
+  'use strict';
+  var TABLE = 'mins_caps';
+  var BRIDGE = 'fap-isr-bridge@fahertybrand.com';
+  var C = { state: 'idle', note: '', ro: true, rows: {}, draft: {}, version: 0, subbed: false, conflicts: {}, who: '' };
+
+  function low(v){ return String(v == null ? '' : v).trim().toLowerCase(); }
+  function up(v){ return String(v == null ? '' : v).trim().toUpperCase(); }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]; }); }
+  function toast(m){ try { showToast(m, 3200); } catch(e){ console.log('[MinsCaps] ' + m); } }
+  function who(){ try { return (typeof window.getUserName === 'function' ? window.getUserName() : '') || 'Anonymous'; } catch(e){ return 'Anonymous'; } }
+  function bump(){ C.version++; }
+
+  function idFor(kind, d){
+    if (kind === 'div')    return 'div|' + low(d.div) + '|' + low(d.size);
+    if (kind === 'prog')   return 'prog|' + low(d.div) + '|' + low(d.style) + '|' + low(d.size);
+    if (kind === 'inelig') return 'inelig|' + up(d.sku);
+    if (kind === 'param')  return 'param|' + d.name;
+    return kind + '|' + (d.key || '');
+  }
+  function kindOf(id){ return String(id).split('|')[0]; }
+
+  // ── Seed rows from the built-in caps (Build 1 / Overrides tab) ──
+  function seedRows(){
+    var s = window.MN_SEED_CAPS, p = window.MN_PARAMS, out = {};
+    s.divSize.forEach(function(r){ var d = { div: r[0], size: String(r[1]), cap: Number(r[2]) || 0 }; out[idFor('div', d)] = d; });
+    s.program.forEach(function(r){ var d = { div: r[0], style: r[1], size: String(r[2]), cap: Number(r[3]) || 0 }; out[idFor('prog', d)] = d; });
+    s.inelig.forEach(function(x){ var d = { sku: up(x) }; out[idFor('inelig', d)] = d; });
+    out['param|minStores'] = { value: p.minStores };
+    out['param|maxAlloc']  = { value: p.maxAlloc };
+    return out;
+  }
+
+  // ── Effective caps (saved, optionally with the draft laid over) ──
+  function effective(withDraft){
+    var m = {};
+    Object.keys(C.rows).forEach(function(id){ m[id] = C.rows[id].data; });
+    if (withDraft) Object.keys(C.draft).forEach(function(id){ if (C.draft[id] === null) delete m[id]; else m[id] = C.draft[id]; });
+    var src = { divSize: [], program: [], inelig: [] }, params = {};
+    Object.keys(m).forEach(function(id){
+      var d = m[id] || {}, k = kindOf(id);
+      if (k === 'div') src.divSize.push([d.div, d.size, d.cap]);
+      else if (k === 'prog') src.program.push([d.div, d.style, d.size, d.cap]);
+      else if (k === 'inelig') src.inelig.push(d.sku);
+      else if (k === 'param') params[id.slice(6)] = Number(d.value);
+    });
+    return { src: src, caps: window.mnBuildCaps(src), params: params };
+  }
+
+  // ── Load / seed / subscribe ─────────────────────────────────────
+  function useSeed(note){
+    var s = seedRows(); C.rows = {};
+    Object.keys(s).forEach(function(id){ C.rows[id] = { data: s[id], by: 'built-in', at: '' }; });
+    C.ro = true; C.state = 'fallback'; C.note = note; bump();
+  }
+
+  async function load(){
+    if (C.state === 'loading' || C.state === 'ready') return;
+    C.state = 'loading';
+    C.who = who();
+    if (!window.SB || typeof window.sbSelectAll !== 'function') { useSeed('Not connected to the shared store — showing the built-in caps (read-only).'); return done(); }
+    try {
+      var res = await window.sbSelectAll(TABLE, 'id,kind,data,updated_by,updated_at', 'id');
+      if (res.error) throw res.error;
+      var rows = {}, seeded = false;
+      (res.data || []).forEach(function(r){
+        if (!r || !r.id) return;
+        if (r.id === 'meta|seeded') { seeded = true; return; }
+        rows[r.id] = { data: r.data || {}, by: r.updated_by || '', at: r.updated_at || '' };
+      });
+      var isBridge = low(C.who) === BRIDGE;
+      if (!seeded) {
+        if (isBridge) { useSeed('Caps have not been set up in the shared store yet — showing the built-in caps.'); return done(); }
+        // First ever load: write the built-in caps as the starting point. Idempotent
+        // (same ids), so two people opening the tab at once converge on one set.
+        var s = seedRows(), now = new Date().toISOString(), me = who();
+        var ups = Object.keys(s).map(function(id){ return { id: id, kind: kindOf(id), data: s[id], updated_by: me + ' (seed)', updated_at: now }; });
+        ups.push({ id: 'meta|seeded', kind: 'meta', data: { at: now, by: me }, updated_by: me, updated_at: now });
+        var w = await window.SB.from(TABLE).upsert(ups);
+        if (w.error) throw w.error;
+        rows = {}; Object.keys(s).forEach(function(id){ rows[id] = { data: s[id], by: me + ' (seed)', at: now }; });
+        console.log('%c[MinsCaps] seeded the shared caps table with ' + (ups.length - 1) + ' rows from the built-in caps', 'color:#16a34a');
+      }
+      C.rows = rows; C.ro = isBridge; C.state = 'ready';
+      C.note = isBridge ? 'Signed in as the bridge account — caps are read-only.' : '';
+      bump(); subscribe();
+      console.log('[MinsCaps] loaded ' + Object.keys(rows).length + ' cap rows' + (C.ro ? ' (read-only)' : ''));
+    } catch (e) {
+      console.warn('[MinsCaps] load failed — using built-in caps', e);
+      var msg = (e && (e.message || e.code)) || String(e);
+      useSeed(/relation|does not exist|42P01|schema cache/i.test(msg)
+        ? 'The mins_caps table has not been created yet — run the setup SQL, then reload. Showing the built-in caps (read-only).'
+        : 'Could not reach the shared caps (' + msg + ') — showing the built-in caps (read-only).');
+    }
+    done();
+  }
+  function done(){ try { if (typeof window.mnOnCapsChanged === 'function') window.mnOnCapsChanged(); } catch(e){} }
+
+  function subscribe(){
+    if (C.subbed || !window.SB) return; C.subbed = true;
+    try {
+      window.SB.channel('isr-mins-caps')
+        .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, function(p){
+          var r = p.new && p.new.id ? p.new : p.old; if (!r || !r.id || r.id === 'meta|seeded') return;
+          var cur = C.rows[r.id];
+          if (p.eventType === 'DELETE' || !p.new || !p.new.id) {
+            if (!cur) return;                                   // our own delete, already applied
+            delete C.rows[r.id];
+          } else {
+            if (cur && JSON.stringify(cur.data) === JSON.stringify(p.new.data || {})) return;   // echo
+            C.rows[r.id] = { data: p.new.data || {}, by: p.new.updated_by || '', at: p.new.updated_at || '' };
+          }
+          if (Object.prototype.hasOwnProperty.call(C.draft, r.id)) C.conflicts[r.id] = (p.new && p.new.updated_by) || 'someone';
+          bump();
+          clearTimeout(subscribe._t);
+          subscribe._t = setTimeout(function(){ toast('Mins caps updated by ' + ((p.new && p.new.updated_by) || 'a teammate')); done(); }, 400);
+        }).subscribe();
+      console.log('[MinsCaps] live updates subscribed');
+    } catch (e) { C.subbed = false; console.warn('[MinsCaps] subscribe failed', e); }
+  }
+
+  // ── Draft editing ───────────────────────────────────────────────
+  function stage(id, data){
+    var saved = C.rows[id] ? JSON.stringify(C.rows[id].data) : null;
+    if (data === null ? saved === null : JSON.stringify(data) === saved) delete C.draft[id];   // back to saved = no edit
+    else C.draft[id] = data;
+    delete C.conflicts[id];
+    bump(); done();
+  }
+  function current(id){ return Object.prototype.hasOwnProperty.call(C.draft, id) ? C.draft[id] : (C.rows[id] ? C.rows[id].data : null); }
+  function capNum(v){ var n = Number(String(v).trim()); return (String(v).trim() !== '' && isFinite(n) && n >= 0 && n <= 99 && Math.floor(n) === n) ? n : null; }
+
+  var ROWIDS = [];
+  window.mnCapSet = function(i, v){
+    if (C.ro) return; var id = ROWIDS[i], d = current(id); if (!d) return;
+    var n = capNum(v); if (n === null) { toast('Cap must be a whole number from 0 to 99'); done(); return; }
+    var nd = Object.assign({}, d, { cap: n }); stage(id, nd);
+  };
+  window.mnCapDel = function(i){
+    if (C.ro) return; var id = ROWIDS[i];
+    if (C.draft[id] === null) { delete C.draft[id]; bump(); done(); return; }   // undo a staged removal
+    if (!C.rows[id]) { delete C.draft[id]; bump(); done(); return; }           // drop a staged addition
+    stage(id, null);
+  };
+  window.mnCapAdd = function(kind){
+    if (C.ro) return;
+    function val(x){ var el = document.getElementById('mnAdd_' + kind + '_' + x); return el ? String(el.value || '').trim() : ''; }
+    function clear(){ ['div','style','size','cap','sku'].forEach(function(x){ var el = document.getElementById('mnAdd_' + kind + '_' + x); if (el) el.value = ''; }); }
+    if (kind === 'inelig') {
+      var skus = val('sku').split(/[\s,;]+/).map(up).filter(Boolean);
+      if (!skus.length) { toast('Enter one or more SKUs'); return; }
+      var added = 0;
+      skus.forEach(function(s){ var d = { sku: s }, id = idFor('inelig', d); if (!current(id)) { stage(id, d); added++; } });
+      clear(); toast(added ? 'Staged ' + added + ' ineligible SKU' + (added === 1 ? '' : 's') : 'Already on the list'); return;
+    }
+    var d = { div: val('div'), size: val('size'), cap: capNum(val('cap')) };
+    if (kind === 'prog') d = { div: d.div, style: val('style'), size: d.size, cap: d.cap };
+    if (!d.div || !d.size || (kind === 'prog' && !d.style)) { toast('Fill in every field'); return; }
+    if (d.cap === null) { toast('Cap must be a whole number from 0 to 99'); return; }
+    var id = idFor(kind, d), had = current(id);
+    stage(id, d); clear();
+    toast(had ? 'That combination already existed — its cap is now staged as ' + d.cap : 'Staged new ' + (kind === 'div' ? 'Div × Size' : 'Program') + ' cap');
+  };
+  window.mnParamSet = function(name, v){
+    if (C.ro) return;
+    var n = Number(String(v).replace('%', '').trim());
+    if (name === 'minStores' && !(n >= 1 && n <= 500 && Math.floor(n) === n)) { toast('Min stores must be a whole number ≥ 1'); done(); return; }
+    if (name === 'maxAlloc') { if (!(n > 0 && n <= 100)) { toast('Max allocation must be between 1 and 100%'); done(); return; } n = Math.round(n * 100) / 10000; }
+    stage('param|' + name, { value: n });
+  };
+  window.mnCapsDiscard = function(){ C.draft = {}; C.conflicts = {}; bump(); done(); toast('Edits discarded'); };
+  window.mnCapsSave = async function(){
+    if (C.ro || C.state !== 'ready') return;
+    var ids = Object.keys(C.draft); if (!ids.length) return;
+    var me = who(), now = new Date().toISOString();
+    var ups = ids.filter(function(id){ return C.draft[id] !== null; }).map(function(id){ return { id: id, kind: kindOf(id), data: C.draft[id], updated_by: me, updated_at: now }; });
+    var dels = ids.filter(function(id){ return C.draft[id] === null && C.rows[id]; });
+    var btn = document.getElementById('mnCapsSaveBtn'); if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      if (ups.length) { var a = await window.SB.from(TABLE).upsert(ups); if (a.error) throw a.error; }
+      if (dels.length) { var b = await window.SB.from(TABLE).delete().in('id', dels); if (b.error) throw b.error; }
+      ups.forEach(function(u){ C.rows[u.id] = { data: u.data, by: me, at: now }; });
+      dels.forEach(function(id){ delete C.rows[id]; });
+      C.draft = {}; C.conflicts = {}; bump(); done();
+      toast('Saved ' + ids.length + ' cap change' + (ids.length === 1 ? '' : 's') + ' — everyone now sees them');
+    } catch (e) {
+      console.warn('[MinsCaps] save failed', e);
+      var msg = (e && (e.message || e.code)) || String(e);
+      toast(/row-level security|permission|42501/i.test(msg) ? 'Save blocked — this account can only read caps' : 'Save failed: ' + msg + ' — your edits are still staged');
+      done();
+    }
+  };
+
+  // ── Impact preview: draft vs saved, on the loaded feed ─────────
+  function preview(){
+    var P = window._lastParsed;
+    if (!P || !P.minsRows || !P.minsRows.length || !Object.keys(C.draft).length) return null;
+    var a = effective(false), b = effective(true);
+    var A = window.mnCompute(P, { caps: a.caps, params: a.params }), B = window.mnCompute(P, { caps: b.caps, params: b.params });
+    var am = {}, bm = {}, items = {};
+    A.items.forEach(function(i){ if (i.out) am[i.key] = i; });
+    B.items.forEach(function(i){ items[i.key] = i; if (i.out) bm[i.key] = i; });
+    var added = [], removed = [], changed = [];
+    Object.keys(bm).forEach(function(k){ if (!am[k]) added.push(bm[k]); else if (am[k].min !== bm[k].min) changed.push({ i: bm[k], from: am[k].min }); });
+    Object.keys(am).forEach(function(k){ if (!bm[k]) removed.push({ i: am[k], why: (items[k] && items[k].reason) || '' }); });
+    return { added: added, removed: removed, changed: changed, before: A.upload.length, after: B.upload.length };
+  }
+
+  // ── Caps view ───────────────────────────────────────────────────
+  function fmtWhen(at){ if (!at) return ''; var d = new Date(at); return isNaN(d) ? '' : (d.getMonth() + 1) + '/' + d.getDate() + '/' + String(d.getFullYear()).slice(2); }
+  function byCell(id){
+    var r = C.rows[id]; if (!r || !r.by) return '<td class="l mn-by"></td>';
+    return '<td class="l mn-by" title="' + esc(r.by + (r.at ? ' · ' + new Date(r.at).toLocaleString() : '')) + '">' + esc(String(r.by).replace(/@.*$/, '')) + (r.at ? ' · ' + fmtWhen(r.at) : '') + '</td>';
+  }
+  function rowState(id){
+    if (!Object.prototype.hasOwnProperty.call(C.draft, id)) return '';
+    if (C.draft[id] === null) return 'del';
+    return C.rows[id] ? 'edit' : 'new';
+  }
+  function capInput(i, v){
+    return C.ro ? String(v) : '<input class="mn-capin" type="number" min="0" max="99" step="1" value="' + esc(v) + '" onchange="mnCapSet(' + i + ',this.value)">';
+  }
+  function delBtn(i, st){
+    if (C.ro) return '';
+    return '<button class="mn-x" onclick="mnCapDel(' + i + ')" title="' + (st === 'del' ? 'Undo removal' : st === 'new' ? 'Drop this addition' : 'Remove (stages a removal)') + '">' + (st === 'del' ? '↺' : '✕') + '</button>';
+  }
+  function listIds(kind){
+    var ids = {};
+    Object.keys(C.rows).forEach(function(id){ if (kindOf(id) === kind) ids[id] = 1; });
+    Object.keys(C.draft).forEach(function(id){ if (kindOf(id) === kind) ids[id] = 1; });
+    return Object.keys(ids);
+  }
+
+  window.mnCapsRender = function(R){
+    if (C.state === 'idle') { load(); }
+    if (C.state === 'loading' || C.state === 'idle') return '<div class="mn-capnote">Loading shared caps…</div>';
+    ROWIDS = [];
+    var styles = {}, divs = {};
+    ((window._lastParsed && window._lastParsed.minsRows) || []).forEach(function(r){ if (r[1]) divs[r[1]] = 1; if (r[2]) styles[r[1] + '|' + r[2]] = 1; });
+    var nDraft = Object.keys(C.draft).length, h = '';
+
+    if (C.note) h += '<div class="mn-capbanner' + (C.state === 'fallback' ? ' warn' : '') + '">' + esc(C.note) + '</div>';
+
+    // Pending edits + impact preview
+    if (nDraft) {
+      var pv = preview(), nConf = Object.keys(C.conflicts).length;
+      h += '<div class="mn-pending"><div class="mn-pend-head"><b>' + nDraft + ' unsaved edit' + (nDraft === 1 ? '' : 's') + '</b>';
+      if (pv) h += ' · upload goes from <b>' + pv.before + '</b> to <b>' + pv.after + '</b> rows: <span class="mn-add">+' + pv.added.length + ' added</span>, <span class="mn-rem">−' + pv.removed.length + ' removed</span>, <span class="mn-chg">' + pv.changed.length + ' min' + (pv.changed.length === 1 ? '' : 's') + ' changed</span>';
+      else h += ' · load the mins feed to preview the effect on the upload';
+      h += '<span class="mn-pend-btns"><button class="nf-action-btn" onclick="mnCapsDiscard()">Discard</button><button class="nf-action-btn mn-save" id="mnCapsSaveBtn" onclick="mnCapsSave()">Save for everyone</button></span></div>';
+      if (nConf) h += '<div class="mn-conflict">⚠ ' + nConf + ' of these caps were changed by a teammate while you were editing (' + esc(Object.keys(C.conflicts).map(function(k){ return C.conflicts[k]; }).filter(function(v, i, a){ return a.indexOf(v) === i; }).join(', ')) + '). Saving will overwrite their value with yours.</div>';
+      if (pv && (pv.added.length || pv.removed.length || pv.changed.length)) {
+        var lines = [];
+        pv.removed.forEach(function(r){ lines.push('<tr><td class="l"><span class="mn-rem">−</span></td><td class="l">' + esc(r.i.sku) + '</td><td class="l">' + esc(r.i.size) + '</td><td class="l">' + esc(r.i.style) + '</td><td>' + r.i.min + '</td><td>—</td><td class="l mn-muted">' + esc(r.why) + '</td></tr>'); });
+        pv.added.forEach(function(i){ lines.push('<tr><td class="l"><span class="mn-add">+</span></td><td class="l">' + esc(i.sku) + '</td><td class="l">' + esc(i.size) + '</td><td class="l">' + esc(i.style) + '</td><td>—</td><td>' + i.min + '</td><td class="l"></td></tr>'); });
+        pv.changed.forEach(function(c){ lines.push('<tr><td class="l"><span class="mn-chg">Δ</span></td><td class="l">' + esc(c.i.sku) + '</td><td class="l">' + esc(c.i.size) + '</td><td class="l">' + esc(c.i.style) + '</td><td>' + c.from + '</td><td>' + c.i.min + '</td><td class="l"></td></tr>'); });
+        var more = lines.length > 150 ? '<div class="mn-muted" style="padding:4px 0">…and ' + (lines.length - 150) + ' more</div>' : '';
+        h += '<details class="mn-pv"' + (lines.length <= 25 ? ' open' : '') + '><summary>Show affected SKU-sizes (' + lines.length + ')</summary><table class="mn-sub"><thead><tr><th class="l"></th><th class="l">SKU</th><th class="l">Size</th><th class="l">Style</th><th>Min now</th><th>Min after</th><th class="l">Why it drops</th></tr></thead><tbody>' + lines.slice(0, 150).join('') + '</tbody></table>' + more + '</details>';
+      }
+      h += '</div>';
+    }
+
+    // Parameters
+    var ms = current('param|minStores'), ma = current('param|maxAlloc');
+    var msv = ms ? ms.value : window.MN_PARAMS.minStores, mav = Math.round((ma ? ma.value : window.MN_PARAMS.maxAlloc) * 1000) / 10;
+    function pst(n){ var s = rowState('param|' + n); return s ? ' mn-st-' + s : ''; }
+    h += '<div class="mn-params"><span class="mn-captitle">Parameters</span>'
+      + '<label class="' + pst('minStores') + '">Min eligible stores ' + (C.ro ? '<b>' + msv + '</b>' : '<input class="mn-capin" type="number" min="1" step="1" value="' + msv + '" onchange="mnParamSet(\'minStores\',this.value)">') + '</label>'
+      + '<label class="' + pst('maxAlloc') + '">Max % of DC stock committed ' + (C.ro ? '<b>' + mav + '%</b>' : '<input class="mn-capin" type="number" min="1" max="100" step="1" value="' + mav + '" onchange="mnParamSet(\'maxAlloc\',this.value)">%') + '</label>'
+      + '<span class="mn-muted">A size qualifies when DC units ÷ stores > ' + (100 / mav).toFixed(2) + '; BestMin = FLOOR(units × ' + mav + '% ÷ stores).</span></div>';
+
+    var datalists = '<datalist id="mnDivList">' + Object.keys(divs).sort().map(function(d){ return '<option value="' + esc(d) + '">'; }).join('') + '</datalist>'
+      + '<datalist id="mnStyleList">' + Object.keys(styles).sort().map(function(k){ return '<option value="' + esc(k.split('|')[1]) + '">'; }).join('') + '</datalist>';
+
+    // Div × Size
+    var dIds = listIds('div').sort(function(a, b){ var x = current(a) || C.rows[a].data, y = current(b) || C.rows[b].data; return String(x.div).localeCompare(y.div) || window.mnSizeCmp(x.size, y.size); });
+    var dh = '';
+    dIds.forEach(function(id){
+      var st = rowState(id), d = current(id) || C.rows[id].data, i = ROWIDS.push(id) - 1;
+      dh += '<tr class="mn-st-' + st + '"><td class="l">' + esc(d.div) + '</td><td class="l">' + esc(d.size) + '</td><td>' + (st === 'del' ? d.cap : capInput(i, d.cap)) + '</td>' + byCell(id) + '<td>' + delBtn(i, st) + '</td></tr>';
+    });
+    var addD = C.ro ? '' : '<tr class="mn-addrow"><td class="l"><input id="mnAdd_div_div" list="mnDivList" placeholder="Division"></td><td class="l"><input id="mnAdd_div_size" placeholder="Size" style="width:70px"></td><td><input id="mnAdd_div_cap" class="mn-capin" type="number" min="0" max="99" placeholder="Cap"></td><td class="l" colspan="2"><button class="nf-action-btn" onclick="mnCapAdd(\'div\')">+ Add</button></td></tr>';
+
+    // Program
+    var pIds = listIds('prog').sort(function(a, b){ var x = current(a) || C.rows[a].data, y = current(b) || C.rows[b].data; return String(x.div).localeCompare(y.div) || String(x.style).localeCompare(y.style) || window.mnSizeCmp(x.size, y.size); });
+    var ph = '';
+    pIds.forEach(function(id){
+      var st = rowState(id), d = current(id) || C.rows[id].data, i = ROWIDS.push(id) - 1;
+      ph += '<tr class="mn-st-' + st + '"><td class="l">' + esc(d.div) + '</td><td class="l">' + esc(d.style) + '</td><td class="l">' + esc(d.size) + '</td><td>' + (st === 'del' ? d.cap : capInput(i, d.cap)) + '</td>' + byCell(id) + '<td>' + delBtn(i, st) + '</td></tr>';
+    });
+    var addP = C.ro ? '' : '<tr class="mn-addrow"><td class="l"><input id="mnAdd_prog_div" list="mnDivList" placeholder="Division" style="width:90px"></td><td class="l"><input id="mnAdd_prog_style" list="mnStyleList" placeholder="Style description"></td><td class="l"><input id="mnAdd_prog_size" placeholder="Size" style="width:60px"></td><td><input id="mnAdd_prog_cap" class="mn-capin" type="number" min="0" max="99" placeholder="Cap"></td><td class="l" colspan="2"><button class="nf-action-btn" onclick="mnCapAdd(\'prog\')">+ Add</button></td></tr>';
+
+    // Ineligible
+    var look = {};
+    ((window._lastParsed && window._lastParsed.minsRows) || []).forEach(function(r){ var s = up(r[4]); if (!look[s]) look[s] = r[2] + (r[3] ? ' · ' + r[3] : ''); });
+    var iIds = listIds('inelig').sort();
+    var ih = '';
+    iIds.forEach(function(id){
+      var st = rowState(id), d = current(id) || C.rows[id].data, i = ROWIDS.push(id) - 1;
+      ih += '<tr class="mn-st-' + st + '"><td class="l"><span class="nf-sku">' + esc(d.sku) + '</span></td><td class="l mn-muted">' + esc(look[up(d.sku)] || '') + '</td>' + byCell(id) + '<td>' + delBtn(i, st) + '</td></tr>';
+    });
+    var addI = C.ro ? '' : '<tr class="mn-addrow"><td class="l" colspan="2"><input id="mnAdd_inelig_sku" placeholder="SKU(s) — paste several separated by spaces or commas" style="width:100%"></td><td class="l" colspan="2"><button class="nf-action-btn" onclick="mnCapAdd(\'inelig\')">+ Add</button></td></tr>';
+
+    function box(title, n, head, body, add, note){
+      return '<div class="mn-capbox"><div class="mn-captitle">' + esc(title) + ' <span>(' + n + ')</span></div>' + (note ? '<div class="mn-boxnote">' + note + '</div>' : '')
+        + '<table class="nf-table mn-captbl"><thead><tr>' + head.map(function(x){ return '<th class="' + (x[1] || 'l') + '">' + esc(x[0]) + '</th>'; }).join('') + '</tr></thead><tbody>' + add + body + '</tbody></table></div>';
+    }
+    h += datalists + '<div class="mn-caps">'
+      + box('Div × Size caps', dIds.length, [['Division'], ['Size'], ['Max min', 'r'], ['Last change'], ['', 'r']], dh, addD, 'A size with no row here gets no min — deliberate.')
+      + box('Program caps', pIds.length, [['Division'], ['Style'], ['Size'], ['Max min', 'r'], ['Last change'], ['', 'r']], ph, addP, 'Replaces the Div × Size cap for that style and size, so it can raise it as well as lower it.')
+      + box('Ineligible SKUs', iIds.length, [['SKU'], ['Style · color'], ['Last change'], ['', 'r']], ih, addI, 'Never get a min.')
+      + '</div>';
+    return h;
+  };
+
+  // ── API for the Mins tab ────────────────────────────────────────
+  window.mnCaps = {
+    load: load,
+    effective: effective,
+    version: function(){ return C.version; },
+    state: function(){ return C.state; },
+    dirty: function(){ return Object.keys(C.draft).length; },
+    _debug: C
+  };
+})();
+
+// ── Mins tab UI  [p7z42; shared caps p7z43] ─────────────────────
 (function(){
   'use strict';
   var MN = { view: 'out', div: '', q: '', reason: '', open: {}, res: null, resKey: null };
@@ -22495,11 +22870,16 @@ tr.mn-detail > td{background:var(--surface);padding:4px 8px 10px}
   function toast(m){ try { showToast(m, 2800); } catch(e){ console.log('[Mins] ' + m); } }
   function reasonGroup(r){ return /^Broken run/.test(r) ? 'Broken run' : /^Under \d+ stores/.test(r) ? 'Under min stores' : r; }
 
+  // [p7z43] Results use the SAVED shared caps (never the unsaved draft), and are
+  // recomputed whenever the data bundle or the caps version changes.
   function compute(force){
     var P = window._lastParsed || null;
-    if (!force && MN.res && MN.resKey === P) return MN.res;
-    MN.res = (P && typeof window.mnCompute === 'function') ? window.mnCompute(P) : null;
-    MN.resKey = P;
+    var mc = window.mnCaps, ver = mc ? mc.version() : 0;
+    if (mc && mc.state() === 'idle') mc.load();
+    if (!force && MN.res && MN.resKey === P && MN.resVer === ver) return MN.res;
+    var eff = (mc && mc.state() !== 'idle' && mc.state() !== 'loading') ? mc.effective(false) : null;
+    MN.res = (P && typeof window.mnCompute === 'function') ? window.mnCompute(P, eff ? { caps: eff.caps, params: eff.params } : {}) : null;
+    MN.resKey = P; MN.resVer = ver;
     if (MN.res) console.log('[Mins] ' + MN.res.upload.length + ' upload rows from ' + MN.res.items.length + ' SKU-sizes · validFrom ' + MN.res.validFrom);
     return MN.res;
   }
@@ -22566,30 +22946,18 @@ tr.mn-detail > td{background:var(--surface);padding:4px 8px 10px}
     ].join('');
   }
 
-  function renderCaps(R){
-    var s = R.caps.src;
-    function tbl(title, head, rows){
-      return '<div class="mn-capbox"><div class="mn-captitle">' + esc(title) + ' <span>(' + rows.length + ')</span></div><table class="nf-table"><thead><tr>'
-        + head.map(function(x, j){ return '<th' + (j < head.length - 1 ? ' class="l"' : '') + '>' + esc(x) + '</th>'; }).join('') + '</tr></thead><tbody>'
-        + rows.map(function(r){ return '<tr>' + r.map(function(v, j){ return '<td' + (j < r.length - 1 ? ' class="l"' : '') + '>' + esc(v) + '</td>'; }).join('') + '</tr>'; }).join('')
-        + '</tbody></table></div>';
-    }
-    var divRows = s.divSize.slice().sort(function(a, b){ return String(a[0]).localeCompare(b[0]) || window.mnSizeCmp(a[1], b[1]); });
-    return '<div class="mn-capnote">Read-only in this build. Editing (shared across users, saved to the cloud) arrives in Build 2. '
-      + 'A size with no Div×Size row gets no min — that is deliberate. Program caps replace the Div×Size cap, so they can raise it. '
-      + 'Parameters: min ' + R.params.minStores + ' stores · max ' + Math.round(R.params.maxAlloc * 100) + '% of DC stock committed.</div>'
-      + '<div class="mn-caps">'
-      + tbl('Div × Size caps', ['Division', 'Size', 'Max min'], divRows)
-      + tbl('Program caps', ['Division', 'Style', 'Size', 'Max min'], s.program)
-      + tbl('Ineligible SKUs', ['SKU', ''], s.inelig.map(function(x){ return [x, '']; }))
-      + '</div>';
-  }
+  function renderCaps(R){ return window.mnCapsRender ? window.mnCapsRender(R) : ''; }
 
   function render(){
     var R = compute(false);
     var sub = document.getElementById('mnSubtitle'), body = document.getElementById('mnBody'), empty = document.getElementById('mnEmpty'),
         caps = document.getElementById('mnCaps'), wrap = document.getElementById('mnTableWrap');
     if (!sub) return;
+    if ((!R || !R.hasFeed) && MN.view === 'caps') {   // [p7z43] caps are editable without a feed loaded
+      sub.textContent = 'No mins feed loaded — caps can still be edited; the impact preview needs the feed.';
+      document.getElementById('mnStats').innerHTML = '';
+      wrap.style.display = 'none'; caps.style.display = ''; caps.innerHTML = renderCaps(R); return;
+    }
     if (!R || !R.hasFeed) {
       sub.textContent = '';
       document.getElementById('mnStats').innerHTML = '';
@@ -22606,6 +22974,7 @@ tr.mn-detail > td{background:var(--surface);padding:4px 8px 10px}
       + fmt(R.cfgSkus) + ' SKUs in syrup configs · validFrom ' + R.validFrom;
     renderStats(R);
     ['out', 'excl', 'all', 'caps'].forEach(function(v){ var b = document.getElementById('mnView_' + v); if (b) b.classList.toggle('active', MN.view === v && !MN.reason); });
+    { var cb = document.getElementById('mnView_caps'), nd = window.mnCaps ? window.mnCaps.dirty() : 0; if (cb) cb.textContent = nd ? 'Caps (' + nd + ' unsaved)' : 'Caps'; }
     if (MN.view === 'caps' && !MN.reason) {
       wrap.style.display = 'none'; caps.style.display = ''; caps.innerHTML = renderCaps(R); return;
     }
@@ -22651,9 +23020,10 @@ tr.mn-detail > td{background:var(--surface);padding:4px 8px 10px}
   window.mnSetQuery = function(v){ MN.q = v || ''; render(); };
   window.mnTile = function(r){ MN.reason = MN.reason === r ? '' : r; if (MN.view === 'caps') MN.view = 'excl'; render(); };
   window.mnToggle = function(sku){ MN.open[sku] = !MN.open[sku]; render(); };
+  function draftNote(){ var n = window.mnCaps ? window.mnCaps.dirty() : 0; return n ? ' — uses SAVED caps; ' + n + ' unsaved edit' + (n === 1 ? ' is' : 's are') + ' not included' : ''; }
   window.mnCopy = function(){
     var R = compute(false); if (!R || !R.upload.length) { toast('Nothing to copy'); return; }
-    _copyToClipboard(uploadText('\t', false), 'Copied ' + R.upload.length + ' mins rows (no header)');
+    _copyToClipboard(uploadText('\t', false), 'Copied ' + R.upload.length + ' mins rows (no header)' + draftNote());
   };
   window.mnDownload = function(){
     var R = compute(false); if (!R || !R.upload.length) { toast('Nothing to export'); return; }
@@ -22663,7 +23033,12 @@ tr.mn-detail > td{background:var(--surface);padding:4px 8px 10px}
     a.download = 'Mins_minimum_units_' + new Date().toISOString().slice(0, 10) + '.csv';
     a.click();
     setTimeout(function(){ URL.revokeObjectURL(a.href); }, 60000);
-    toast('Exported ' + R.upload.length + ' rows');
+    toast('Exported ' + R.upload.length + ' rows' + draftNote());
+  };
+  // Called by the caps module after load / edit / save / a teammate's change.
+  window.mnOnCapsChanged = function(){
+    var p = document.getElementById('mnPanel');
+    if (p && p.style.display !== 'none') render();
   };
   window.mnUploadRows = function(){ var R = compute(false); return R ? R.upload : []; };   // console / test hook
 })();
