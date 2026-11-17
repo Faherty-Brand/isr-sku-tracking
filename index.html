@@ -1183,7 +1183,7 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39) + cloud-paged-load (p7z40)', 'color:#16a34a;font-weight:bold');
+  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39) + cloud-paged-load (p7z40) + flowcal-season-scoped (p7z41)', 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
@@ -5005,6 +5005,31 @@ async function buildFromParsed(P) {
   const diagWarns = [];
   if (csCount === 0) diagWarns.push(`⚠ Zero CS SKUs — SEASONS.cs="${SEASONS.cs}" not matched in PST.`);
   if (Object.keys(lookups.invRetail).length === 0) diagWarns.push('⚠ Zero retail inventory — check ISR INV Pull.csv column names.');
+  // [p7z41] Flow Cal coverage: every PST delivery for PS/CS/NS must resolve
+  // against that exact season's calendar rows. Unmatched names get no alloc
+  // date (Late List / NS configs / IA skip them), so surface them here.
+  try {
+    [['PS', SEASONS.ps], ['CS', SEASONS.cs], ['NS', SEASONS.ns]].forEach(([role, code]) => {
+      if (!code) return;
+      const by = (window._flowCalBySzn || {})[String(code).toUpperCase()];
+      const miss = {};
+      ALL_ROWS.forEach(r => {
+        const d = String((r.seasons && r.seasons[code] && r.seasons[code].deliv1) || '').trim();
+        if (d && !flowCalAllocDate(code, d)) miss[d] = (miss[d] || 0) + 1;
+      });
+      const names = Object.keys(miss);
+      if (!by) {
+        console.warn(`[FlowCal] ${role} ${code}: no Flow Cal rows for this season — its deliveries get no alloc dates.`);
+        if (role !== 'PS') diagWarns.push(`⚠ Flow Cal has no ${code} rows — ${role} deliveries won't get alloc dates.`);
+      } else if (names.length) {
+        const txt = names.map(n => `${n} (${miss[n]})`).join(', ');
+        console.warn(`[FlowCal] ${role} ${code}: PST deliveries with no matching ${code} Flow Cal month: ${txt}`);
+        diagWarns.push(`⚠ ${code} deliveries not in Flow Cal: ${txt}`);
+      } else {
+        console.log(`[FlowCal] ${role} ${code}: all PST deliveries matched.`);
+      }
+    });
+  } catch (e) { console.warn('[FlowCal] coverage check failed', e); }
 
   document.getElementById('loadStatus').innerHTML =
     diagLines.map(l => `<span style="color:rgba(255,255,255,.55)">${l}</span>`).join('<br>') +
@@ -5541,37 +5566,77 @@ function buildLookups({pstRows, invRows, lcwRows, newnessRows, flowCalRows,
     if (date && !isNaN(date)) (newnessAll[sku] = newnessAll[sku] || []).push({ t: date.getTime(), u: total });   // [p7z29]
   }
 
-  // ── Flow Calendar ──
-  // Col A (0) = Season, Col B (1) = Flow Month code, Col I (8) = Allocation Drop Date
-  const flowCalMap = {}; // month_code → {allocDate}
-  // [p7z25] Season-keyed twin: SEASON → month_code → {allocDate}. flowCalMap is
-  // month-only (last row wins), which is fine for the working season but can
-  // resolve a PRIOR-season month to the wrong year once a calendar carries more
-  // than one season. The late-PS-receipt route reads this first.
-  const flowCalBySzn = {};
-  let fcHeaderIdx = -1;
-  for (let i = 0; i < Math.min(5, flowCalRows.length); i++) {
-    const r0 = String(flowCalRows[i]?.[0]||'').toLowerCase();
-    const r1 = String(flowCalRows[i]?.[1]||'').toLowerCase();
-    if (r0.includes('season') || r1.includes('flow') || r1.includes('month') || r1.includes('delivery')) {
-      fcHeaderIdx = i; break;
+  // ── Flow Calendar ──  [p7z41]
+  // Layout (Nov 2026): Year | Season | New Flow Month | …grouped date pairs…,
+  // with the group label ("Allocation Drop") on the row ABOVE the header and a
+  // plain "Date" under it. Columns are resolved by header name, never position.
+  // Every row is filed under an exact season key built from Year + Season
+  // (2027 + Spring → SP27) and a canonical month+drop key (see fcCanonKey), so
+  // "Feb D2" in the calendar matches "February_2" in the PST. Lookups are
+  // season-scoped only (flowCalAllocDate): a delivery never borrows a date from
+  // another season or year.
+  // Legacy fallback: if the named headers can't be found, read the pre-p7z41
+  // layout (A = season code, B = month, I = alloc drop) with a warning.
+  const flowCalBySzn = {};   // SEASON → canonKey → {allocDate, code, label}
+  {
+    const lc = (row) => (row || []).map(v => String(v || '').trim().toLowerCase());
+    let fcHdr = -1, cYear = -1, cSzn = -1, cMonth = -1, cDrop = -1, legacy = false;
+    for (let i = 0; i < Math.min(12, flowCalRows.length); i++) {
+      const h = lc(flowCalRows[i]);
+      const si = h.findIndex(v => v === 'season');
+      const mi = h.findIndex(v => v.includes('flow month') || v === 'month' || v === 'delivery month' || v === 'flow');
+      if (si >= 0 && mi >= 0) { fcHdr = i; cSzn = si; cMonth = mi; cYear = h.findIndex(v => v === 'year'); break; }
     }
-  }
-  console.log('[FlowCal] header row index:', fcHeaderIdx, '| sample col I value:', flowCalRows[fcHeaderIdx+1]?.[8]);
-  for (let i = fcHeaderIdx + 1; i < flowCalRows.length; i++) {
-    const r = flowCalRows[i];
-    if (!r) continue;
-    const monthCode = String(r[1]||'').trim();
-    if (!monthCode) continue;
-    const allocDate = parseXLDate(r[8]);
-    if (monthCode && allocDate && !isNaN(allocDate)) {
-      flowCalMap[monthCode] = {allocDate};
-      { const _fcSzn = String(r[0] || '').trim().toUpperCase();   // [p7z25]
-        if (_fcSzn) (flowCalBySzn[_fcSzn] = flowCalBySzn[_fcSzn] || {})[monthCode] = {allocDate}; }
-      console.log(`[FlowCal] ${monthCode} → allocDate: ${fmtDate4(allocDate)} (raw: ${r[8]})`);
+    if (fcHdr >= 0) {
+      for (let i = fcHdr; i >= Math.max(0, fcHdr - 3) && cDrop < 0; i--) {
+        const j = lc(flowCalRows[i]).findIndex(v => v.includes('allocation drop') || v.includes('alloc drop'));
+        if (j >= 0) cDrop = j;
+      }
+      // Group label sits over the Date/Week Day pair; if it landed on the
+      // Week Day half, step left onto the Date column.
+      if (cDrop > 0 && lc(flowCalRows[fcHdr])[cDrop] === 'week day') cDrop -= 1;
     }
+    if (fcHdr < 0 || cDrop < 0) {
+      console.warn('[FlowCal] Named headers (Season / Flow Month / Allocation Drop) not found — reading legacy layout (A=season code, B=month, I=alloc drop).');
+      legacy = true; cYear = -1; cSzn = 0; cMonth = 1; cDrop = 8; fcHdr = -1;
+      for (let i = 0; i < Math.min(5, flowCalRows.length); i++) {
+        const h = lc(flowCalRows[i]);
+        if ((h[0] || '').includes('season') || /flow|month|delivery/.test(h[1] || '')) { fcHdr = i; break; }
+      }
+    }
+    console.log(`[FlowCal] header row ${fcHdr} | year col ${cYear} | season col ${cSzn} | month col ${cMonth} | alloc-drop col ${cDrop}${legacy ? ' (legacy)' : ''}`);
+    const noSzn = new Set(), dups = [];
+    for (let i = fcHdr + 1; i < flowCalRows.length; i++) {
+      const r = flowCalRows[i];
+      if (!r) continue;
+      const code = String(r[cMonth] || '').trim();
+      if (!code) continue;
+      const szn = fcSeasonKey(cYear >= 0 ? r[cYear] : '', r[cSzn]);
+      if (!szn) { noSzn.add(String(r[cYear] || '') + ' ' + String(r[cSzn] || '') + ' / ' + code); continue; }
+      const allocDate = parseXLDate(r[cDrop]);
+      if (!allocDate || isNaN(allocDate)) continue;
+      const ck = fcCanonKey(code);
+      const bucket = (flowCalBySzn[szn] = flowCalBySzn[szn] || {});
+      if (bucket[ck]) dups.push(szn + ' ' + code);
+      bucket[ck] = { allocDate, code, label: fcDisplayName(code) };
+    }
+    if (noSzn.size) console.warn('[FlowCal] Rows skipped — season/year not recognised:', [...noSzn].join(' | '));
+    if (dups.length) console.warn('[FlowCal] Duplicate month in the same season (last row wins):', dups.join(' | '));
+    Object.keys(flowCalBySzn).forEach(k => {
+      const b = flowCalBySzn[k];
+      console.log(`[FlowCal] ${k}: ` + Object.values(b).sort((a, c) => a.allocDate - c.allocDate)
+        .map(e => `${e.code}→${e.label} ${fmtDate4(e.allocDate)}`).join(' · '));
+    });
   }
-  console.log('[FlowCal] Total entries:', Object.keys(flowCalMap).length);
+  // Published here (not just in buildFromParsed) so computeAllRows, which runs
+  // off these lookups, resolves against THIS load's calendar.
+  window._flowCalBySzn = flowCalBySzn;
+  // Legacy alias, no longer read anywhere: the working season's bucket keyed by
+  // display name. Kept so stray/old code can't throw.
+  const flowCalMap = {};
+  { const b = flowCalBySzn[String(CONFIG_SEASON || '').toUpperCase()] || {};
+    Object.values(b).forEach(e => { flowCalMap[e.label] = { allocDate: e.allocDate }; }); }
+  console.log('[FlowCal] Seasons loaded:', Object.keys(flowCalBySzn).join(', ') || '(none)');
 
   // ── WIP parser ──────────────────────────────────────────────────────────
   // The WIP export's column positions shift between vintages of the file, and
@@ -6802,8 +6867,7 @@ function computeAllRows(lookups) {
     const deliv_to_use = (String(deliv_ow).trim().toUpperCase() === 'NONE')
       ? ''
       : (deliv_ow || cs_deliv1);
-    const flow = flowCalMap[deliv_to_use] || null;
-    const deliv_alloc_date = flow ? flow.allocDate : null;
+    const deliv_alloc_date = flowCalAllocDate(CONFIG_SEASON, deliv_to_use);   // [p7z41] season-scoped
 
     // ── Safety Stock removal date (SS Off Date)  [p7v] ──
     // Derived from the two alloc drop dates only — see computeSSOffDate for the
@@ -8195,6 +8259,58 @@ window.dbgConfigDateSummary = function() {
 // Handles: Excel serial numbers (e.g. 46065 → Feb 5 2026),
 //          numeric strings ("46065"), slash-formatted strings ("2/5/2026","02/05/26"),
 //          ISO strings, and existing Date objects.
+// ── [p7z41] Flow Calendar keys & season-scoped resolver ──────────────────────
+// The calendar and the PST spell deliveries differently ("Feb D2" vs
+// "February_2", "Mar" vs "March"). Both are reduced to month number + drop
+// number ("2-2", "3-1") so the SAME delivery matches regardless of spelling.
+// It never maps one month (or one drop) onto another. Unrecognised text is
+// kept as-is and only matches itself.
+const FC_MONTHS_FULL = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+function fcParseMonth(name) {
+  const s = String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!s) return null;
+  const m = s.match(/^([a-z]{3,})\.?(?:[\s_\-]*(?:d|drop)?\s*(\d{1,2}))?$/);
+  if (!m) return null;
+  const word = m[1];
+  const mi = FC_MONTHS_FULL.findIndex(f => f.startsWith(word) || (word === 'sept' && f === 'september'));
+  if (mi < 0) return null;
+  const drop = m[2] ? parseInt(m[2], 10) : 1;
+  return { month: mi + 1, drop: drop > 0 ? drop : 1 };
+}
+function fcCanonKey(name) {
+  const p = fcParseMonth(name);
+  return p ? (p.month + '-' + p.drop) : String(name || '').trim().toLowerCase();
+}
+// PST-style display name ("February", "February_2") — what dropdowns offer and
+// overrides store, so they read the same as PST deliveries.
+function fcDisplayName(name) {
+  const p = fcParseMonth(name);
+  if (!p) return String(name || '').trim();
+  const f = FC_MONTHS_FULL[p.month - 1];
+  return f.charAt(0).toUpperCase() + f.slice(1) + (p.drop > 1 ? '_' + p.drop : '');
+}
+// Year + Season → season key: 2027 + "Spring" → "SP27". A Season cell that is
+// already a code ("SP27", legacy layout) is taken as-is. '' if unrecognised.
+function fcSeasonKey(year, season) {
+  const s = String(season || '').trim().toUpperCase();
+  if (/^(SP|SU|FA|HO)\d{2}$/.test(s)) return s;
+  const pre = { SPRING: 'SP', SP: 'SP', SUMMER: 'SU', SU: 'SU', FALL: 'FA', AUTUMN: 'FA', FA: 'FA', HOLIDAY: 'HO', HO: 'HO' }[s];
+  const ym = String(year || '').match(/(\d{2,4})/);
+  if (!pre || !ym) return '';
+  return pre + String(parseInt(ym[1], 10) % 100).padStart(2, '0');
+}
+// THE Flow Cal lookup. Exact season + year only — no fallback to another
+// season, a month-only map, or the working season. null when absent.
+function flowCalEntry(seasonKey, deliv) {
+  const by = (window._flowCalBySzn || {})[String(seasonKey || '').trim().toUpperCase()];
+  if (!by || !deliv) return null;
+  return by[fcCanonKey(deliv)] || null;
+}
+function flowCalAllocDate(seasonKey, deliv) {
+  const e = flowCalEntry(seasonKey, deliv);
+  return (e && e.allocDate instanceof Date && !isNaN(e.allocDate)) ? e.allocDate : null;
+}
+
 function parseXLDate(v) {
   if (!v && v !== 0) return null;
   if (v instanceof Date) return isNaN(v) ? null : v;
@@ -8611,9 +8727,7 @@ function computeStatus({sku, fp_md, is_md, alloc_date, new_cf, cs_deliv1, ns_del
 const PS_LATE_EARLY_WINDOW_DAYS = 42;
 
 function psLateAllocDate(psKey, deliv) {
-  const by  = (window._flowCalBySzn || {})[String(psKey || '').toUpperCase()] || {};
-  const hit = by[deliv] || (window._flowCalMap || {})[deliv] || null;
-  return (hit && hit.allocDate instanceof Date && !isNaN(hit.allocDate)) ? hit.allocDate : null;
+  return flowCalAllocDate(psKey, deliv);   // [p7z41] PS only — no month-only fallback
 }
 
 // Pure: returns the route (or null) plus why. Used by applyPsLate and psLateWhy.
@@ -8763,10 +8877,10 @@ function psLateCellChip(row) {
 //   toKey = CONFIG_SEASON → deliv_ow / tier_ow / force_ia          (panel)
 //   toKey = owNextKey()   → ns_deliv_ow / ns_tier_ow / TO force_ia (Roll Audit)
 function lateFlowCalPick(seasonKey) {
-  const by = (window._flowCalBySzn || {})[String(seasonKey || '').toUpperCase()] || null;
-  const src = by || (seasonKey === CONFIG_SEASON ? (window._flowCalMap || {}) : {});
+  // [p7z41] target season's own calendar only; k = PST-style delivery name.
+  const src = (window._flowCalBySzn || {})[String(seasonKey || '').toUpperCase()] || {};
   const list = Object.keys(src)
-    .map(k => ({ k, d: src[k] && src[k].allocDate }))
+    .map(k => ({ k: src[k].label, d: src[k] && src[k].allocDate }))
     .filter(x => x.d instanceof Date && !isNaN(x.d))
     .sort((a, b) => a.d - b.d);
   if (!list.length) return null;
@@ -9074,8 +9188,7 @@ function recomputeRowDerived(row) {
   const effDeliv = (typeof window.resolveEffDeliv === 'function')
     ? window.resolveEffDeliv(row.deliv_ow, row.cs_deliv1)
     : (row.deliv_ow || row.cs_deliv1 || '');
-  const flow = (window._flowCalMap || {})[effDeliv] || null;
-  const newAllocDate = flow ? flow.allocDate : null;
+  const newAllocDate = flowCalAllocDate(CONFIG_SEASON, effDeliv);   // [p7z41] season-scoped
   row.deliv_alloc_date = newAllocDate ? fmtDate4(newAllocDate) : '';
   // [nf-release-p6i] Keep the numeric twin in sync. This was set only at build
   // time, so a delivery override (deliv_ow) refreshed the display string but
@@ -11164,7 +11277,7 @@ function openDrilldown(sku) {
               autocomplete="off"
             >`;
           } else if (inputType === 'delivery') {
-            const opts = getFlowCalOptions();
+            const opts = getFlowCalOptions(field === 'ns_deliv_ow' ? owNextKey() : CONFIG_SEASON);   // [p7z41]
             const pst = (field === 'ns_deliv_ow') ? (row.ns_deliv1 || '') : (row.cs_deliv1 || '');   // [p7z10]
             const isOv = val && val !== '';
             const optHtml = `<option value="">${pst ? pst + ' (PST)' : '— none —'}</option>`
@@ -11723,18 +11836,21 @@ function ensureTierDatalistFor(seasonId) {
   return id;
 }
 
-function getFlowCalOptions() {
-  if (_flowCalOptionCache) return _flowCalOptionCache;
-  const map = window._flowCalMap || {};
-  const entries = Object.entries(map);
+// [p7z41] Season-scoped delivery options (PST-style names, alloc-date order).
+// CS selects pass nothing (working season); NS selects pass owNextKey().
+function getFlowCalOptions(seasonKey) {
+  const key = String(seasonKey || CONFIG_SEASON || '').toUpperCase();
+  _flowCalOptionCache = _flowCalOptionCache || {};
+  if (_flowCalOptionCache[key]) return _flowCalOptionCache[key];
+  const bucket = (window._flowCalBySzn || {})[key] || {};
+  const entries = Object.values(bucket);
 
   if (entries.length === 0) {
-    // Flow Cal.xlsx wasn't loaded or didn't parse — fall back to a hardcoded
-    // list so delivery overrides remain usable. Order matches Faherty's
-    // seasonal cadence (Jan → Dec, with sub-month _2 variants).
-    console.warn('[FlowCal] No entries — using hardcoded fallback list. To enable date-accurate options, include Flow Cal.xlsx in the data folder.');
-    _flowCalOptionCache = [
-      'January', 'February', 'March',
+    // No calendar rows for this season — keep overrides usable with a
+    // hardcoded list (no dates will resolve until Flow Cal covers the season).
+    console.warn('[FlowCal] No ' + key + ' entries — using hardcoded fallback list. Add ' + key + ' rows to Flow Cal.xlsx for date-accurate options.');
+    _flowCalOptionCache[key] = [
+      'January', 'February', 'February_2', 'March', 'March_2',
       'April', 'April_2',
       'May', 'May_2',
       'June', 'June_2',
@@ -11742,16 +11858,15 @@ function getFlowCalOptions() {
       'August', 'August_2',
       'September', 'September_2',
       'October', 'October_2',
-      'November', 'December',
+      'November', 'November_2', 'December', 'December_2',
     ];
-    return _flowCalOptionCache;
+    return _flowCalOptionCache[key];
   }
 
-  // Sort by alloc date ascending (earliest first)
-  _flowCalOptionCache = entries
-    .sort((a, b) => (a[1].allocDate || 0) - (b[1].allocDate || 0))
-    .map(([code]) => code);
-  return _flowCalOptionCache;
+  _flowCalOptionCache[key] = entries
+    .sort((a, b) => (a.allocDate || 0) - (b.allocDate || 0))
+    .map(e => e.label);
+  return _flowCalOptionCache[key];
 }
 
 // Invalidate caches when data is reloaded
@@ -12199,10 +12314,9 @@ function openBulkNotesModal() {
     if (sel) {
       sel.innerHTML = `<option value="__noop__">— No NS delivery change —</option>`
         + `<option value="__clear__" style="font-style:italic;color:var(--orange)">⊘ Clear NS delivery override (revert to ${nsK || 'NS'} PST delivery)</option>`;
-      const fm = window._flowCalMap || {};
-      (typeof getFlowCalOptions === 'function' ? getFlowCalOptions() : []).forEach(code => {
+      (typeof getFlowCalOptions === 'function' ? getFlowCalOptions(nsK) : []).forEach(code => {   // [p7z41]
         const o = document.createElement('option');
-        const ad = fm[code] && fm[code].allocDate;
+        const ad = flowCalAllocDate(nsK, code);
         o.value = code;
         o.textContent = (ad instanceof Date) ? `${code} (${ad.getMonth()+1}/${ad.getDate()})` : code;
         sel.appendChild(o);
@@ -12259,10 +12373,9 @@ function openBulkNotesModal() {
     <option value="None" style="color:#6b21a8">🚫 None — force blank delivery (treat as no PST delivery)</option>
   `;
   const flowOpts = (typeof getFlowCalOptions === 'function') ? getFlowCalOptions() : [];
-  const flowMap = window._flowCalMap || {};
   flowOpts.forEach(code => {
     const o = document.createElement('option');
-    const ad = flowMap[code]?.allocDate;
+    const ad = flowCalAllocDate(CONFIG_SEASON, code);   // [p7z41]
     const dateStr = ad instanceof Date ? `${ad.getMonth()+1}/${ad.getDate()}` : '';
     o.value = code;
     o.textContent = dateStr ? `${code} (${dateStr})` : code;
@@ -13378,11 +13491,10 @@ function nsCfgCompute(row, notesStore, nsKeyArg) {
   adj = analyzeAdjustmentNotes(nsNotes, (m.tierToStores || {})[nsTier] || []);
 
   // ── Calculated dates (same functions the post-roll path uses) ──
-  const flow = (window._flowCalMap || {})[nsDeliv] || null;
-  const aj = (flow && flow.allocDate instanceof Date && !isNaN(flow.allocDate)) ? flow.allocDate : null;
+  const aj = flowCalAllocDate(nsKey, nsDeliv);   // [p7z41] NS season only
   if (!aj) {
     row.ns_cfg_status = 'No Flow Cal date';
-    row.ns_cfg_reason = 'Flow Calendar has no alloc date for "' + nsDeliv + '"';
+    row.ns_cfg_reason = 'Flow Calendar has no ' + nsKey + ' alloc date for "' + nsDeliv + '"';
     return row;
   }
   row.ns_cfg_aj = fmtDate(aj);
@@ -14457,7 +14569,7 @@ function iaRowView(row) {
   // NS carry-forward resolves to a replen config, not an IA — nothing to drop.
   if (row.ns_cfg_new_cf === 'CF') return null;
 
-  const allocDate = llResolveAllocDate(nsDeliv);
+  const allocDate = llResolveAllocDate(nsDeliv, nsKey);   // [p7z41]
   const ah = row.alloc_date ? parseXLDate(row.alloc_date) : null;
   let status = '';
   if (ah && allocDate &&
@@ -15494,14 +15606,11 @@ let LL_MONTH_SELECTED = new Set(); // empty = All months
 // ever resolves to the SAME month written differently (e.g. "August " vs
 // "August", or "august"); it never maps one month onto another month's date,
 // so it can't produce a wrong "days late". Returns null if truly absent.
-function llResolveAllocDate(delivMonth) {
-  const fcm = window._flowCalMap || {};
-  if (fcm[delivMonth] && fcm[delivMonth].allocDate) return fcm[delivMonth].allocDate;
-  const want = String(delivMonth).trim().toLowerCase();
-  for (const k in fcm) {
-    if (String(k).trim().toLowerCase() === want) return fcm[k].allocDate ?? null;
-  }
-  return null;
+// [p7z41] Season-scoped: resolves only against seasonKey's own calendar rows
+// (exact season + year). Spelling differences between PST and Flow Cal are
+// handled by fcCanonKey; a different season's same-named month never matches.
+function llResolveAllocDate(delivMonth, seasonKey) {
+  return flowCalAllocDate(seasonKey || CONFIG_SEASON, delivMonth);
 }
 
 // Tiers with no store allocation — never relevant to the Late List, any season.
@@ -15804,8 +15913,8 @@ function computeLateList(season) {
         return;
       }
 
-      // Resolve alloc date from Flow Cal (whitespace/case tolerant)
-      const allocDate = llResolveAllocDate(delivMonth);
+      // Resolve alloc date from THIS season's Flow Cal rows only  [p7z41]
+      const allocDate = llResolveAllocDate(delivMonth, code);
       if (!allocDate) {
         return;
       }
@@ -17806,7 +17915,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
   function nfNsOwnDropTs(row, code){
     var d = effDelivFor(row, code);
     if (!d) return null;
-    var dt = (typeof llResolveAllocDate === 'function') ? llResolveAllocDate(d) : null;
+    var dt = (typeof llResolveAllocDate === 'function') ? llResolveAllocDate(d, code) : null;   // [p7z41]
     return (dt instanceof Date && !isNaN(dt)) ? dayTs(dt.getTime()) : null;
   }
   function nfReleaseInfo(row, code){
@@ -17885,7 +17994,7 @@ tr.nf-strow-shifted {background:#DBEAFE}
     o.date = eff; o.str = fmtDate4(eff); o.qty = qty;
     var today = nfDay(new Date());
     o.pastDays = wipPastDueDays(eff, plgOH, iaRec, today);
-    var drop = nfDay(llResolveAllocDate(deliv));
+    var drop = nfDay(llResolveAllocDate(deliv, code));   // [p7z41]
     o.dropStr = drop ? fmtDate4(drop) : '';
     if (o.pastDays !== null) o.flag = 'Past Due';
     else if (drop && eff >= drop) o.flag = 'Late for drop';
