@@ -1183,7 +1183,76 @@ tr.selected td{background-color:rgba(30,58,95,.1)!important}
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <script>
 (function(){
-  console.log('%c[ISR] version: dd-season-sync + dd-slim + cross-tab-drilldown + eol-review + ss-off-date + date-filter-sort + late-newness-hold + wip-past-due + season-store-count + group-category + eol-tier-notes-sink + eol-sg-popover + nf-tier-ow + rt-sub-once + ns-tier-ow + ns-preseason-configs + live-matrix-ns + season-roll-matrix + matrix-newest-wins + ns-deliv-ow + sm-cov-min + sm-season + dd-sg-season-popover + pst-num-parse + season-new-cf + cfg-gate-eff-deliv + ia-ns-route + nf-season-matrix + store-aware-notes + store-code-check + dd-ow-layout + dna-zero-cfg + cfg-gate-tier-cf + nf-ns-release + season-roll-audit + ps-late-receipts + ll-pend-ow + mark-alloc + late-ps-display + late-pull-in + roll-unalloc-newness + status-chip-fix + ia-buffer-window + ia-pending-view + ia-drop-buckets + ia-cal-drop-week + mark-alloc-cfg + nf-pend-indc + nf-commit-retiers + sm-onehot-export (p7z35) + sm-backup-grid (p7z36c) + ps-late-cf-sentinel (p7z37) + nf-alttier-type (p7z38) + ia-cal-tue-thu (p7z39) + cloud-paged-load (p7z40) + flowcal-season-scoped (p7z41) + mins-gen (p7z42) + mins-caps-shared (p7z43b) + mins-filters (p7z44) + mins-header-filters (p7z45) + flowcal-cross-season (p7z46)', 'color:#16a34a;font-weight:bold');
+  // [p7z47] Build stamp. Each release: bump ISR_BUILD + ISR_BUILD_NOTE, and push the
+  // outgoing build onto ISR_BUILD_HISTORY. Console prints only the current build;
+  // run isrBuildHistory() in the console to see the full lineage.
+  window.ISR_BUILD = 'p7z47';
+  window.ISR_BUILD_NOTE = 'short-build-stamp';
+  window.ISR_BUILD_HISTORY = [
+    'dd-season-sync',
+    'dd-slim',
+    'cross-tab-drilldown',
+    'eol-review',
+    'ss-off-date',
+    'date-filter-sort',
+    'late-newness-hold',
+    'wip-past-due',
+    'season-store-count',
+    'group-category',
+    'eol-tier-notes-sink',
+    'eol-sg-popover',
+    'nf-tier-ow',
+    'rt-sub-once',
+    'ns-tier-ow',
+    'ns-preseason-configs',
+    'live-matrix-ns',
+    'season-roll-matrix',
+    'matrix-newest-wins',
+    'ns-deliv-ow',
+    'sm-cov-min',
+    'sm-season',
+    'dd-sg-season-popover',
+    'pst-num-parse',
+    'season-new-cf',
+    'cfg-gate-eff-deliv',
+    'ia-ns-route',
+    'nf-season-matrix',
+    'store-aware-notes',
+    'store-code-check',
+    'dd-ow-layout',
+    'dna-zero-cfg',
+    'cfg-gate-tier-cf',
+    'nf-ns-release',
+    'season-roll-audit',
+    'ps-late-receipts',
+    'll-pend-ow',
+    'mark-alloc',
+    'late-ps-display',
+    'late-pull-in',
+    'roll-unalloc-newness',
+    'status-chip-fix',
+    'ia-buffer-window',
+    'ia-pending-view',
+    'ia-drop-buckets',
+    'ia-cal-drop-week',
+    'mark-alloc-cfg',
+    'nf-pend-indc',
+    'nf-commit-retiers',
+    'sm-onehot-export (p7z35)',
+    'sm-backup-grid (p7z36c)',
+    'ps-late-cf-sentinel (p7z37)',
+    'nf-alttier-type (p7z38)',
+    'ia-cal-tue-thu (p7z39)',
+    'cloud-paged-load (p7z40)',
+    'flowcal-season-scoped (p7z41)',
+    'mins-gen (p7z42)',
+    'mins-caps-shared (p7z43b)',
+    'mins-filters (p7z44)',
+    'mins-header-filters (p7z45)',
+    'flowcal-cross-season (p7z46)'
+  ];
+  window.isrBuildHistory = function(){ console.log(window.ISR_BUILD_HISTORY.concat([window.ISR_BUILD_NOTE + ' (' + window.ISR_BUILD + ')']).join('\n')); };
+  console.log('%c[ISR] build ' + window.ISR_BUILD + ' · ' + window.ISR_BUILD_NOTE, 'color:#16a34a;font-weight:bold');
   if (!window.SB) return;
   var SNAP_TABLE = 'snapshots';
   var justPublished = 0;
